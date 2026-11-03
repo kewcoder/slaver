@@ -8,7 +8,6 @@ pub mod deploy;
 pub mod git;
 pub mod git_http;
 pub mod group;
-pub mod harness;
 pub mod meeting;
 pub mod hitpay;
 pub mod mcp;

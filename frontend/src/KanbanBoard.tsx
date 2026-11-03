@@ -33,12 +33,10 @@ export default function KanbanBoard({
   projectId,
   teamId,
   bots,
-  onStartRun,
 }: {
   projectId: string;
   teamId: string | null;
   bots: SlaveBot[];
-  onStartRun: (opts: { prompt: string; repoId: string; issueId: string; title: string }) => void;
 }) {
   const [project, setProject] = useState<Project | null>(null);
   const [issues, setIssues] = useState<Issue[]>([]);
@@ -270,19 +268,7 @@ export default function KanbanBoard({
                   </button>
                 ))}
               </div>
-              <button
-                type="button"
-                onClick={() => onStartRun({
-                  prompt: `Issue: ${selected.title}\n${selected.body}\n\nAcceptance criteria: complete the task, run checks, commit on the issue branch.`,
-                  repoId: project?.repo_id || "",
-                  issueId: selected.id,
-                  title: selected.title,
-                })}
-                className="mt-1 rounded-md bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500"
-              >
-                ▶ Start agent run {selected.assignee_name ? `as ${selected.assignee_name}` : ""}
-              </button>
-              <p className="text-[11px] text-zinc-500">Run opens in Harness with the repo checked out on a branch. Done → In Review automatically.</p>
+              <p className="text-[11px] text-zinc-500">Kerjakan di Code — clone repo, commit di branch, lalu pindahkan kartu ke In Review.</p>
             </div>
           )}
         </div>

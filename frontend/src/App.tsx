@@ -103,7 +103,6 @@ import {
 } from "./voice";
 import AppsView from "./AppsView";
 import KanbanBoard from "./KanbanBoard";
-import HarnessView from "./HarnessView";
 import CodeView from "./CodeView";
 import MarketView from "./MarketView";
 
@@ -398,14 +397,12 @@ function GroupView({
   teamId,
   onDeleted,
   onVisibilityChanged,
-  onStartRun,
 }: {
   groupId: string;
   bots: SlaveBot[];
   teamId: string | null;
   onDeleted: () => void;
   onVisibilityChanged: () => void;
-  onStartRun: (opts: { prompt: string; repoId: string; issueId: string; title: string }) => void;
 }) {
   const [detail, setDetail] = useState<GroupDetail | null>(null);
   const [task, setTask] = useState("");
@@ -852,7 +849,7 @@ function GroupView({
       ) : boardFull ? (
         <>
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <KanbanBoard projectId={detail.group.project_id} teamId={teamId} bots={bots} onStartRun={onStartRun} />
+            <KanbanBoard projectId={detail.group.project_id} teamId={teamId} bots={bots} />
           </div>
           <div className="border-t border-zinc-800 pt-1">
             <ChatPane minimized />
@@ -864,7 +861,7 @@ function GroupView({
             <ChatPane minimized={false} />
           </div>
           <div className="hidden w-[420px] shrink-0 overflow-y-auto border-l border-zinc-800 pl-3 md:block">
-            <KanbanBoard projectId={detail.group.project_id} teamId={teamId} bots={bots} onStartRun={onStartRun} />
+            <KanbanBoard projectId={detail.group.project_id} teamId={teamId} bots={bots} />
           </div>
         </div>
       )}
@@ -2218,7 +2215,7 @@ function FlySection({ teamId }: { teamId: string | null }) {
   return (
     <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
       <h3 className="mb-1 text-sm font-bold uppercase tracking-wide text-zinc-500">Fly.io — team machines (prod + dev/harness)</h3>
-      <p className="mb-2 text-xs text-zinc-500">Owner connects their own Fly API token. Slaver provisions 2 isolated machines: <b>prod</b> (stable, public iframe) + <b>dev</b> (agent sandbox, computer-use). Token stored server-side, never shown again.</p>
+      <p className="mb-2 text-xs text-zinc-500">Owner connects their own Fly API token. Slaver provisions 2 isolated machines: <b>prod</b> (stable, public iframe) + <b>dev</b> (sandbox + computer-use). Token stored server-side, never shown again.</p>
       {error && <p className="mb-2 text-sm text-red-400">{error}</p>}
       <form onSubmit={connect} className="flex flex-col gap-2">
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -2239,7 +2236,7 @@ function FlySection({ teamId }: { teamId: string | null }) {
             <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="app slug, e.g. warung" className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
             <button type="button" onClick={() => provision(a.id)} disabled={!slug.trim() || busy} className="rounded-md bg-sky-600 px-3 py-1.5 font-bold text-white hover:bg-sky-500 disabled:opacity-40">Provision prod+dev</button>
           </div>
-          <p className="mt-1 text-zinc-500">Creates <span className="font-mono">{slug || "slug"}-prod</span> (1cpu/512MB, Caddy) + <span className="font-mono">{slug || "slug"}-dev</span> (2cpu/2GB, sandbox sleep infinity).</p>
+          <p className="mt-1 text-zinc-500">Creates <span className="font-mono">{slug || "slug"}-prod</span> (1cpu/512MB, Caddy) + <span className="font-mono">{slug || "slug"}-dev</span> (2cpu/2GB, sandbox).</p>
         </div>
       ))}
       {machines.length > 0 && (
@@ -2478,7 +2475,7 @@ export default function App() {
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
-  const [view, setView] = useState<"apps" | "chat" | "group" | "meeting" | "bot" | "settings" | "harness" | "code" | "market">("apps");
+  const [view, setView] = useState<"apps" | "chat" | "group" | "meeting" | "bot" | "settings" | "code" | "market">("apps");
   const [bots, setBots] = useState<SlaveBot[]>([]);
   const [botId, setBotId] = useState<string | null>(null);
   const [bot, setBot] = useState<SlaveBot | null>(null);
@@ -2499,8 +2496,18 @@ export default function App() {
   const [speakingKey, setSpeakingKey] = useState<number | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [sideOpen, setSideOpen] = useState(false);
+  const [teamMenuOpen, setTeamMenuOpen] = useState(false);
+
+  function pickTeam(id: string | null) {
+    setTeamId(id);
+    setBotId(null);
+    setBot(null);
+    setGroupId(null);
+    setMeetingId(null);
+    setMessages([]);
+    setTeamMenuOpen(false);
+  }
   const [plusOpen, setPlusOpen] = useState(false);
-  const [botFilter, setBotFilter] = useState("");
   const [memberNames, setMemberNames] = useState<Record<string, string>>({});
   const keyRef = useRef(0);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -2970,7 +2977,6 @@ export default function App() {
 
   const ownerName = (b: SlaveBot) => (b.owner_user_id && b.owner_user_id !== user.id ? (memberNames[b.owner_user_id] ?? "teammate") : "");
   function botRow(b: SlaveBot, indented: boolean) {
-    if (botFilter.trim() && !`${b.name} ${b.role} ${b.title}`.toLowerCase().includes(botFilter.trim().toLowerCase())) return null;
     const partner = ownerName(b);
     return (
       <button
@@ -3003,18 +3009,52 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
-      {/* Top bar — workspace nav with labels */}
+      {/* Top bar — logo = team switcher, then workspace nav */}
       <header className="flex h-13 shrink-0 items-center gap-1 overflow-x-auto border-b border-zinc-800 bg-zinc-950 px-2 py-1">
         <button type="button" onClick={() => setSideOpen((v) => !v)} title="Conversations" className="shrink-0 rounded-md px-2 py-2 text-lg text-zinc-300 hover:bg-zinc-800 md:hidden">
           ☰
         </button>
-        <span className="mr-1 hidden shrink-0 px-1 text-[15px] font-bold tracking-tight text-zinc-100 sm:block">
-          Slaver
-        </span>
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setTeamMenuOpen((v) => !v)}
+            title={teams.find((t) => t.id === teamId)?.name ? `Team: ${teams.find((t) => t.id === teamId)?.name} — ganti team` : "Pilih team"}
+            className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-sm font-black text-white hover:bg-emerald-500"
+          >
+            {(teams.find((t) => t.id === teamId)?.name || "S").slice(0, 1).toUpperCase()}
+          </button>
+          {teamMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setTeamMenuOpen(false)} />
+              <div className="absolute left-0 top-10 z-50 w-60 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-xl">
+                <div className="border-b border-zinc-800 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-zinc-500">Ganti team</div>
+                <div className="max-h-64 overflow-y-auto p-1">
+                  {teams.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => pickTeam(t.id)}
+                      className={`flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-zinc-800 ${t.id === teamId ? "bg-zinc-800" : ""}`}
+                    >
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-900 text-xs font-black text-emerald-300">
+                        {t.name.slice(0, 1).toUpperCase()}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold text-zinc-100">{t.name}</span>
+                        <span className="block text-[11px] text-zinc-500">{t.role}</span>
+                      </span>
+                      {t.id === teamId && <span className="shrink-0 text-xs text-emerald-400">✓</span>}
+                    </button>
+                  ))}
+                  {teams.length === 0 && <p className="px-3 py-2 text-xs text-zinc-500">Belum ada team — buat di Settings.</p>}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
         <nav className="flex items-center gap-0.5">
           <button type="button" onClick={() => setView("apps")} className={topBtn(view === "apps")}><span aria-hidden="true">⌂</span> Apps</button>
           <button type="button" onClick={() => setView("chat")} className={topBtn(view === "chat" || view === "group" || view === "bot" || view === "meeting")}><span aria-hidden="true">💬</span> Chat</button>
-          <button type="button" onClick={() => setView("harness")} className={topBtn(view === "harness")}><span aria-hidden="true">⌁</span> Harness</button>
           <button type="button" onClick={() => setView("code")} className={topBtn(view === "code")}><span aria-hidden="true">{"</>"}</span> Code</button>
           <button type="button" onClick={() => setView("market")} className={topBtn(view === "market")}><span aria-hidden="true">◈</span> Market</button>
           <button type="button" onClick={() => setView("settings")} className={topBtn(view === "settings")}><span aria-hidden="true">⚙</span> Settings</button>
@@ -3031,30 +3071,11 @@ export default function App() {
         <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setSideOpen(false)} />
       )}
       <aside className={`${sideOpen ? "fixed inset-y-0 left-0 z-40 flex w-72" : "hidden"} shrink-0 flex-col border-r border-zinc-800 bg-zinc-950 md:static md:flex md:w-60`}>
-        <div className="border-b border-zinc-800 px-4 py-3">
-          <div className="truncate font-bold">{teams.find((t) => t.id === teamId)?.name ?? "SlaveBots"}</div>
-          <div className="truncate text-xs text-zinc-500">{teams.find((t) => t.id === teamId)?.role ?? user.email}</div>
-        </div>
-        <div className="border-b border-zinc-800 px-3 py-2">
-          <label className="block text-[11px] font-bold uppercase tracking-wide text-zinc-500">
-            Team
-            <select
-              value={teamId ?? ""}
-              onChange={(e) => { setTeamId(e.target.value || null); setBotId(null); setBot(null); setGroupId(null); setMeetingId(null); setMessages([]); }}
-              className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs font-semibold text-zinc-100 focus:border-emerald-500 focus:outline-none"
-            >
-              {teams.map((t) => (
-                <option key={t.id} value={t.id}>{t.name} ({t.role})</option>
-              ))}
-              {teams.length === 0 && <option value="">No team yet</option>}
-            </select>
-          </label>
-          <input
-            value={botFilter}
-            onChange={(e) => setBotFilter(e.target.value)}
-            placeholder="Find a conversation..."
-            className="mt-2 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
-          />
+        <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-3" title={teams.find((t) => t.id === teamId)?.name ?? user.email}>
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-900 text-xs font-black text-emerald-300">
+            {(teams.find((t) => t.id === teamId)?.name || "S").slice(0, 1).toUpperCase()}
+          </span>
+          <span className="truncate text-sm font-bold text-zinc-100">{teams.find((t) => t.id === teamId)?.name ?? "SlaveBots"}</span>
         </div>
         <div className="flex items-center justify-between px-4 pb-1 pt-3">
           <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Direct messages</div>
@@ -3167,8 +3188,6 @@ export default function App() {
               <span className="truncate px-1 font-semibold"><span className="mr-1 text-zinc-300">◉</span>{meetings.find((h) => h.id === meetingId)?.topic.slice(0, 40) ?? "meeting"}</span>
             ) : view === "settings" ? (
               <span className="px-1 font-semibold">Settings</span>
-            ) : view === "harness" ? (
-              <span className="px-1 font-semibold">Harness</span>
             ) : view === "code" ? (
               <span className="px-1 font-semibold">Code</span>
             ) : view === "market" ? (
@@ -3217,8 +3236,6 @@ export default function App() {
               onLogout={logout}
             />
           </main>
-        ) : view === "harness" ? (
-          <main className="flex min-h-0 flex-1 flex-col overflow-hidden"><HarnessView teamId={teamId} /></main>
         ) : view === "code" ? (
           <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <CodeView teamId={teamId} teamRole={teams.find((t) => t.id === teamId)?.role ?? ""} />
@@ -3248,10 +3265,6 @@ export default function App() {
               onVisibilityChanged={() => {
                 fetchPublicGroups().then(setSupportGroups).catch(() => {});
                 void refreshGroups();
-              }}
-              onStartRun={(opts) => {
-                localStorage.setItem("harness_prefill", JSON.stringify({ prompt: opts.prompt, repoId: opts.repoId, issueId: opts.issueId }));
-                setView("harness");
               }}
             />
           </main>

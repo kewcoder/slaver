@@ -1,6 +1,6 @@
 use axum::{routing::{get, post}, Router};
 use chrono::Datelike;
-use slaver::{db::Db, git_http, harness, mcp, oauth_http, platform_api, schedule, store, summarize, AppState};
+use slaver::{db::Db, git_http, mcp, oauth_http, platform_api, schedule, store, summarize, AppState};
 use std::{collections::HashMap, time::Duration};
 use tower_http::{cors::CorsLayer, services::{ServeDir, ServeFile}};
 
@@ -148,8 +148,6 @@ async fn main() {
     let app = Router::new()
         .route("/mcp", post(mcp::rpc))
         .route("/ping", get(|| async { "ok" }))
-        .route("/api/runs", post(harness::start_run).get(harness::list_runs))
-        .route("/api/runs/:id", get(harness::run_detail))
         .route(
             "/git/:repo/info/refs",
             get(git_info_refs).post(git_info_refs),

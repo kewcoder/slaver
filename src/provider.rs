@@ -406,7 +406,7 @@ pub async fn model_apis(prov: &Provider, model: &str) -> Vec<String> {
     } else {
         format!("{base}/models")
     };
-    let mut headers = upstream_headers(prov, Some("slaver-harness-models"));
+    let mut headers = upstream_headers(prov, Some("slaver-models"));
     headers.remove(reqwest::header::CONTENT_TYPE);
     let resp = match CLIENT.get(&url).headers(headers).send().await {
         Ok(r) => r,
