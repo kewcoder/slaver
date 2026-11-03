@@ -53,6 +53,9 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "vps_list", "description": "List a team's VPS targets (keys never leave the server).", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
         json!({ "name": "deploy_start", "description": "Deploy a project's repo HEAD to a VPS (compose up). Runs in background; poll deployments_list. Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id", "vps_id"], "properties": { "project_id": { "type": "string" }, "vps_id": { "type": "string" } } } }),
         json!({ "name": "deployments_list", "description": "Recent deployments of a project with logs.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
+        json!({ "name": "groups_public", "description": "List public support channels across all teams (anyone can read/post; owning teams bots reply).", "inputSchema": { "type": "object", "properties": {} } }),
+        json!({ "name": "groups_set_visibility", "description": "Make a group public (support channel) or private. Owner/admin only.", "inputSchema": { "type": "object", "required": ["group_id", "public"], "properties": { "group_id": { "type": "string" }, "public": { "type": "boolean" } } } }),
+        json!({ "name": "groups_support", "description": "Get (or, as the owning team, create) the public support channel for a repo/template.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
     ]
 }
 
@@ -357,6 +360,32 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             }
             match platform::list_deployments(db, user_id, &pid).await {
                 Ok(rows) => mcp_data(id, format!("{} deployment(s).", rows.len()), json!({ "deployments": rows })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "groups_public" => match store::list_public_groups(db).await {
+            Ok(rows) => mcp_data(id, format!("{} public channel(s).", rows.len()), json!({ "groups": rows })),
+            Err(e) => rpc_err(id, -32000, &e.to_string()),
+        },
+        "groups_set_visibility" => {
+            let (gid, pub_) = (arg_str(args, "group_id"), args.get("public").and_then(|v| v.as_bool()).unwrap_or(false));
+            if gid.is_empty() {
+                return Some(rpc_err(id, -32602, "group_id is required."));
+            }
+            match store::set_group_visibility(db, user_id, &gid, pub_).await {
+                Ok(Some(g)) => mcp_data(id, if g.is_public != 0 { "Channel is now public.".to_string() } else { "Channel is now private.".to_string() }, json!({ "group": g })),
+                Ok(None) => rpc_err(id, -32602, "Group not found or not allowed."),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "groups_support" => {
+            let rid = arg_str(args, "repo_id");
+            if rid.is_empty() {
+                return Some(rpc_err(id, -32602, "repo_id is required."));
+            }
+            match platform::support_group_for_repo(db, user_id, &rid).await {
+                Ok(Some(g)) => mcp_data(id, "Support channel.".to_string(), json!({ "group": g })),
+                Ok(None) => rpc_err(id, -32602, "No support channel yet — ask the owning team to open one."),
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }

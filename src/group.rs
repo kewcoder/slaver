@@ -25,6 +25,11 @@ pub(crate) async fn post_chat(
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "Group not found.".to_string())?;
+    // Save the message first so customer questions are never lost, even when
+    // the provider is misconfigured or no agent can reply right now.
+    store::insert_group_message(db, group_id, None, "user", message)
+        .await
+        .map_err(|e| e.to_string())?;
     let prov = provider::provider_for(db, &group.team_id)
         .await
         .map_err(|e| e.to_string())?;
@@ -37,17 +42,17 @@ pub(crate) async fn post_chat(
     if members.is_empty() {
         return Err("Add slaveBots to the group first.".to_string());
     }
-    store::insert_group_message(db, group_id, None, "user", message)
-        .await
-        .map_err(|e| e.to_string())?;
     let thread = store::group_history(db, group_id, 20)
         .await
         .map_err(|e| e.to_string())?;
     let mut replies = Vec::new();
     let mut total_cost = 0.0;
     let mut remaining = credit;
+    // Public support groups: every member bot replies, even though the
+    // poster is from another team (the owning team's key pays, since own=true).
+    let is_public = group.is_public != 0;
     for bot in &members {
-        if store::bot_access(db, user_id, &bot.id).await.map_err(|e| e.to_string())?.is_none() {
+        if !is_public && store::bot_access(db, user_id, &bot.id).await.map_err(|e| e.to_string())?.is_none() {
             continue;
         }
         let model = match model_override.filter(|m| provider::valid_for(&prov.preset, m)) {

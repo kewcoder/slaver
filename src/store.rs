@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use chrono::Datelike;
 use serde::{Deserialize, Serialize};
-use crate::db::{v_null, v_real, v_text, Db};
+use crate::db::{v_int, v_null, v_real, v_text, Db};
 
 use crate::chat::ChatMessage;
 use crate::pricing;
@@ -478,13 +478,25 @@ pub async fn list_usage(db: &Db, user_id: &str, limit: i32) -> Result<(Vec<Usage
     Ok((logs, spent.map(|s| s.total).unwrap_or(0.0)))
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct GroupRow {
     pub id: String,
     pub team_id: String,
     pub name: String,
+    pub is_public: i64,
+    pub repo_id: String,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct PublicGroupRow {
+    pub id: String,
+    pub team_id: String,
+    pub team_name: String,
+    pub name: String,
+    pub repo_id: String,
+    pub created_at: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -522,7 +534,7 @@ pub async fn create_group(db: &Db, user_id: &str, team_id: &str, name: &str) -> 
 
 pub async fn get_group(db: &Db, user_id: &str, id: &str) -> Result<Option<GroupRow>> {
     let row: Option<GroupRow> = db
-        .prepare("SELECT id, team_id, name, created_at, updated_at FROM groups WHERE id = ?")
+        .prepare("SELECT id, team_id, name, is_public, repo_id, created_at, updated_at FROM groups WHERE id = ?")
         .bind(&[v_text(id)])?
         .first(None)
         .await?;
@@ -530,20 +542,73 @@ pub async fn get_group(db: &Db, user_id: &str, id: &str) -> Result<Option<GroupR
         Some(g) if g.team_id.is_empty() => {
             // Legacy group: creator only. Find the creator via user scoping.
             let mine: Option<GroupRow> = db
-                .prepare("SELECT id, team_id, name, created_at, updated_at FROM groups WHERE id = ? AND user_id = ?")
+                .prepare("SELECT id, team_id, name, is_public, repo_id, created_at, updated_at FROM groups WHERE id = ? AND user_id = ?")
                 .bind(&[v_text(id), v_text(user_id)])?
                 .first(None)
                 .await?;
             mine
         }
+        // Public support groups are visible to every logged-in user.
+        Some(g) if g.is_public != 0 => Some(g),
         Some(g) => membership(db, &g.team_id, user_id).await?.map(|_| g),
         None => None,
     })
 }
 
+/// Public support groups across all teams (anyone can read/post; only the
+/// owning team's bots reply).
+pub async fn list_public_groups(db: &Db) -> Result<Vec<PublicGroupRow>> {
+    db.prepare(
+        "SELECT g.id, g.team_id, t.name AS team_name, g.name, g.repo_id, g.created_at \
+         FROM groups g LEFT JOIN teams t ON t.id = g.team_id \
+         WHERE g.is_public != 0 AND g.team_id <> '' \
+         ORDER BY g.updated_at DESC LIMIT 100",
+    )
+    .bind(&[])?
+    .all()
+    .await?
+    .results()
+}
+
+/// Toggle a group's public support-channel visibility. Owner/admin of the
+/// owning team only (legacy team-less groups: creator only).
+pub async fn set_group_visibility(db: &Db, user_id: &str, id: &str, public: bool) -> Result<Option<GroupRow>> {
+    let group = match get_group_any(id, db).await? {
+        Some(g) => g,
+        None => return Ok(None),
+    };
+    if group.team_id.is_empty() {
+        let mine: Option<GroupRow> = db
+            .prepare("SELECT id, team_id, name, is_public, repo_id, created_at, updated_at FROM groups WHERE id = ? AND user_id = ?")
+            .bind(&[v_text(id), v_text(user_id)])?
+            .first(None)
+            .await?;
+        if mine.is_none() {
+            return Ok(None);
+        }
+    } else {
+        match membership(db, &group.team_id, user_id).await? {
+            Some(r) if r == "owner" || r == "admin" => {}
+            _ => return Ok(None),
+        }
+    }
+    db.prepare("UPDATE groups SET is_public = ? WHERE id = ?")
+        .bind(&[v_int(if public { 1 } else { 0 }), v_text(id)])?
+        .run()
+        .await?;
+    get_group(db, user_id, id).await
+}
+
+async fn get_group_any(id: &str, db: &Db) -> Result<Option<GroupRow>> {
+    db.prepare("SELECT id, team_id, name, is_public, repo_id, created_at, updated_at FROM groups WHERE id = ?")
+        .bind(&[v_text(id)])?
+        .first(None)
+        .await
+}
+
 pub async fn list_groups(db: &Db, user_id: &str) -> Result<Vec<GroupRow>> {
     db.prepare(
-        "SELECT g.id, g.team_id, g.name, g.created_at, g.updated_at FROM groups g \
+        "SELECT g.id, g.team_id, g.name, g.is_public, g.repo_id, g.created_at, g.updated_at FROM groups g \
          WHERE (g.team_id = '' AND g.user_id = ?) \
          OR EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = g.team_id AND m.user_id = ?) \
          ORDER BY g.updated_at DESC LIMIT 100",

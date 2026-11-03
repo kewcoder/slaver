@@ -22,7 +22,9 @@ import {
   fetchHuddles,
   fetchMe,
   fetchProviderModels,
+  fetchPublicGroups,
   fetchSchedules,
+  fetchSupportGroup,
   fetchSummaries,
   fetchTeam,
   fetchTeamActivity,
@@ -32,6 +34,7 @@ import {
   inviteMember,
   removeMember,
   revokeBotAccess,
+  setGroupVisibility,
   setMemberRole,
   formatUsd,
   groupChat,
@@ -59,6 +62,7 @@ import {
   type HuddleDetail,
   type ActivityItem,
   type ProviderInfo,
+  type PublicGroup,
   type SlaveBot,
   type Team,
   type TeamDetail,
@@ -330,11 +334,13 @@ function GroupView({
   bots,
   onCredit,
   onDeleted,
+  onVisibilityChanged,
 }: {
   groupId: string;
   bots: SlaveBot[];
   onCredit: () => void;
   onDeleted: () => void;
+  onVisibilityChanged: () => void;
 }) {
   const [detail, setDetail] = useState<GroupDetail | null>(null);
   const [task, setTask] = useState("");
@@ -491,10 +497,34 @@ function GroupView({
               {detail.group.name}
             </button>
           )}
+          {!renaming && detail.group.is_public ? (
+            <span title="Public support channel — visible to everyone" className="shrink-0 rounded border border-emerald-700 px-2 py-0.5 text-[11px] font-bold text-emerald-400">
+              PUBLIC SUPPORT
+            </span>
+          ) : null}
           {!renaming && (
             <div className="flex shrink-0 items-center">
               <button type="button" onClick={() => { setNewName(detail.group.name); setRenaming(true); }} title="Rename group" className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200">
                 Rename
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setError("");
+                  void (async () => {
+                    try {
+                      await setGroupVisibility(groupId, !detail.group.is_public);
+                      await refresh();
+                      onVisibilityChanged();
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Could not change visibility (owner/admin only).");
+                    }
+                  })();
+                }}
+                title={detail.group.is_public ? "Make private" : "Make public — anyone can ask here, your bots reply"}
+                className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-emerald-400"
+              >
+                {detail.group.is_public ? "Make private" : "Make public"}
               </button>
               <button type="button" onClick={doDelete} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400">
                 Delete
@@ -1947,13 +1977,107 @@ function BotView({
   );
 }
 
+function SettingsView({
+  user,
+  teams,
+  teamId,
+  memberNames,
+  usage,
+  onPickTeam,
+  onTeamsChanged,
+  onCreateBot,
+  onLogout,
+}: {
+  user: User;
+  teams: Team[];
+  teamId: string | null;
+  memberNames: Record<string, string>;
+  usage: UsageSummary | null;
+  onPickTeam: (id: string) => void;
+  onTeamsChanged: () => Promise<void>;
+  onCreateBot: (ownerId: string) => Promise<void>;
+  onLogout: () => void;
+}) {
+  const [createOwner, setCreateOwner] = useState(user.id);
+  const [creating, setCreating] = useState(false);
+
+  async function create() {
+    if (creating) return;
+    setCreating(true);
+    try {
+      await onCreateBot(createOwner || user.id);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-3xl px-4 py-6">
+      <h2 className="text-xl font-bold text-zinc-100">Settings</h2>
+
+      <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+        <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-zinc-500">Profile</h3>
+        <div className="flex items-center gap-3">
+          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-zinc-800 text-lg font-bold text-zinc-200">
+            {(user.name || user.email || "?").slice(0, 1).toUpperCase()}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="truncate font-semibold text-zinc-100">{user.name || "Unnamed"}</div>
+            <div className="truncate text-xs text-zinc-500">{user.email} · {formatUsd(user.credit_usd)} left</div>
+          </div>
+          <button type="button" onClick={onLogout} className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800">
+            Log out
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+        <h3 className="mb-1 text-sm font-bold uppercase tracking-wide text-zinc-500">New slaveBot</h3>
+        <p className="mb-2 text-xs text-zinc-500">Bots live on the selected team and appear in Direct messages.</p>
+        <div className="flex gap-2">
+          <select
+            value={createOwner}
+            onChange={(e) => setCreateOwner(e.target.value)}
+            title="Partner (owner)"
+            className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
+          >
+            <option value={user.id}>{memberNames[user.id] ?? "Me"}</option>
+            {Object.entries(memberNames).filter(([id]) => id !== user.id).map(([id, name]) => (
+              <option key={id} value={id}>{name}</option>
+            ))}
+          </select>
+          <button type="button" onClick={create} disabled={creating || !teamId} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
+            {creating ? "Creating..." : "Create"}
+          </button>
+        </div>
+        {!teamId && <p className="mt-1 text-xs text-amber-300">Pick a team first.</p>}
+      </div>
+
+      <div className="mt-4">
+        <TeamsView
+          teams={teams}
+          teamId={teamId}
+          userId={user.id}
+          onChanged={onTeamsChanged}
+          onSelect={onPickTeam}
+        />
+      </div>
+
+      <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+        <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-zinc-500">Usage &amp; logs</h3>
+        <LogsView summary={usage} />
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [checking, setChecking] = useState(true);
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
-  const [view, setView] = useState<"chat" | "group" | "huddle" | "bot" | "logs" | "teams" | "harness" | "projects" | "code" | "market">("chat");
+  const [view, setView] = useState<"chat" | "group" | "huddle" | "bot" | "settings" | "harness" | "projects" | "code" | "market">("chat");
   const [bots, setBots] = useState<SlaveBot[]>([]);
   const [botId, setBotId] = useState<string | null>(null);
   const [bot, setBot] = useState<SlaveBot | null>(null);
@@ -2079,10 +2203,18 @@ export default function App() {
   }, [user, teamId]);
 
   useEffect(() => {
-    if (view === "logs" && user) {
+    if (view === "settings" && user) {
       fetchUsage().then(setUsage).catch(() => {});
     }
   }, [view, user]);
+
+  useEffect(() => {
+    if (user) {
+      fetchPublicGroups().then(setSupportGroups).catch(() => {});
+    } else {
+      setSupportGroups([]);
+    }
+  }, [user]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
@@ -2203,8 +2335,7 @@ export default function App() {
     }
   }
 
-  const [creating, setCreating] = useState(false);
-  const [createOwner, setCreateOwner] = useState("");
+  const [supportGroups, setSupportGroups] = useState<PublicGroup[]>([]);
 
   async function newBot(ownerId?: string) {
     setError("");
@@ -2212,7 +2343,6 @@ export default function App() {
       const fallbackModel = (providerInfo?.default?.trim() || (providerInfo?.custom_allowed ? "" : "muse-spark-1.3") || "muse-spark-1.3");
       const created = await createBot(fallbackModel, teamId ?? undefined, ownerId || undefined);
       await refreshBots();
-      setCreating(false);
       await openBot(created.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create slaveBot.");
@@ -2462,7 +2592,6 @@ export default function App() {
   const topBtn = (active: boolean) =>
     `flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-2 text-sm ${active ? "bg-zinc-800 font-semibold text-zinc-100" : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"}`;
 
-  const goLogs = () => { setView("logs"); fetchUsage().then(setUsage).catch(() => {}); };
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
@@ -2480,8 +2609,7 @@ export default function App() {
           <button type="button" onClick={() => setView("projects")} className={topBtn(view === "projects")}><span aria-hidden="true">▤</span> Projects</button>
           <button type="button" onClick={() => setView("code")} className={topBtn(view === "code")}><span aria-hidden="true">{"</>"}</span> Code</button>
           <button type="button" onClick={() => setView("market")} className={topBtn(view === "market")}><span aria-hidden="true">◈</span> Market</button>
-          <button type="button" onClick={() => setView("teams")} className={topBtn(view === "teams")}><span aria-hidden="true">▦</span> Teams</button>
-          <button type="button" onClick={goLogs} className={topBtn(view === "logs")}><span aria-hidden="true">≡</span> Logs</button>
+          <button type="button" onClick={() => setView("settings")} className={topBtn(view === "settings")}><span aria-hidden="true">⚙</span> Settings</button>
         </nav>
         <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
           <span className="rounded px-1 text-[11px] font-bold text-emerald-400" title="Demo credit left">{formatUsd(user.credit_usd)}</span>
@@ -2523,35 +2651,10 @@ export default function App() {
         </div>
         <div className="flex items-center justify-between px-4 pb-1 pt-3">
           <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Direct messages</div>
-          <button type="button" onClick={() => { setCreating((v) => !v); setCreateOwner(user.id); }} title="New slaveBot" className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
+          <button type="button" onClick={() => { setView("settings"); setSideOpen(false); }} title="New slaveBot in Settings" className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
             +
           </button>
         </div>
-        {creating && (
-          <div className="mx-2 mb-1 rounded-md border border-zinc-800 bg-zinc-900 p-2">
-            <label className="block text-[11px] font-bold uppercase tracking-wide text-zinc-500">
-              Partner (owner)
-              <select
-                value={createOwner}
-                onChange={(e) => setCreateOwner(e.target.value)}
-                className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-xs text-zinc-100 focus:border-emerald-500 focus:outline-none"
-              >
-                <option value={user.id}>{memberNames[user.id] ?? "Me"}</option>
-                {Object.entries(memberNames).filter(([id]) => id !== user.id).map(([id, name]) => (
-                  <option key={id} value={id}>{name}</option>
-                ))}
-              </select>
-            </label>
-            <div className="mt-2 flex gap-2">
-              <button type="button" onClick={() => newBot(createOwner)} className="flex-1 rounded-md bg-emerald-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-emerald-500">
-                Create
-              </button>
-              <button type="button" onClick={() => setCreating(false)} className="rounded-md px-2 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
           {topBots.flatMap((b) => [botRow(b, false), ...(childMap.get(b.id) ?? []).map((c) => botRow(c, true))])}
           {orphanBots.map((b) => botRow(b, false))}
@@ -2622,22 +2725,25 @@ export default function App() {
           ))}
           {teamHuddles.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">No huddles yet.</p>}
         </nav>
-        <div className="flex flex-col items-start gap-2 border-t border-zinc-800 p-3">
-          <div className="flex gap-1 px-2">
-            <button type="button" onClick={() => { setView("teams"); setSideOpen(false); }} className="flex-1 rounded-md px-2 py-1 text-left text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-              Teams
-            </button>
-            <button type="button" onClick={() => { setView("logs"); fetchUsage().then(setUsage).catch(() => {}); setSideOpen(false); }} className="flex-1 rounded-md px-2 py-1 text-left text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-              Usage &amp; logs
-            </button>
-          </div>
-          <div className="px-2 text-sm font-bold text-emerald-400">{formatUsd(user.credit_usd)} left</div>
-          <div className="px-2 text-xs text-zinc-500">{user.email}</div>
-          <p className="px-2 text-[11px] leading-snug text-zinc-500">AI keys live in Teams settings — open the Teams tab, pick a team, and configure its provider.</p>
-          <button type="button" onClick={logout} className="rounded-md px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-            Log out
-          </button>
+        <div className="border-t border-zinc-800 px-4 pb-1 pt-3">
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Support channels</div>
+          <div className="text-[11px] text-zinc-600">Public help desks from any team</div>
         </div>
+        <nav className="flex max-h-32 flex-col gap-1 overflow-y-auto p-2 pt-1">
+          {supportGroups.map((g) => (
+            <button
+              key={g.id}
+              type="button"
+              onClick={() => openGroup(g.id)}
+              title={`${g.name} · by ${g.team_name}`}
+              className={`truncate rounded-md px-2 py-2 text-left text-sm hover:bg-zinc-800 ${g.id === groupId ? "bg-zinc-800 font-semibold" : "text-zinc-300"}`}
+            >
+              <span className="mr-1 text-emerald-500">✚</span>{g.name}
+              <span className="ml-1 text-[11px] text-zinc-500">{g.team_name}</span>
+            </button>
+          ))}
+          {supportGroups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">No public channels yet.</p>}
+        </nav>
       </aside>
 
       {/* Main */}
@@ -2652,8 +2758,8 @@ export default function App() {
               <span className="truncate px-1 font-semibold"><span className="mr-1 font-bold text-zinc-300">#</span>{groups.find((g) => g.id === groupId)?.name ?? "group"}</span>
             ) : view === "huddle" ? (
               <span className="truncate px-1 font-semibold"><span className="mr-1 text-zinc-300">◉</span>{huddles.find((h) => h.id === huddleId)?.topic.slice(0, 40) ?? "huddle"}</span>
-            ) : view === "teams" ? (
-              <span className="px-1 font-semibold">Teams</span>
+            ) : view === "settings" ? (
+              <span className="px-1 font-semibold">Settings</span>
             ) : view === "harness" ? (
               <span className="px-1 font-semibold">Harness</span>
             ) : view === "projects" ? (
@@ -2662,8 +2768,6 @@ export default function App() {
               <span className="px-1 font-semibold">Code</span>
             ) : view === "market" ? (
               <span className="px-1 font-semibold">Marketplace</span>
-            ) : view === "logs" ? (
-              <span className="px-1 font-semibold">Usage &amp; logs</span>
             ) : (
               <button type="button" onClick={() => bot && setView("bot")} disabled={!bot} title={bot ? "Bot settings" : undefined} className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800 disabled:hover:bg-transparent">
                 <span className="mr-1 font-bold text-zinc-300">#</span>{bot ? bot.name : "pick a slaveBot"}
@@ -2680,8 +2784,24 @@ export default function App() {
           </button>
         </header>
 
-        {view === "logs" ? (
-          <main className="flex-1 overflow-y-auto"><LogsView summary={usage} /></main>
+        {view === "settings" ? (
+          <main className="flex-1 overflow-y-auto">
+            <SettingsView
+              user={user}
+              teams={teams}
+              teamId={teamId}
+              memberNames={memberNames}
+              usage={usage}
+              onPickTeam={(id) => setTeamId(id)}
+              onTeamsChanged={async () => {
+                const list = await fetchTeams();
+                setTeams(list);
+                if (!list.some((t) => t.id === teamId)) setTeamId(list[0]?.id ?? null);
+              }}
+              onCreateBot={(ownerId) => newBot(ownerId)}
+              onLogout={logout}
+            />
+          </main>
         ) : view === "harness" ? (
           <main className="flex min-h-0 flex-1 flex-col overflow-hidden"><HarnessView teamId={teamId} /></main>
         ) : view === "projects" ? (
@@ -2701,20 +2821,13 @@ export default function App() {
           </main>
         ) : view === "market" ? (
           <main className="flex-1 overflow-y-auto">
-            <MarketView teamId={teamId} onOpenProject={(pid) => { localStorage.setItem("projects_open", pid); setView("projects"); }} />
-          </main>
-        ) : view === "teams" ? (
-          <main className="flex-1 overflow-y-auto">
-            <TeamsView
-              teams={teams}
+            <MarketView
               teamId={teamId}
-              userId={user.id}
-              onChanged={async () => {
-                const list = await fetchTeams();
-                setTeams(list);
-                if (!list.some((t) => t.id === teamId)) setTeamId(list[0]?.id ?? null);
+              onOpenProject={(pid) => { localStorage.setItem("projects_open", pid); setView("projects"); }}
+              onOpenSupport={async (repoId) => {
+                const g = await fetchSupportGroup(repoId);
+                await openGroup(g.id);
               }}
-              onSelect={(id) => { setTeamId(id); setView("chat"); }}
             />
           </main>
         ) : view === "group" && groupId ? (
@@ -2727,6 +2840,10 @@ export default function App() {
                 setGroupId(null);
                 await refreshGroups();
                 setView("chat");
+              }}
+              onVisibilityChanged={() => {
+                fetchPublicGroups().then(setSupportGroups).catch(() => {});
+                void refreshGroups();
               }}
             />
           </main>
@@ -2846,7 +2963,7 @@ export default function App() {
                     <>
                       <div className="fixed inset-0 z-30" onClick={() => setPlusOpen(false)} />
                       <div className="absolute bottom-11 left-0 z-40 w-52 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 py-1 shadow-xl">
-                        <button type="button" onClick={() => { setPlusOpen(false); setCreating(true); setCreateOwner(user.id); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">
+                        <button type="button" onClick={() => { setPlusOpen(false); setView("settings"); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">
                           New slaveBot
                         </button>
                         <button type="button" onClick={() => { setPlusOpen(false); newGroup(); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">

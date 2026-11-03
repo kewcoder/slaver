@@ -429,6 +429,37 @@ pub struct LicenseRow {
     pub created_at: String,
 }
 
+/// Find (or, for the owning team, create) the public support group linked
+/// to a repo. Anyone can read/post; only the owning team's bots reply.
+pub async fn support_group_for_repo(db: &Db, user_id: &str, repo_id: &str) -> Result<Option<store::GroupRow>, String> {
+    let repo = get_repo(db, user_id, repo_id).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "Repo not found.".to_string())?;
+    let existing: Option<store::GroupRow> = db
+        .prepare("SELECT id, team_id, name, is_public, repo_id, created_at, updated_at FROM groups WHERE repo_id = ? AND is_public <> 0 LIMIT 1")
+        .bind(&[v_text(repo_id)])
+        .map_err(|e| e.to_string())?
+        .first(None)
+        .await
+        .map_err(|e| e.to_string())?;
+    if existing.is_some() {
+        return Ok(existing);
+    }
+    // Only the owning team's owner/admin can open the support channel.
+    match store::membership(db, &repo.team_id, user_id).await.map_err(|e| e.to_string())? {
+        Some(r) if r == "owner" || r == "admin" => {}
+        _ => return Ok(None),
+    }
+    let name: String = format!("Support: {}", repo.name.chars().take(28).collect::<String>());
+    let id = new_id();
+    db.prepare("INSERT INTO groups (id, user_id, team_id, name, is_public, repo_id) VALUES (?, ?, ?, ?, 1, ?)")
+        .bind(&[v_text(&id), v_text(user_id), v_text(&repo.team_id), v_text(&name), v_text(repo_id)])
+        .map_err(|e| e.to_string())?
+        .run()
+        .await
+        .map_err(|e| e.to_string())?;
+    store::get_group(db, user_id, &id).await.map_err(|e| e.to_string())
+}
+
 pub async fn buy_license(
     db: &Db,
     team_id: &str,

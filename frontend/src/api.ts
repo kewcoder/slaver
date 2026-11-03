@@ -132,8 +132,34 @@ export interface Group {
   id: string;
   team_id: string;
   name: string;
+  is_public?: number;
+  repo_id?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface PublicGroup {
+  id: string;
+  team_id: string;
+  team_name: string;
+  name: string;
+  repo_id: string;
+  created_at: string;
+}
+
+export async function fetchPublicGroups(): Promise<PublicGroup[]> {
+  const data = await callTool<{ groups: PublicGroup[] }>("groups_public", {});
+  return data.groups;
+}
+
+export async function setGroupVisibility(groupId: string, isPublic: boolean): Promise<Group> {
+  const data = await callTool<{ group: Group }>("groups_set_visibility", { group_id: groupId, public: isPublic });
+  return data.group;
+}
+
+export async function fetchSupportGroup(repoId: string): Promise<Group> {
+  const data = await callTool<{ group: Group }>("groups_support", { repo_id: repoId });
+  return data.group;
 }
 
 export interface GroupMessage {

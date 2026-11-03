@@ -13,15 +13,30 @@ import {
 export default function MarketView({
   teamId,
   onOpenProject,
+  onOpenSupport,
 }: {
   teamId: string | null;
   onOpenProject: (projectId: string) => void;
+  onOpenSupport: (repoId: string) => Promise<void>;
 }) {
   const [templates, setTemplates] = useState<Repo[]>([]);
   const [licenses, setLicenses] = useState<License[]>([]);
   const [projects, setProjects] = useState<{ project: Project; stats: ProjectStats }[]>([]);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [supportBusy, setSupportBusy] = useState<string | null>(null);
+
+  async function openSupport(repoId: string) {
+    setError("");
+    setSupportBusy(repoId);
+    try {
+      await onOpenSupport(repoId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No support channel yet — ask the owning team to open one.");
+    } finally {
+      setSupportBusy(null);
+    }
+  }
 
   const refresh = useCallback(async () => {
     setError("");
@@ -88,6 +103,15 @@ export default function MarketView({
                 </div>
                 {t.description && <p className="mt-1 flex-1 text-sm text-zinc-400">{t.description}</p>}
                 <div className="mt-3 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openSupport(t.id)}
+                    disabled={supportBusy === t.id}
+                    title="Ask in the seller's public support channel (their AI bots reply)"
+                    className="rounded-md border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
+                  >
+                    {supportBusy === t.id ? "Opening…" : "💬 Support"}
+                  </button>
                   {owned ? (
                     <button
                       type="button"
