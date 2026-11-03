@@ -1,4 +1,1 @@
-# Local only (never commit the real .dev.vars file). Copy to .dev.vars:
-# Only the JWT secret lives in env now — every AI key is configured per team
-# in Teams settings (owner/admin), and voice uses the Workers AI binding.
 JWT_SECRET="random-string-min-32-chars"
