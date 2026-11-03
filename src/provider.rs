@@ -298,6 +298,55 @@ pub async fn post_chat_completions(
     init.with_body(Some(JsValue::from_str(&payload.to_string())));
 
     let req = Request::new_with_init(&url, &init)?;
+    let upstream = Fetch::Request(req).send().await?;
+    // Some OpenCode models (e.g. muse-spark-*) are only served via the
+    // Responses API — a 400/404 on chat/completions means "wrong API for this
+    // model", so retry there transparently. Other providers are untouched.
+    if (upstream.status_code() == 400 || upstream.status_code() == 404) && base.contains("opencode.ai") {
+        if let Ok(retry) = post_responses(prov, model.trim(), messages, session).await {
+            if retry.status_code() == 200 {
+                return Ok(retry);
+            }
+        }
+    }
+    Ok(upstream)
+}
+
+/// POST to the Responses API (`{base}/responses`, OpenAI shape). Used as a
+/// fallback for OpenCode models that have no chat/completions binding.
+async fn post_responses(
+    prov: &Provider,
+    model: &str,
+    messages: &[ChatMessage],
+    session: Option<&str>,
+) -> Result<Response, Error> {
+    let base = normalize_base_url(&prov.base_url);
+    let url = format!("{base}/responses");
+    let input: Vec<serde_json::Value> = messages
+        .iter()
+        .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+        .collect();
+    let payload = serde_json::json!({ "model": model, "input": input });
+
+    let headers = Headers::new();
+    headers.set("Content-Type", "application/json")?;
+    if !prov.api_key.trim().is_empty() {
+        headers.set("Authorization", &format!("Bearer {}", prov.api_key.trim()))?;
+    }
+    headers.set("HTTP-Referer", "https://slaver.app")?;
+    headers.set("X-Title", "Slaver")?;
+    if base.contains("opencode.ai") {
+        if let Some(s) = session.map(str::trim).filter(|s| !s.is_empty()) {
+            headers.set("x-opencode-session", &s.chars().take(128).collect::<String>())?;
+        }
+    }
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post);
+    init.with_headers(headers);
+    init.with_body(Some(JsValue::from_str(&payload.to_string())));
+
+    let req = Request::new_with_init(&url, &init)?;
     Fetch::Request(req).send().await
 }
 
@@ -408,10 +457,16 @@ pub async fn test_provider(prov: &Provider, model: &str) -> serde_json::Value {
             Ok(mut resp) => {
                 let status = resp.status_code();
                 let text = resp.text().await.unwrap_or_default();
-                if status != 200 {
-                    Err(crate::chat::describe_upstream_error(status, &text))
-                } else {
+                if status == 200 {
                     Ok(text.chars().take(200).collect())
+                } else if (status == 400 || status == 404) && base.contains("opencode.ai") {
+                    // Responses-only models (e.g. muse-spark-*) need /responses.
+                    match post_responses_ping(&base, prov, &ping_model).await {
+                        Ok(t) => Ok(t),
+                        Err(_) => Err(crate::chat::describe_upstream_error(status, &text)),
+                    }
+                } else {
+                    Err(crate::chat::describe_upstream_error(status, &text))
                 }
             }
         },
@@ -420,4 +475,40 @@ pub async fn test_provider(prov: &Provider, model: &str) -> serde_json::Value {
         Ok(_) => serde_json::json!({ "ok": true, "endpoint": endpoint, "model": ping_model, "models": listed_models, "notes": notes }),
         Err(e) => serde_json::json!({ "ok": false, "error": e, "endpoint": endpoint, "model": ping_model, "models": listed_models, "notes": notes }),
     }
+}
+
+/// One-shot Responses-API ping for the connection test (same shape as the
+/// chat fallback, but self-contained so the test stays a single function).
+async fn post_responses_ping(base: &str, prov: &Provider, model: &str) -> Result<String, String> {
+    let url = format!("{base}/responses");
+    let payload = serde_json::json!({
+        "model": model,
+        "input": [{ "role": "user", "content": "ping" }],
+    });
+    let h = Headers::new();
+    h.set("Content-Type", "application/json")
+        .map_err(|e| e.to_string())?;
+    if !prov.api_key.trim().is_empty() {
+        h.set("Authorization", &format!("Bearer {}", prov.api_key.trim()))
+            .map_err(|e| e.to_string())?;
+    }
+    if base.contains("opencode.ai") {
+        h.set("x-opencode-session", "slaver-connection-test")
+            .map_err(|e| e.to_string())?;
+    }
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post);
+    init.with_headers(h);
+    init.with_body(Some(JsValue::from_str(&payload.to_string())));
+    let req = Request::new_with_init(&url, &init).map_err(|e| e.to_string())?;
+    let mut resp = Fetch::Request(req).send().await.map_err(|e| {
+        console_error!("responses ping failed: {e}");
+        e.to_string()
+    })?;
+    let status = resp.status_code();
+    let text = resp.text().await.unwrap_or_default();
+    if status != 200 {
+        return Err(crate::chat::describe_upstream_error(status, &text));
+    }
+    Ok(text.chars().take(200).collect())
 }

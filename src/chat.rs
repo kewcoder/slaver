@@ -475,25 +475,34 @@ pub async fn complete_with_usage(
         .json()
         .await
         .map_err(|e| format!("bad json: {e}"))?;
+    // Chat Completions shape first, Responses-API shape as fallback
+    // (OpenCode serves some models, e.g. muse-spark-*, only via /responses).
     let text = data
         .pointer("/choices/0/message/content")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
+        .or_else(|| extract_responses_text(&data))
         .ok_or_else(|| "no content in response".to_string())?;
     let usage = data.get("usage");
     let prompt = usage
-        .and_then(|u| u.get("prompt_tokens"))
+        .and_then(|u| u.get("prompt_tokens").or_else(|| u.get("input_tokens")))
         .and_then(|v| v.as_u64())
         .unwrap_or_else(|| {
             messages.iter().map(|m| m.role.len() + m.content.len()).sum::<usize>() as u64 / 4
         });
     let cached = usage
-        .and_then(|u| u.get("prompt_tokens_details"))
-        .and_then(|d| d.get("cached_tokens"))
+        .and_then(|u| {
+            u.get("prompt_tokens_details")
+                .and_then(|d| d.get("cached_tokens"))
+                .or_else(|| {
+                    u.get("input_token_details")
+                        .and_then(|d| d.get("cached_tokens"))
+                })
+        })
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     let completion = usage
-        .and_then(|u| u.get("completion_tokens"))
+        .and_then(|u| u.get("completion_tokens").or_else(|| u.get("output_tokens")))
         .and_then(|v| v.as_u64())
         .unwrap_or_else(|| pricing::estimate_tokens(&text));
     Ok(Completion {
@@ -503,6 +512,39 @@ pub async fn complete_with_usage(
         completion_tokens: completion,
         estimated: usage.is_none(),
     })
+}
+
+/// Pull the assistant text out of a Responses-API payload:
+/// `output: [{type: "message", content: [{type: "output_text", text}]}]`.
+/// Reasoning/tool items are skipped — only the visible message counts.
+fn extract_responses_text(v: &serde_json::Value) -> Option<String> {
+    let items = v.get("output")?.as_array()?;
+    let mut out = String::new();
+    for item in items {
+        if item.get("type").and_then(|t| t.as_str()) != Some("message") {
+            continue;
+        }
+        let contents = match item.get("content").and_then(|c| c.as_array()) {
+            Some(c) => c,
+            None => continue,
+        };
+        for c in contents {
+            let kind = c.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            if kind == "output_text" || kind == "text" {
+                if let Some(t) = c.get("text").and_then(|x| x.as_str()) {
+                    if !out.is_empty() {
+                        out.push('\n');
+                    }
+                    out.push_str(t);
+                }
+            }
+        }
+    }
+    if out.trim().is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 /// Pull a human-readable message out of an upstream error body, e.g.
