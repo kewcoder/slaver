@@ -18,10 +18,6 @@ pub fn cors(r: &mut Response) -> Result<()> {
     Ok(())
 }
 
-pub fn err(status: u16, msg: &str) -> Result<Response> {
-    json(status, &serde_json::json!({ "error": msg }))
-}
-
 pub fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()

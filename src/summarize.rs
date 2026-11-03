@@ -1,7 +1,7 @@
 use chrono::{Datelike, Utc};
 use worker::*;
 
-use crate::{auth, chat, store, util};
+use crate::{chat, store};
 
 // Conversation rollups: a daily cron summarizes yesterday's messages, a
 // weekly cron rolls up the week's dailies, a monthly cron rolls up the
@@ -185,66 +185,4 @@ pub async fn context_block(db: &D1Database, bot_id: &str) -> Result<String> {
         "Past conversation recaps for this bot (older context the user may ask about):\n{}",
         parts.join("\n")
     ))
-}
-
-#[derive(serde::Deserialize)]
-struct SummarizeNowRequest {
-    slavebot_id: Option<String>,
-}
-
-/// POST /api/summaries/run — immediately roll up yesterday for one of my bots.
-pub async fn run_now(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
-        Some(id) => id,
-        None => return util::err(401, "Unauthorized."),
-    };
-    let body: SummarizeNowRequest = match req.json().await {
-        Ok(b) => b,
-        Err(_) => return util::err(400, "Invalid JSON body."),
-    };
-    let bot_id = body.slavebot_id.unwrap_or_default();
-    let db = ctx.env.d1("DB")?;
-    let bot = match store::get_bot(&db, &user_id, &bot_id).await? {
-        Some(b) => b,
-        None => return util::err(404, "SlaveBot not found."),
-    };
-    let summary = match run_daily(&ctx.env, &db, &bot, &user_id).await {
-        Ok(s) => s,
-        Err(e) => {
-            console_error!("summarize now failed: {e}");
-            return util::json(
-                502,
-                &serde_json::json!({ "error": format!("Summarization failed: {e}") }),
-            );
-        }
-    };
-    match summary {
-        Some(summary) => util::json(200, &serde_json::json!({ "summary": summary })),
-        None => util::json(200, &serde_json::json!({ "summary": null, "note": "No new messages to summarize." })),
-    }
-}
-
-/// GET /api/summaries?slavebot_id= — daily/weekly/monthly recaps for the Bot tab.
-pub async fn list(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
-        Some(id) => id,
-        None => return util::err(401, "Unauthorized."),
-    };
-    let bot_id = req
-        .url()?
-        .query_pairs()
-        .find(|(k, _)| k == "slavebot_id")
-        .map(|(_, v)| v.to_string())
-        .unwrap_or_default();
-    let db = ctx.env.d1("DB")?;
-    if store::get_bot(&db, &user_id, &bot_id).await?.is_none() {
-        return util::err(404, "SlaveBot not found.");
-    }
-    let daily = store::list_summaries(&db, &bot_id, "daily", 7).await?;
-    let weekly = store::list_summaries(&db, &bot_id, "weekly", 4).await?;
-    let monthly = store::list_summaries(&db, &bot_id, "monthly", 3).await?;
-    util::json(
-        200,
-        &serde_json::json!({ "daily": daily, "weekly": weekly, "monthly": monthly }),
-    )
 }

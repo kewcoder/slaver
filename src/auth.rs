@@ -4,23 +4,8 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 use worker::*;
 
-use crate::util;
-
 const B64: base64::engine::general_purpose::GeneralPurpose =
     base64::engine::general_purpose::URL_SAFE_NO_PAD;
-
-#[derive(Deserialize)]
-struct RegisterBody {
-    email: Option<String>,
-    password: Option<String>,
-    name: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct LoginBody {
-    email: Option<String>,
-    password: Option<String>,
-}
 
 #[derive(Deserialize, Serialize)]
 struct UserRow {
@@ -111,35 +96,44 @@ fn valid_email(s: &str) -> bool {
     }
 }
 
-pub async fn register(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let body: RegisterBody = match req.json().await {
-        Ok(b) => b,
-        Err(_) => return util::err(400, "Invalid JSON body."),
-    };
-    let email = body.email.unwrap_or_default().trim().to_lowercase();
-    let password = body.password.unwrap_or_default();
-    let name = body.name.unwrap_or_default().trim().to_string();
+pub struct AuthUser {
+    pub token: String,
+    pub user: serde_json::Value,
+}
 
+fn user_json(id: &str, email: &str, name: &str, credit: f64) -> serde_json::Value {
+    serde_json::json!({ "id": id, "email": email, "name": name, "credit_usd": credit })
+}
+
+/// Core registration (used by the auth.register MCP tool).
+pub async fn register_core(
+    db: &D1Database,
+    secret: &str,
+    email: &str,
+    password: &str,
+    name: &str,
+) -> Result<AuthUser, String> {
+    let email = email.trim().to_lowercase();
+    let name = name.trim().to_string();
     if !valid_email(&email) {
-        return util::err(400, "Invalid email.");
+        return Err("Invalid email.".to_string());
     }
     if password.len() < 8 {
-        return util::err(400, "Password must be at least 8 characters.");
+        return Err("Password must be at least 8 characters.".to_string());
     }
-
-    let db = ctx.env.d1("DB")?;
     let existing: Option<UserRow> = db
         .prepare("SELECT id, email, name, password_salt, password_hash, credit_usd FROM users WHERE email = ?")
-        .bind(&[JsValue::from_str(&email)])?
+        .bind(&[JsValue::from_str(&email)])
+        .map_err(|e| e.to_string())?
         .first(None)
-        .await?;
+        .await
+        .map_err(|e| e.to_string())?;
     if existing.is_some() {
-        return util::err(409, "Email already registered. Please log in.");
+        return Err("Email already registered. Please log in.".to_string());
     }
-
     let id = uuid();
-    let s = salt()?;
-    let password_hash = hash_password(&password, &s);
+    let s = salt().map_err(|e| e.to_string())?;
+    let password_hash = hash_password(password, &s);
     db.prepare("INSERT INTO users (id, email, name, password_salt, password_hash) VALUES (?, ?, ?, ?, ?)")
         .bind(&[
             JsValue::from_str(&id),
@@ -147,67 +141,52 @@ pub async fn register(mut req: Request, ctx: RouteContext<()>) -> Result<Respons
             JsValue::from_str(&name),
             JsValue::from_str(&s),
             JsValue::from_str(&password_hash),
-        ])?
+        ])
+        .map_err(|e| e.to_string())?
         .run()
-        .await?;
-
-    let secret = ctx.env.secret("JWT_SECRET")?.to_string();
-    let token = sign_jwt(&secret, &id, &email)?;
-    util::json(
-        201,
-        &serde_json::json!({ "token": token, "user": { "id": id, "email": email, "name": name, "credit_usd": 10.0 } }),
-    )
+        .await
+        .map_err(|e| e.to_string())?;
+    let token = sign_jwt(secret, &id, &email).map_err(|e| e.to_string())?;
+    Ok(AuthUser { token, user: user_json(&id, &email, &name, 10.0) })
 }
 
-pub async fn login(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let body: LoginBody = match req.json().await {
-        Ok(b) => b,
-        Err(_) => return util::err(400, "Invalid JSON body."),
-    };
-    let email = body.email.unwrap_or_default().trim().to_lowercase();
-    let password = body.password.unwrap_or_default();
+/// Core login (used by the auth.login MCP tool).
+pub async fn login_core(
+    db: &D1Database,
+    secret: &str,
+    email: &str,
+    password: &str,
+) -> Result<AuthUser, String> {
+    let email = email.trim().to_lowercase();
     if email.is_empty() || password.is_empty() {
-        return util::err(400, "Email and password are required.");
+        return Err("Email and password are required.".to_string());
     }
-
-    let db = ctx.env.d1("DB")?;
     let row: Option<UserRow> = db
         .prepare("SELECT id, email, name, password_salt, password_hash, credit_usd FROM users WHERE email = ?")
-        .bind(&[JsValue::from_str(&email)])?
+        .bind(&[JsValue::from_str(&email)])
+        .map_err(|e| e.to_string())?
         .first(None)
-        .await?;
-    let row = match row {
-        Some(r) => r,
-        None => return util::err(401, "Wrong email or password."),
-    };
-    if hash_password(&password, &row.password_salt) != row.password_hash {
-        return util::err(401, "Wrong email or password.");
+        .await
+        .map_err(|e| e.to_string())?;
+    let row = row.ok_or_else(|| "Wrong email or password.".to_string())?;
+    if hash_password(password, &row.password_salt) != row.password_hash {
+        return Err("Wrong email or password.".to_string());
     }
-
-    let secret = ctx.env.secret("JWT_SECRET")?.to_string();
-    let token = sign_jwt(&secret, &row.id, &row.email)?;
-    let user = serde_json::json!({ "id": row.id, "email": row.email, "name": row.name, "credit_usd": row.credit_usd });
-    util::json(200, &serde_json::json!({ "token": token, "user": user }))
+    let token = sign_jwt(secret, &row.id, &row.email).map_err(|e| e.to_string())?;
+    Ok(AuthUser { token, user: user_json(&row.id, &row.email, &row.name, row.credit_usd) })
 }
 
-pub async fn me(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let user_id = match bearer_sub(&req, &ctx.env)? {
-        Some(id) => id,
-        None => return util::err(401, "Unauthorized."),
-    };
-    let db = ctx.env.d1("DB")?;
+/// Core profile fetch (used by the auth.me MCP tool).
+pub async fn me_core(db: &D1Database, user_id: &str) -> Result<serde_json::Value, String> {
     let row: Option<crate::store::UserRecord> = db
         .prepare("SELECT id, email, name, credit_usd FROM users WHERE id = ?")
-        .bind(&[JsValue::from_str(&user_id)])?
+        .bind(&[JsValue::from_str(user_id)])
+        .map_err(|e| e.to_string())?
         .first(None)
-        .await?;
-    match row {
-        Some(v) => {
-            let user = serde_json::json!({ "id": v.id, "email": v.email, "name": v.name, "credit_usd": v.credit_usd });
-            util::json(200, &serde_json::json!({ "user": user }))
-        }
-        None => util::err(404, "User not found."),
-    }
+        .await
+        .map_err(|e| e.to_string())?;
+    row.map(|v| user_json(&v.id, &v.email, &v.name, v.credit_usd))
+        .ok_or_else(|| "User not found.".to_string())
 }
 
 fn uuid() -> String {

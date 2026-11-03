@@ -1,6 +1,6 @@
 use worker::*;
 
-use crate::{auth, store, util};
+use crate::store;
 
 /// Avatar storage in R2. Keys look like `bots/<bot-id>/<uuid>.<ext>`.
 const MAX_AVATAR_BYTES: usize = 2 * 1024 * 1024;
@@ -15,102 +15,88 @@ fn ext_for(content_type: &str) -> Option<&'static str> {
     }
 }
 
-/// POST /api/slavebots/:id/avatar — multipart form with an `avatar` image
-/// field (png/jpeg/webp/gif, max 2 MB). Replaces any previous avatar.
-pub async fn upload(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
-        Some(id) => id,
-        None => return util::err(401, "Unauthorized."),
-    };
-    let bot_id = ctx.param("id").cloned().unwrap_or_default();
-    let db = ctx.env.d1("DB")?;
-    let bot = match store::get_bot(&db, &user_id, &bot_id).await? {
-        Some(b) => b,
-        None => return util::err(404, "SlaveBot not found."),
-    };
-
-    let form = req.form_data().await?;
-    let (bytes, content_type) = match form.get("avatar") {
-        Some(FormEntry::File(f)) => {
-            let t = f.type_();
-            (f.bytes().await?, t)
-        }
-        _ => return util::err(400, "Missing avatar image (multipart field \"avatar\")."),
-    };
+/// Core avatar upload: raw image bytes in, avatar key out. Replaces any
+/// previous avatar. The app sends base64 through the bots.set_avatar tool.
+pub(crate) async fn upload_core(
+    env: &Env,
+    db: &D1Database,
+    user_id: &str,
+    bot_id: &str,
+    bytes: Vec<u8>,
+    content_type: &str,
+) -> Result<serde_json::Value, String> {
+    let bot = store::get_bot(db, user_id, bot_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "SlaveBot not found.".to_string())?;
     if bytes.is_empty() {
-        return util::err(400, "Avatar is empty.");
+        return Err("Avatar is empty.".to_string());
     }
     if bytes.len() > MAX_AVATAR_BYTES {
-        return util::err(413, "Avatar is over the 2 MB limit.");
+        return Err("Avatar is over the 2 MB limit.".to_string());
     }
-    let ext = match ext_for(content_type.as_str()) {
-        Some(e) => e,
-        None => return util::err(400, "Avatar must be png, jpeg, webp, or gif."),
-    };
-
+    let ext = ext_for(content_type).ok_or_else(|| "Avatar must be png, jpeg, webp, or gif.".to_string())?;
     let key = format!("bots/{}/{}.{}", bot_id, new_uuid(), ext);
-    ctx.env
-        .bucket("AVATARS")?
+    env.bucket("AVATARS")
+        .map_err(|e| e.to_string())?
         .put(key.clone(), bytes)
         .http_metadata(HttpMetadata {
-            content_type: Some(content_type),
+            content_type: Some(content_type.to_string()),
             ..Default::default()
         })
         .execute()
-        .await?;
-
+        .await
+        .map_err(|e| e.to_string())?;
     if !bot.avatar_key.is_empty() {
-        let _ = ctx.env.bucket("AVATARS")?.delete(bot.avatar_key).await;
+        let _ = env.bucket("AVATARS").map_err(|e| e.to_string())?.delete(bot.avatar_key).await;
     }
     db.prepare("UPDATE slavebots SET avatar_key = ? WHERE id = ? AND user_id = ?")
         .bind(&[
             wasm_bindgen::JsValue::from_str(&key),
-            wasm_bindgen::JsValue::from_str(&bot_id),
-            wasm_bindgen::JsValue::from_str(&user_id),
-        ])?
+            wasm_bindgen::JsValue::from_str(bot_id),
+            wasm_bindgen::JsValue::from_str(user_id),
+        ])
+        .map_err(|e| e.to_string())?
         .run()
-        .await?;
-    util::json(200, &serde_json::json!({ "avatar_key": key }))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "avatar_key": key }))
 }
 
-/// GET /api/slavebots/:id/avatar — serve the stored avatar image.
-pub async fn serve(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
-        Some(id) => id,
-        None => return util::err(401, "Unauthorized."),
-    };
-    let bot_id = ctx.param("id").cloned().unwrap_or_default();
-    let db = ctx.env.d1("DB")?;
-    let bot = match store::get_bot(&db, &user_id, &bot_id).await? {
-        Some(b) => b,
-        None => return util::err(404, "SlaveBot not found."),
-    };
+/// Core avatar fetch: stored bytes out as base64 + content type, so the app
+/// can render a data: URL through the single /mcp endpoint.
+pub(crate) async fn read_core(
+    env: &Env,
+    db: &D1Database,
+    user_id: &str,
+    bot_id: &str,
+) -> Result<serde_json::Value, String> {
+    let bot = store::get_bot(db, user_id, bot_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "SlaveBot not found.".to_string())?;
     if bot.avatar_key.is_empty() {
-        return util::err(404, "No avatar set.");
+        return Err("No avatar set.".to_string());
     }
-    let obj = ctx
-        .env
-        .bucket("AVATARS")?
+    let obj = env
+        .bucket("AVATARS")
+        .map_err(|e| e.to_string())?
         .get(bot.avatar_key)
         .execute()
-        .await?;
-    let obj = match obj {
-        Some(o) => o,
-        None => return util::err(404, "Avatar file missing."),
-    };
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Avatar file missing.".to_string())?;
     let content_type = obj
         .http_metadata()
         .content_type
         .unwrap_or_else(|| "application/octet-stream".to_string());
-    let stream = match obj.body() {
-        Some(b) => b.stream()?,
-        None => return util::err(404, "Avatar file empty."),
-    };
-    let mut resp = Response::from_stream(stream)?;
-    resp.headers_mut().set("Content-Type", &content_type)?;
-    resp.headers_mut().set("Cache-Control", "public, max-age=86400")?;
-    util::cors(&mut resp)?;
-    Ok(resp)
+    let bytes = obj
+        .body()
+        .ok_or_else(|| "Avatar file empty.".to_string())?
+        .bytes()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "content_type": content_type, "image_base64": crate::voice::base64_encode(&bytes) }))
 }
 
 fn new_uuid() -> String {

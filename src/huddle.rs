@@ -1,31 +1,13 @@
-use serde::Deserialize;
 use worker::*;
 
-use crate::{auth, chat, provider, store, util};
+use crate::{chat, provider, store};
 
 /// Slack-style huddles: one topic is pushed to bots, and each bot decides by
 /// itself (from its role + memory) whether to join. Joined bots then discuss
 /// in the shared huddle thread. Join decisions are capped at 8 bots so one
 /// huddle start stays inside a single request's time budget.
 ///
-/// POST /api/huddles {topic, slavebot_ids?} — notify + collect decisions.
-/// GET /api/huddles — list. GET /api/huddles/:id — thread + participants.
-/// POST /api/huddles/:id/chat {message, model?} — talk to the joined bots.
-/// DELETE /api/huddles/:id — remove.
 const MAX_HUDDLE_BOTS: usize = 8;
-
-#[derive(Deserialize)]
-struct HuddleCreateBody {
-    topic: Option<String>,
-    team_id: Option<String>,
-    slavebot_ids: Option<Vec<String>>,
-}
-
-#[derive(Deserialize)]
-struct HuddleChatBody {
-    message: Option<String>,
-    model: Option<String>,
-}
 
 /// Ask one bot whether the huddle topic deserves its time.
 /// Returns (joined, reason) and bills the short decision call.
@@ -173,75 +155,6 @@ pub async fn start_huddle(
     Ok((huddle, participants))
 }
 
-pub async fn create(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
-        Some(id) => id,
-        None => return util::err(401, "Log in first."),
-    };
-    let body: HuddleCreateBody = match req.json().await {
-        Ok(b) => b,
-        Err(_) => return util::err(400, "Invalid JSON body."),
-    };
-    let db = ctx.env.d1("DB")?;
-    let team_id = body.team_id.unwrap_or_default();
-    match start_huddle(&ctx.env, &db, &user_id, &team_id, &body.topic.unwrap_or_default(), body.slavebot_ids).await {
-        Ok((huddle, participants)) => {
-            util::json(201, &serde_json::json!({ "huddle": huddle, "participants": participants }))
-        }
-        Err(e) => {
-            let status = if e.starts_with("Out of credit") {
-                402
-            } else if e == "You are not on that team." {
-                403
-            } else {
-                400
-            };
-            util::err(status, &e)
-        }
-    }
-}
-
-pub async fn list(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
-        Some(id) => id,
-        None => return util::err(401, "Log in first."),
-    };
-    let db = ctx.env.d1("DB")?;
-    let huddles = store::list_huddles(&db, &user_id).await?;
-    util::json(200, &serde_json::json!({ "huddles": huddles }))
-}
-
-pub async fn detail(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
-        Some(id) => id,
-        None => return util::err(401, "Log in first."),
-    };
-    let huddle_id = ctx.param("id").cloned().unwrap_or_default();
-    let db = ctx.env.d1("DB")?;
-    match store::get_huddle(&db, &user_id, &huddle_id).await? {
-        Some(huddle) => {
-            let participants = store::huddle_participants(&db, &huddle_id).await?;
-            let messages = store::huddle_history(&db, &huddle_id, 100).await?;
-            util::json(200, &serde_json::json!({ "huddle": huddle, "participants": participants, "messages": messages }))
-        }
-        None => util::err(404, "Huddle not found."),
-    }
-}
-
-pub async fn delete(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
-        Some(id) => id,
-        None => return util::err(401, "Log in first."),
-    };
-    let huddle_id = ctx.param("id").cloned().unwrap_or_default();
-    let db = ctx.env.d1("DB")?;
-    if store::delete_huddle(&db, &user_id, &huddle_id).await? {
-        util::json(200, &serde_json::json!({ "deleted": true }))
-    } else {
-        util::err(404, "Huddle not found.")
-    }
-}
-
 pub struct HuddleChatResult {
     pub replies: Vec<serde_json::Value>,
     pub total_cost: f64,
@@ -347,9 +260,14 @@ pub async fn post_message(
             Ok(d) => d,
             Err(e) => {
                 console_error!("huddle chat bot {} failed: {e}", bot.id);
+                let msg = if e.starts_with("No model") || e.starts_with("No model key") || e.starts_with("This provider") {
+                    e
+                } else {
+                    chat::describe_upstream_error(502, &e)
+                };
                 replies.push(serde_json::json!({
                     "slavebot_id": bot.id, "name": bot.name,
-                    "error": chat::describe_upstream_error(502, &e),
+                    "error": msg,
                 }));
                 continue;
             }
@@ -385,43 +303,4 @@ pub async fn post_message(
     store::touch_huddle(db, huddle_id).await.map_err(|e| e.to_string())?;
     Ok(HuddleChatResult { replies, total_cost, credit: remaining })
 
-}
-
-/// POST /api/huddles/:id/chat — talk to the bots that joined.
-pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
-        Some(id) => id,
-        None => return util::err(401, "Log in first."),
-    };
-    let body: HuddleChatBody = match req.json().await {
-        Ok(b) => b,
-        Err(_) => return util::err(400, "Invalid JSON body."),
-    };
-    let huddle_id = ctx.param("id").cloned().unwrap_or_default();
-    let db = ctx.env.d1("DB")?;
-    match post_message(
-        &ctx.env,
-        &db,
-        &user_id,
-        &huddle_id,
-        &body.message.unwrap_or_default(),
-        body.model,
-    )
-    .await
-    {
-        Ok(r) => util::json(
-            200,
-            &serde_json::json!({ "replies": r.replies, "total_cost_usd": r.total_cost, "credit_usd": r.credit }),
-        ),
-        Err(e) => {
-            let status = if e.starts_with("Out of credit") {
-                402
-            } else if e == "Huddle not found." {
-                404
-            } else {
-                400
-            };
-            util::err(status, &e)
-        }
-    }
 }

@@ -1,8 +1,8 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  addGroupMember,
+  addGroupMembers,
   appendMemory,
-  avatarUrl,
+  fetchAvatar,
   createBot,
   createGroup,
   createHuddle,
@@ -28,7 +28,6 @@ import {
   fetchTeamActivity,
   fetchTeams,
   fetchUsage,
-  finishChat,
   grantBotAccess,
   inviteMember,
   removeMember,
@@ -38,16 +37,16 @@ import {
   groupChat,
   huddleChat,
   login,
-  plainChat,
+  sendChat,
   register,
   removeGroupMember,
   renameGroup,
   runSummary,
   setTeamProvider,
+  testTeamProvider,
   setToken,
   speakVoice,
   spawnSubBot,
-  streamChat,
   transcribeVoice,
   transferBot,
   updateBot,
@@ -95,7 +94,6 @@ function avatarColor(id: string): string {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
-const avatarCache = new Map<string, string>();
 
 function BotAvatar({ bot, size = "md" }: { bot: SlaveBot; size?: "sm" | "md" | "lg" }) {
   const [url, setUrl] = useState<string | null>(null);
@@ -106,30 +104,9 @@ function BotAvatar({ bot, size = "md" }: { bot: SlaveBot; size?: "sm" | "md" | "
       return;
     }
     let cancelled = false;
-    const cacheKey = `${bot.id}:${bot.avatar_key}`;
-    const cached = avatarCache.get(cacheKey);
-    if (cached) {
-      setUrl(cached);
-      return;
-    }
-    const headers: Record<string, string> = {};
-    const t = localStorage.getItem("slaver_token");
-    if (t) headers.Authorization = `Bearer ${t}`;
-    fetch(avatarUrl(bot.id), { headers })
-      .then((r) => (r.ok ? r.blob() : null))
-      .then((blob) => {
-        if (cancelled) return;
-        if (blob) {
-          const objectUrl = URL.createObjectURL(blob);
-          avatarCache.set(cacheKey, objectUrl);
-          setUrl(objectUrl);
-        } else {
-          setUrl(null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setUrl(null);
-      });
+    fetchAvatar(bot.id).then((u) => {
+      if (!cancelled) setUrl(u);
+    });
     return () => {
       cancelled = true;
     };
@@ -147,6 +124,27 @@ function BotAvatar({ bot, size = "md" }: { bot: SlaveBot; size?: "sm" | "md" | "
     <div className={`${dims} ${avatarColor(bot.id)} flex shrink-0 items-center justify-center rounded-full font-bold text-white`}>
       {(bot.name || "?").slice(0, 1).toUpperCase()}
     </div>
+  );
+}
+
+/** Small inline spinner for busy buttons. */
+function Spinner() {
+  return (
+    <svg className="inline h-4 w-4 animate-spin text-current" viewBox="0 0 24 24" fill="none" aria-label="Loading">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+  );
+}
+
+/** Three bouncing dots for "bot is typing". Motion is disabled when the OS asks for reduced motion. */
+function TypingDots() {
+  return (
+    <span className="typing-dots" aria-label="Bot is typing">
+      <span />
+      <span />
+      <span />
+    </span>
   );
 }
 
@@ -230,7 +228,15 @@ interface UiMessage {
 }
 
 function LogsView({ summary }: { summary: UsageSummary | null }) {
-  if (!summary) return <div className="p-8 text-center text-zinc-400">Loading usage...</div>;
+  if (!summary) {
+    return (
+      <div className="space-y-2 p-8" aria-label="Loading usage">
+        <div className="loading-skeleton h-6 w-1/2" />
+        <div className="loading-skeleton h-20 w-full" />
+        <div className="loading-skeleton h-20 w-full" />
+      </div>
+    );
+  }
   return (
     <div className="mx-auto w-full max-w-3xl p-6">
       <div className="mb-3 flex gap-3">
@@ -363,9 +369,7 @@ function GroupView({
     setError("");
     setBusy(true);
     try {
-      for (const id of picked) {
-        await addGroupMember(groupId, id);
-      }
+      await addGroupMembers(groupId, picked);
       setPicked([]);
       setPickFilter("");
       setAddOpen(false);
@@ -401,7 +405,15 @@ function GroupView({
     }
   }
 
-  if (!detail) return <div className="p-8 text-center text-zinc-400">Loading group...</div>;
+  if (!detail) {
+    return (
+      <div className="mx-auto w-full max-w-3xl space-y-2 p-8" aria-label="Loading group">
+        <div className="loading-skeleton h-8 w-1/3" />
+        <div className="loading-skeleton h-24 w-full" />
+        <div className="loading-skeleton h-24 w-full" />
+      </div>
+    );
+  }
   const outsiders = bots.filter((b) => !b.archived && !detail.members.some((m) => m.id === b.id));
 
   return (
@@ -587,7 +599,7 @@ function GroupView({
           +memory
         </label>
         <button type="submit" disabled={!task.trim() || busy} className="shrink-0 rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
-          {busy ? "..." : "Send"}
+          {busy ? <Spinner /> : "Send"}
         </button>
       </form>
     </div>
@@ -756,7 +768,13 @@ function HuddleView({
   }
 
   if (!detail) {
-    return <p className="p-8 text-center text-zinc-400">{error || "Loading huddle..."}</p>;
+    return (
+      <div className="mx-auto w-full max-w-3xl space-y-2 p-8" aria-label="Loading huddle">
+        <div className="loading-skeleton h-8 w-1/3" />
+        <div className="loading-skeleton h-24 w-full" />
+        <div className="loading-skeleton h-24 w-full" />
+      </div>
+    );
   }
 
   const joined = detail.participants.filter((p) => p.decision === "join");
@@ -844,7 +862,7 @@ function HuddleView({
           className="max-h-40 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
         />
         <button type="submit" disabled={!task.trim() || busy} className="shrink-0 rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
-          {busy ? "..." : "Send"}
+          {busy ? <Spinner /> : "Send"}
         </button>
       </form>
     </div>
@@ -1109,26 +1127,50 @@ function TeamView({ bot, onOpenBot, onTeamChanged }: { bot: SlaveBot; onOpenBot:
 }
 
 const TEAM_PROVIDER_PRESETS = [
-  { id: "meta", label: "Meta (Spark / Wonder) — default", needs_url: false },
-  { id: "baseten", label: "Baseten", needs_url: true },
-  { id: "modal", label: "Modal", needs_url: true },
-  { id: "openrouter", label: "OpenRouter (last resort)", needs_url: false },
-  { id: "custom", label: "Custom (OpenAI-compatible)", needs_url: true },
+  { id: "meta", label: "Meta (Spark / Wonder) — default", needs_url: false, placeholder: "", help: "One key from dev.meta.ai. Models: muse-spark-1.3, muse-wonder-1.0." },
+  { id: "openrouter", label: "OpenRouter (last resort)", needs_url: false, placeholder: "", help: "Key sk-or-v1-… from openrouter.ai/keys. Fixed model list." },
+  { id: "opencode", label: "OpenCode gateway (OpenAI-compatible) — recommended for BYOK", needs_url: true, placeholder: "http://localhost:4096/v1", help: "Point at your OpenCode / OpenAI-compatible gateway root ending in /v1. Do NOT append /chat/completions. Key optional for local servers." },
+  { id: "ollama", label: "Ollama (local, no key)", needs_url: true, placeholder: "http://localhost:11434/v1", help: "Local Ollama. No key needed. Model must be pulled first — run `ollama list` and use that exact id in Bot settings." },
+  { id: "baseten", label: "Baseten", needs_url: true, placeholder: "https://inference.baseten.co/v1", help: "Your Baseten deployment base URL + API key." },
+  { id: "modal", label: "Modal", needs_url: true, placeholder: "https://<you>--<app>.modal.run/v1", help: "Your deployed Modal function URL (API root) + key." },
+  { id: "custom", label: "Custom (any OpenAI-compatible server)", needs_url: true, placeholder: "http://127.0.0.1:1234/v1", help: "Any OpenAI-compatible server (vLLM, LM Studio, …). Root must end in /v1. Key optional only for localhost." },
 ];
+
+function isLocalHost(v: string): boolean {
+  const s = v.trim().toLowerCase();
+  return (
+    s.includes("localhost") || s.includes("127.0.0.1") || s.includes("0.0.0.0") || s.includes("192.168.") || s.includes("10.") || s.includes(".local")
+  );
+}
 
 function TeamProviderSection({ team, onChanged }: { team: TeamDetail["team"]; onChanged: () => void }) {
   const [preset, setPreset] = useState(team.provider || "meta");
   const [baseUrl, setBaseUrl] = useState(team.provider_base_url || "");
   const [apiKey, setApiKey] = useState("");
+  const [testModel, setTestModel] = useState("");
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
-  const needsUrl = (TEAM_PROVIDER_PRESETS.find((x) => x.id === preset)?.needs_url ?? preset === "custom");
+  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string; endpoint?: string; model?: string; models?: string[]; notes?: string[] } | null>(null);
+  const meta = TEAM_PROVIDER_PRESETS.find((x) => x.id === preset) ?? TEAM_PROVIDER_PRESETS[0];
+  const needsUrl = meta.needs_url;
+  const keyOptional = preset === "ollama" || (needsUrl && isLocalHost(baseUrl));
+
+  function normalizedEndpoint(): string {
+    let b = baseUrl.trim();
+    if (!b && !needsUrl) {
+      b = preset === "openrouter" ? "https://openrouter.ai/api/v1" : "https://api.meta.ai/v1";
+    }
+    b = b.replace(/\/+$/, "").replace(/\/chat\/completions$/, "");
+    return b ? `${b}/chat/completions` : "";
+  }
 
   async function save(e?: React.FormEvent) {
     e?.preventDefault();
     if (busy) return;
     setBusy(true);
     setError("");
+    setTestResult(null);
     try {
       await setTeamProvider(team.id, { preset, base_url: needsUrl ? baseUrl.trim() : undefined, api_key: apiKey.trim() || undefined });
       setApiKey("");
@@ -1137,6 +1179,28 @@ function TeamProviderSection({ team, onChanged }: { team: TeamDetail["team"]; on
       setError(err instanceof Error ? err.message : "Could not save provider.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function runTest() {
+    if (testing) return;
+    setTesting(true);
+    setError("");
+    setTestResult(null);
+    try {
+      // Save first so the test hits the latest config (keep existing key when blank).
+      await setTeamProvider(team.id, { preset, base_url: needsUrl ? baseUrl.trim() : undefined, api_key: apiKey.trim() || undefined });
+      setApiKey("");
+      onChanged();
+      const res = await testTeamProvider(team.id, testModel.trim() || undefined);
+      setTestResult(res);
+      if (!res.ok) setError(res.error || "Connection test failed.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Connection test failed.";
+      setError(msg);
+      setTestResult({ ok: false, error: msg });
+    } finally {
+      setTesting(false);
     }
   }
 
@@ -1155,41 +1219,75 @@ function TeamProviderSection({ team, onChanged }: { team: TeamDetail["team"]; on
   }
 
   return (
-    <div className="mt-4 rounded-md border border-zinc-800 bg-zinc-800/40 p-3">
-      <h4 className="text-sm font-bold uppercase tracking-wide text-zinc-500">AI provider</h4>
-      <form onSubmit={save} className="mt-2">
-        <label className="block text-xs font-semibold text-zinc-400">
+    <div className="mt-4 rounded-xl border border-zinc-800 bg-gradient-to-b from-zinc-900 to-zinc-900/60 p-4 shadow-sm">
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-bold uppercase tracking-wide text-zinc-400">AI provider</h4>
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${team.provider_key_set || keyOptional ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300"}`}>
+          {team.provider_key_set ? "key saved" : keyOptional ? "keyless local OK" : "key missing"}
+        </span>
+      </div>
+      <form onSubmit={save} className="mt-3 space-y-3">
+        <label className="block text-xs font-semibold text-zinc-300">
           Preset
-          <select value={preset} onChange={(e) => setPreset(e.target.value)} className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none">
+          <select value={preset} onChange={(e) => { setPreset(e.target.value); setTestResult(null); }} className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-2 text-sm text-zinc-100 focus:border-indigo-500 focus:outline-none">
             {TEAM_PROVIDER_PRESETS.map((x) => (
               <option key={x.id} value={x.id}>{x.label}</option>
             ))}
           </select>
         </label>
+        <p className="text-[11px] leading-snug text-zinc-500">{meta.help}</p>
         {needsUrl && (
-          <label className="mt-2 block text-xs font-semibold text-zinc-400">
-            Base URL
-            <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://..." autoComplete="off" className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+          <label className="block text-xs font-semibold text-zinc-300">
+            Base URL <span className="font-normal text-zinc-500">(API root ending in /v1)</span>
+            <input value={baseUrl} onChange={(e) => { setBaseUrl(e.target.value); setTestResult(null); }} placeholder={meta.placeholder || "https://..."} autoComplete="off" spellCheck={false} className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-2 font-mono text-[13px] text-zinc-100 placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none" />
           </label>
         )}
-        <label className="mt-2 block text-xs font-semibold text-zinc-400">
-          API key {team.provider_key_set ? "(saved — enter a new one to replace)" : "(required)"}
-          <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={team.provider_key_set ? "••••••••" : "paste key..."} autoComplete="off" className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+        <label className="block text-xs font-semibold text-zinc-300">
+          API key {team.provider_key_set ? "(saved — enter a new one to replace)" : keyOptional ? "(optional for local)" : "(required)"}
+          <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={team.provider_key_set ? "••••••••" : keyOptional ? "leave empty for local" : "paste key..."} autoComplete="off" className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none" />
         </label>
-        <div className="mt-2 flex items-center gap-2">
-          <button type="submit" disabled={busy} className="rounded-md bg-zinc-700 px-3 py-1.5 text-sm font-bold text-white hover:bg-zinc-600 disabled:opacity-50">
+        {needsUrl && baseUrl.trim() && (
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Requests will POST to</div>
+            <div className="mt-0.5 break-all font-mono text-[12px] text-indigo-300">{normalizedEndpoint() || "—"}</div>
+            {baseUrl.trim().endsWith("/chat/completions") && (
+              <div className="mt-1 text-[11px] text-amber-300">You pasted the full endpoint — we strip the trailing /chat/completions automatically.</div>
+            )}
+          </div>
+        )}
+        <label className="block text-xs font-semibold text-zinc-300">
+          Test model <span className="font-normal text-zinc-500">(exact id from your server's /v1/models)</span>
+          <input value={testModel} onChange={(e) => setTestModel(e.target.value)} placeholder="e.g. qwen3:8b — leave empty to use first listed model" autoComplete="off" spellCheck={false} className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-2 font-mono text-[13px] text-zinc-100 placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none" />
+        </label>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="submit" disabled={busy || testing} className="rounded-lg bg-zinc-100 px-3.5 py-2 text-sm font-bold text-zinc-900 hover:bg-white disabled:opacity-50">
             {busy ? "Saving..." : "Save provider"}
           </button>
+          <button type="button" onClick={runTest} disabled={testing || busy} className="rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-50">
+            {testing ? "Testing..." : "Save + test connection"}
+          </button>
           {team.provider_key_set && (
-            <button type="button" onClick={remove} disabled={busy} className="rounded px-2 py-1 text-xs text-zinc-500 hover:text-red-400 disabled:opacity-50">
+            <button type="button" onClick={remove} disabled={busy || testing} className="rounded px-2 py-1 text-xs text-zinc-500 hover:text-red-400 disabled:opacity-50">
               Remove key
             </button>
           )}
         </div>
-        <p className="mt-1 text-[11px] text-zinc-500">
-          {team.provider_key_set ? "Team key active — this key pays the provider directly, demo credit untouched." : "No key yet — bots in this team cannot chat until an owner or admin adds one."}
+        {testResult && (
+          <div className={`rounded-lg border px-3 py-2 text-[12px] ${testResult.ok ? "border-emerald-800 bg-emerald-950/60 text-emerald-200" : "border-red-800 bg-red-950/50 text-red-200"}`}>
+            <div className="font-bold">{testResult.ok ? "Connection OK" : "Connection failed"}</div>
+            {testResult.endpoint && <div className="mt-0.5 break-all font-mono text-[11px] opacity-80">{testResult.endpoint}{testResult.model ? ` · ${testResult.model}` : ""}</div>}
+            {testResult.models && testResult.models.length > 0 && (
+              <div className="mt-1 opacity-90">Server models: <span className="font-mono">{testResult.models.slice(0, 8).join(", ")}</span>{testResult.models.length > 8 ? ` +${testResult.models.length - 8} more` : ""}</div>
+            )}
+            {testResult.notes?.map((n, i) => <div key={i} className="mt-0.5 opacity-80">{n}</div>)}
+            {!testResult.ok && testResult.error && <div className="mt-1">{testResult.error}</div>}
+          </div>
+        )}
+        <p className="text-[11px] text-zinc-500">
+          {team.provider_key_set ? "Team key active — this key pays the provider directly, demo credit untouched." : keyOptional ? "No key saved — OK for keyless local servers only." : "No key yet — bots in this team cannot chat until an owner or admin adds one."}
+          {" "}Fixing a 404? The model id must exactly match your server, and the base URL must be the /v1 root.
         </p>
-        {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+        {error && !testResult && <p className="text-xs text-red-400">{error}</p>}
       </form>
     </div>
   );
@@ -1671,8 +1769,8 @@ function BotView({
           </span>
         </label>
         <label className="text-sm font-semibold text-zinc-300">
-          Model
-          <input value={model} onChange={(e) => { setModel(e.target.value); setSaved(false); }} list="bot-model-list" className={inputCls} />
+          Model <span className="font-normal text-zinc-500">(exact id your server exposes)</span>
+          <input value={model} onChange={(e) => { setModel(e.target.value); setSaved(false); }} list="bot-model-list" placeholder={providerInfo?.custom_allowed ? (providerInfo.example_models || "e.g. qwen3:8b") : "pick a model"} spellCheck={false} className={`${inputCls} font-mono ${!model.trim() ? "border-amber-600" : ""}`} />
           <datalist id="bot-model-list">
             {(providerInfo?.models ?? []).map((m) => (
               <option key={m.id} value={m.id}>
@@ -1682,7 +1780,14 @@ function BotView({
           </datalist>
           {providerInfo && (
             <span className="mt-1 block text-xs font-normal text-zinc-500">
-              Provider: {providerInfo.provider_label ?? providerInfo.provider} · default {providerInfo.default}
+              Provider: {providerInfo.provider_label ?? providerInfo.provider}
+              {providerInfo.default ? ` · default ${providerInfo.default}` : " · no fixed list — free-form id"}
+              {providerInfo.example_models ? ` · ${providerInfo.example_models}` : ""}
+            </span>
+          )}
+          {!model.trim() && (
+            <span className="mt-1 block rounded-md border border-amber-800 bg-amber-950/60 px-2 py-1 text-xs font-normal text-amber-200">
+              No model set — chat will fail with a 404 until you save an exact model id here (check Teams → Save + test connection for the server's model list).
             </span>
           )}
         </label>
@@ -1773,12 +1878,15 @@ function BotView({
         <div className="mb-3 flex items-center justify-between">
           <h3 className="font-semibold text-zinc-200">Conversation recaps</h3>
           <button type="button" disabled={summarizing} onClick={summarizeNow} className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800 disabled:opacity-50">
-            {summarizing ? "Summarizing..." : "Summarize now"}
+            {summarizing ? <Spinner /> : "Summarize now"}
           </button>
         </div>
         <p className="mb-3 text-xs text-zinc-500">Daily recaps are generated every night; weekly on Mondays; monthly on the 1st. The bot reads these as older context.</p>
         {!summaries ? (
-          <p className="text-sm text-zinc-400">Loading...</p>
+          <div className="space-y-2" aria-label="Loading summaries">
+            <div className="loading-skeleton h-10 w-full" />
+            <div className="loading-skeleton h-10 w-full" />
+          </div>
         ) : summaries.daily.length + summaries.weekly.length + summaries.monthly.length === 0 ? (
           <p className="text-sm text-zinc-400">No recaps yet — chat first, then summarize.</p>
         ) : (
@@ -1829,7 +1937,6 @@ export default function App() {
   const [botFilter, setBotFilter] = useState("");
   const [memberNames, setMemberNames] = useState<Record<string, string>>({});
   const keyRef = useRef(0);
-  const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const recTimer = useRef<number | null>(null);
   const converseRef = useRef(false);
@@ -1977,8 +2084,8 @@ export default function App() {
         return;
       }
     } catch (err) {
-      if (err instanceof Error && err.message === "SERVER_VOICE_UNCONFIGURED") {
-        setError("Server voice is not configured yet — using the built-in voice. Set CF_ACCOUNT_ID / CF_AI_TOKEN on the server to enable Aura voices.");
+      if (err instanceof Error && /key|config|credential|permission|credit/i.test(err.message)) {
+        setError(`Server voice unavailable (${err.message}) — using the built-in voice.`);
       }
     } finally {
       if (key !== null) setSpeakingKey((k) => (k === key ? null : k));
@@ -2060,7 +2167,8 @@ export default function App() {
   async function newBot(ownerId?: string) {
     setError("");
     try {
-      const created = await createBot(providerInfo?.default ?? "meta-llama/llama-3.3-70b-instruct", teamId ?? undefined, ownerId || undefined);
+      const fallbackModel = (providerInfo?.default?.trim() || (providerInfo?.custom_allowed ? "" : "muse-spark-1.3") || "muse-spark-1.3");
+      const created = await createBot(fallbackModel, teamId ?? undefined, ownerId || undefined);
       await refreshBots();
       setCreating(false);
       await openBot(created.id);
@@ -2069,9 +2177,9 @@ export default function App() {
     }
   }
 
-  const stop = useCallback(() => {
-    abortRef.current?.abort();
+  const stopSpeakingAudio = useCallback(() => {
     stopSpeaking();
+    stopAudio();
   }, []);
 
   const stopRecordingUi = useCallback(() => {
@@ -2127,7 +2235,7 @@ export default function App() {
     ]);
     setStreaming(true);
     try {
-      const res = await plainChat(bot.id, text, bot.model);
+      const res = await sendChat(bot.id, text, bot.model);
       const reply = res.reply ?? "";
       setMessages((prev) => prev.map((m) => (m.key === assistantKey ? { ...m, content: reply } : m)));
       setUser((u) => (u ? { ...u, credit_usd: res.credit_usd } : u));
@@ -2145,6 +2253,7 @@ export default function App() {
     }
   }
 
+  /** Single-input chat: one MCP call, the assistant bubble shows a typing indicator meanwhile. */
   async function sendText(text: string, fromVoice = false) {
     if (!text || streaming || !bot) return;
     stopAudio();
@@ -2157,30 +2266,13 @@ export default function App() {
       { key: assistantKey, role: "assistant", content: "" },
     ]);
     setStreaming(true);
-    const controller = new AbortController();
-    abortRef.current = controller;
-    let content = "";
-    let streamUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
-
-    const patchAssistant = (c: string) =>
-      setMessages((prev) => prev.map((m) => (m.key === assistantKey ? { ...m, content: c } : m)));
-
     try {
-      const returnedId = await streamChat(bot.id, text, bot.model, {
-        signal: controller.signal,
-        onToken: (delta) => {
-          content += delta;
-          patchAssistant(content);
-        },
-        onUsage: (u) => {
-          streamUsage = u;
-        },
-      });
-      const finalId = returnedId || bot.id;
-      await finishChat(finalId, content, streamUsage);
+      const res = await sendChat(bot.id, text, bot.model);
+      const content = res.reply ?? "";
+      setMessages((prev) => prev.map((m) => (m.key === assistantKey ? { ...m, content } : m)));
       await refreshBots();
       await refreshUser();
-      const detail = await fetchBotDetail(finalId);
+      const detail = await fetchBotDetail(bot.id);
       setBot(detail.slavebot);
       if (fromVoice) {
         await speakReply(content, null, true);
@@ -2188,17 +2280,11 @@ export default function App() {
         speak(content);
       }
     } catch (err) {
-      if ((err as Error).name === "AbortError") {
-        patchAssistant(`${content}\n— stopped.`);
-        setError("Stream stopped. The partial reply was not saved.");
-      } else {
-        setError(err instanceof Error ? err.message : "Chat failed.");
-        setMessages((prev) => prev.filter((m) => m.key !== assistantKey));
-      }
+      setError(err instanceof Error ? err.message : "Chat failed.");
+      setMessages((prev) => prev.filter((m) => m.key !== assistantKey));
       throw err;
     } finally {
       setStreaming(false);
-      abortRef.current = null;
     }
   }
 
@@ -2332,12 +2418,12 @@ export default function App() {
   }
 
   const railBtn = (active: boolean) =>
-    `flex h-10 w-10 items-center justify-center rounded-lg text-lg ${active ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:bg-zinc-800/60 hover:text-zinc-200"}`;
+    `side-row flex h-11 w-11 items-center justify-center rounded-2xl text-lg shadow-sm ${active ? "bg-indigo-600 text-white" : "bg-zinc-800/70 text-zinc-400 hover:rounded-xl hover:bg-zinc-800 hover:text-zinc-100"}`;
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-100">
-      {/* App rail — Slack-style workspace nav */}
-      <nav className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-zinc-800 bg-zinc-950 py-3">
+    <div className="flex h-screen bg-[#1e1f22] text-zinc-100">
+      {/* App rail — Discord-style server nav */}
+      <nav className="flex w-[68px] shrink-0 flex-col items-center gap-2 border-r border-black/40 bg-[#1e1f22] py-3">
         <button type="button" onClick={() => setView("chat")} title="Home" className={railBtn(view === "chat" || view === "group" || view === "bot")}>⌂</button>
         <button type="button" onClick={() => openHuddle(null)} title="New huddle" className={railBtn(false)}>◉</button>
         <button type="button" onClick={() => setView("teams")} title="Teams" className={railBtn(view === "teams")}>▦</button>
@@ -2349,14 +2435,17 @@ export default function App() {
           </span>
         </div>
       </nav>
-      {/* Sidebar — workspace sections */}
+      {/* Sidebar — Slack-style channel sections */}
       {sideOpen && (
-        <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setSideOpen(false)} />
+        <div className="fixed inset-0 z-30 bg-black/60 backdrop-blur-[1px] md:hidden" onClick={() => setSideOpen(false)} />
       )}
-      <aside className={`${sideOpen ? "fixed inset-y-0 left-0 z-40 flex w-72" : "hidden"} shrink-0 flex-col border-r border-zinc-800 bg-zinc-950 md:static md:flex md:w-60`}>
-        <div className="border-b border-zinc-800 px-4 py-3">
-          <div className="truncate font-bold">{teams.find((t) => t.id === teamId)?.name ?? "SlaveBots"}</div>
-          <div className="truncate text-xs text-zinc-500">{teams.find((t) => t.id === teamId)?.role ?? user.email}</div>
+      <aside className={`${sideOpen ? "fixed inset-y-0 left-0 z-40 flex w-72" : "hidden"} shrink-0 flex-col border-r border-black/40 bg-[#2b2d31] md:static md:flex md:w-64`}>
+        <div className="border-b border-black/30 px-4 py-3 shadow-sm">
+          <div className="truncate text-[15px] font-bold text-white">{teams.find((t) => t.id === teamId)?.name ?? "SlaveBots"}</div>
+          <div className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-zinc-400">
+            <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+            {teams.find((t) => t.id === teamId)?.role ?? user.email}
+          </div>
         </div>
         <div className="border-b border-zinc-800 px-3 py-2">
           <label className="block text-[11px] font-bold uppercase tracking-wide text-zinc-500">
@@ -2498,9 +2587,9 @@ export default function App() {
         </div>
       </aside>
 
-      {/* Main */}
-      <div className="flex min-w-0 flex-1 flex-col bg-zinc-900">
-        <header className="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2 md:px-4">
+      {/* Main — Discord-style chat column */}
+      <div className="flex min-w-0 flex-1 flex-col bg-[#313338]">
+        <header className="flex items-center justify-between gap-2 border-b border-black/30 bg-[#313338]/95 px-3 py-2 shadow-sm backdrop-blur md:px-4">
           <div className="flex min-w-0 items-center gap-1">
             <button type="button" onClick={() => setSideOpen((v) => !v)} title="Conversations" className="rounded-md px-2 py-1 text-lg text-zinc-300 hover:bg-zinc-800 md:hidden">
               ☰
@@ -2652,7 +2741,7 @@ export default function App() {
                         </button>
                       )}
                     </div>
-                    <div className="whitespace-pre-wrap break-words text-[15px] text-zinc-200">{renderMentions(m.content) || (streaming ? "…" : "")}</div>
+                    <div className="whitespace-pre-wrap break-words text-[15px] text-zinc-200">{m.content ? renderMentions(m.content) : m.role === "assistant" && streaming ? <TypingDots /> : ""}</div>
                   </div>
                 </div>
                   </Fragment>
@@ -2702,15 +2791,10 @@ export default function App() {
                   disabled={!bot}
                   className="max-h-40 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
                 />
-                {streaming ? (
-                  <button type="button" onClick={stop} className="shrink-0 rounded-md bg-red-700 px-4 py-2 text-sm font-bold text-white hover:bg-red-600">
-                    Stop
+                <button type="submit" disabled={!input.trim() || !bot || streaming} className="flex shrink-0 items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
+                    {streaming ? <Spinner /> : null}
+                    {streaming ? "Sending" : "Send"}
                   </button>
-                ) : (
-                  <button type="submit" disabled={!input.trim() || !bot} className="shrink-0 rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
-                    Send
-                  </button>
-                )}
               </form>
             </div>
           </>

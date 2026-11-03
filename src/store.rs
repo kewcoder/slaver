@@ -80,8 +80,11 @@ pub async fn set_team_provider(db: &D1Database, team_id: &str, actor_id: &str, p
         Some(r) if r == "owner" || r == "admin" => {}
         _ => return Err("Only owners and admins can change the team AI provider.".to_string()),
     }
+    let preset = preset.trim().to_lowercase();
+    let base_url = crate::provider::normalize_base_url(base_url);
+    let api_key = api_key.trim().to_string();
     db.prepare("UPDATE teams SET provider = ?, provider_base_url = ?, provider_api_key = ? WHERE id = ?")
-        .bind(&[str_val(preset), str_val(base_url), str_val(api_key), str_val(team_id)])
+        .bind(&[str_val(&preset), str_val(&base_url), str_val(&api_key), str_val(team_id)])
         .map_err(|e| e.to_string())?
         .run()
         .await
@@ -307,16 +310,6 @@ pub async fn recent_messages(db: &D1Database, slavebot_id: &str, limit: i32) -> 
     // Defensive: keep only valid roles for the upstream call.
     msgs.retain(|m| m.role == "system" || m.role == "user" || m.role == "assistant");
     Ok(msgs)
-}
-
-pub async fn prompt_chars(db: &D1Database, slavebot_id: &str) -> Result<usize> {
-    let rows: Vec<MessageRow> = db
-        .prepare("SELECT role, content, created_at FROM messages WHERE slavebot_id = ? ORDER BY id ASC")
-        .bind(&[str_val(slavebot_id)])?
-        .all()
-        .await?
-        .results()?;
-    Ok(rows.iter().map(|r| r.role.len() + r.content.len()).sum())
 }
 
 pub struct UsageInput {

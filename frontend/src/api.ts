@@ -1,20 +1,11 @@
+/// Single-endpoint MCP client: every app action is a JSON-RPC `tools/call`
+/// against POST /mcp. No other API endpoints exist.
+
 export interface User {
   id: string;
   email: string;
   name: string;
   credit_usd: number;
-}
-
-export async function setTeamProvider(teamId: string, p: { preset: string; base_url?: string; api_key?: string }): Promise<TeamDetail["team"]> {
-  const data = await request<{ team: TeamDetail["team"] }>(`/api/teams/${encodeURIComponent(teamId)}/provider`, {
-    method: "PUT",
-    body: JSON.stringify(p),
-  });
-  return data.team;
-}
-
-export async function clearTeamProvider(teamId: string): Promise<void> {
-  await request(`/api/teams/${encodeURIComponent(teamId)}/provider`, { method: "DELETE" });
 }
 
 export interface ProviderInfo {
@@ -24,11 +15,17 @@ export interface ProviderInfo {
   models: { id: string; label: string; default: boolean }[];
   custom_allowed: boolean;
   default: string;
+  example_models?: string;
+  default_base?: string;
 }
 
-export async function fetchProviderModels(teamId?: string): Promise<ProviderInfo> {
-  const q = teamId ? `?team_id=${encodeURIComponent(teamId)}` : "";
-  return request<ProviderInfo>(`/api/models${q}`);
+export interface ProviderTest {
+  ok: boolean;
+  error?: string;
+  endpoint?: string;
+  model?: string;
+  models?: string[];
+  notes?: string[];
 }
 
 export interface Team {
@@ -56,65 +53,6 @@ export interface TeamDetail {
   my_role: string;
   members: TeamMember[];
   bots: SlaveBot[];
-}
-
-export async function fetchTeams(): Promise<Team[]> {
-  const data = await request<{ teams: Team[] }>("/api/teams");
-  return data.teams;
-}
-
-export async function createTeam(name: string): Promise<Team> {
-  const data = await request<{ team: Team }>("/api/teams", {
-    method: "POST",
-    body: JSON.stringify({ name }),
-  });
-  return data.team;
-}
-
-export async function fetchTeamDetail(teamId: string): Promise<TeamDetail> {
-  return request<TeamDetail>(`/api/teams/${encodeURIComponent(teamId)}`);
-}
-
-export const fetchTeam = fetchTeamDetail;
-
-export async function deleteTeam(teamId: string): Promise<void> {
-  await request(`/api/teams/${encodeURIComponent(teamId)}`, { method: "DELETE" });
-}
-
-export async function setMemberRole(teamId: string, userId: string, role: string): Promise<void> {
-  await updateMember(teamId, userId, { role });
-}
-
-export async function setGrants(teamId: string, userId: string, bot_ids: string[]): Promise<void> {
-  await updateMember(teamId, userId, { bot_ids });
-}
-
-export async function grantBotAccess(teamId: string, botId: string, userId: string, current: string[]): Promise<void> {
-  await setGrants(teamId, userId, Array.from(new Set([...current, botId])));
-}
-
-export async function revokeBotAccess(teamId: string, botId: string, userId: string, current: string[]): Promise<void> {
-  await setGrants(teamId, userId, current.filter((b) => b !== botId));
-}
-
-export async function inviteMember(teamId: string, email: string, role: string): Promise<void> {
-  await request(`/api/teams/${encodeURIComponent(teamId)}/invites`, {
-    method: "POST",
-    body: JSON.stringify({ email, role }),
-  });
-}
-
-export async function removeMember(teamId: string, userId: string): Promise<void> {
-  await request(`/api/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`, {
-    method: "DELETE",
-  });
-}
-
-export async function updateMember(teamId: string, userId: string, patch: { role?: string; bot_ids?: string[] }): Promise<void> {
-  await request(`/api/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`, {
-    method: "PUT",
-    body: JSON.stringify(patch),
-  });
 }
 
 export interface SlaveBot {
@@ -222,79 +160,6 @@ export interface GroupReply {
   cost_usd?: number;
 }
 
-export async function fetchGroups(): Promise<Group[]> {
-  const data = await request<{ groups: Group[] }>("/api/groups");
-  return data.groups;
-}
-
-export async function createGroup(name: string, team_id?: string): Promise<Group> {
-  const data = await request<{ group: Group }>("/api/groups", {
-    method: "POST",
-    body: JSON.stringify({ name, team_id }),
-  });
-  return data.group;
-}
-
-export async function fetchGroupDetail(groupId: string): Promise<GroupDetail> {
-  return request<GroupDetail>(`/api/groups/${encodeURIComponent(groupId)}`);
-}
-
-export async function deleteGroup(groupId: string): Promise<void> {
-  await request(`/api/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
-}
-
-export async function addGroupMember(groupId: string, slavebotId: string): Promise<void> {
-  await request(`/api/groups/${encodeURIComponent(groupId)}/members`, {
-    method: "POST",
-    body: JSON.stringify({ slavebot_id: slavebotId }),
-  });
-}
-
-export async function removeGroupMember(groupId: string, slavebotId: string): Promise<void> {
-  await request(
-    `/api/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(slavebotId)}`,
-    { method: "DELETE" },
-  );
-}
-
-export async function groupChat(
-  groupId: string,
-  message: string,
-  model?: string,
-  saveMemory?: boolean,
-): Promise<{ replies: GroupReply[]; total_cost_usd: number; credit_usd: number; saved_to_memory: string[] }> {
-  return request(`/api/groups/${encodeURIComponent(groupId)}/chat`, {
-    method: "POST",
-    body: JSON.stringify({ message, model, save_memory: saveMemory }),
-  });
-}
-
-export async function renameGroup(groupId: string, name: string): Promise<Group> {
-  const data = await request<{ group: Group }>(`/api/groups/${encodeURIComponent(groupId)}`, {
-    method: "PUT",
-    body: JSON.stringify({ name }),
-  });
-  return data.group;
-}
-
-export async function broadcast(
-  groupId: string,
-  text: string,
-  saveToMemory: boolean,
-): Promise<{ posted: boolean; saved_to_memory: string[] }> {
-  return request(`/api/groups/${encodeURIComponent(groupId)}/broadcast`, {
-    method: "POST",
-    body: JSON.stringify({ text, save_to_memory: saveToMemory }),
-  });
-}
-
-export async function appendMemory(slavebotId: string, text: string): Promise<{ memory: string }> {
-  return request(`/api/slavebots/${encodeURIComponent(slavebotId)}/memory`, {
-    method: "POST",
-    body: JSON.stringify({ text }),
-  });
-}
-
 export interface UsageSummary {
   credit_usd: number;
   spent_usd: number;
@@ -309,96 +174,11 @@ export interface ChatResult {
   credit_usd: number;
 }
 
-const TOKEN_KEY = "slaver_token";
-
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function setToken(token: string | null) {
-  if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
-}
-
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = getToken();
-  const res = await fetch(path, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init.headers ?? {}),
-    },
-  });
-  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) {
-    throw new Error(data.error ?? `Request failed (${res.status}).`);
-  }
-  return data as T;
-}
-
-
-
-export async function register(
-  email: string,
-  password: string,
-  name: string,
-): Promise<{ token: string; user: User }> {
-  const data = await request<{ token: string; user: User }>("/api/auth/register", {
-    method: "POST",
-    body: JSON.stringify({ email, password, name }),
-  });
-  setToken(data.token);
-  return data;
-}
-
-export async function login(email: string, password: string): Promise<{ token: string; user: User }> {
-  const data = await request<{ token: string; user: User }>("/api/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
-  setToken(data.token);
-  return data;
-}
-
-export async function fetchMe(): Promise<User> {
-  const data = await request<{ user: User }>("/api/me");
-  return data.user;
-}
-
-export async function fetchBots(): Promise<SlaveBot[]> {
-  const data = await request<{ slavebots: SlaveBot[] }>("/api/slavebots");
-  return data.slavebots;
-}
-
-export async function createBot(model: string, team_id?: string, owner_user_id?: string): Promise<SlaveBot> {
-  const data = await request<{ slavebot: SlaveBot }>("/api/slavebots", {
-    method: "POST",
-    body: JSON.stringify({ model, team_id, owner_user_id }),
-  });
-  return data.slavebot;
-}
-
-export async function transferBot(botId: string, owner_user_id: string): Promise<SlaveBot> {
-  const data = await request<{ slavebot: SlaveBot }>(`/api/slavebots/${encodeURIComponent(botId)}/transfer`, {
-    method: "POST",
-    body: JSON.stringify({ owner_user_id }),
-  });
-  return data.slavebot;
-}
-
 export interface SendAsResult {
   reply: string;
   from_bot_id: string;
   to_bot_id: string;
   cost_usd: number;
-}
-
-export async function sendAsBot(fromId: string, to_bot_id: string, message: string): Promise<SendAsResult> {
-  return request<SendAsResult>(`/api/slavebots/${encodeURIComponent(fromId)}/send`, {
-    method: "POST",
-    body: JSON.stringify({ to_bot_id, message }),
-  });
 }
 
 export interface ActivityItem {
@@ -407,60 +187,6 @@ export interface ActivityItem {
   role: string;
   content: string;
   created_at: string;
-}
-
-export async function fetchTeamActivity(teamId: string): Promise<ActivityItem[]> {
-  const data = await request<{ activity: ActivityItem[] }>(`/api/teams/${encodeURIComponent(teamId)}/activity`);
-  return data.activity;
-}
-
-export async function fetchBotDetail(botId: string): Promise<BotDetail> {
-  return request<BotDetail>(`/api/slavebots/${encodeURIComponent(botId)}`);
-}
-
-export async function updateBot(
-  botId: string,
-  patch: {
-    name?: string;
-    memory?: string;
-    role?: string;
-    pinned?: boolean;
-    model?: string;
-    voice?: string;
-    archived?: boolean;
-    active_days?: string;
-    active_start?: string;
-    active_end?: string;
-    relay?: boolean;
-  },
-): Promise<SlaveBot> {
-  const data = await request<{ slavebot: SlaveBot }>(
-    `/api/slavebots/${encodeURIComponent(botId)}`,
-    { method: "PUT", body: JSON.stringify(patch) },
-  );
-  return data.slavebot;
-}
-
-export async function fetchUsage(): Promise<UsageSummary> {
-  return request<UsageSummary>("/api/usage");
-}
-
-export async function spawnSubBot(
-  managerId: string,
-  sub: { name?: string; role?: string; model?: string },
-): Promise<SlaveBot> {
-  const data = await request<{ slavebot: SlaveBot }>(
-    `/api/slavebots/${encodeURIComponent(managerId)}/spawn`,
-    { method: "POST", body: JSON.stringify(sub) },
-  );
-  return data.slavebot;
-}
-
-export async function fetchChildren(managerId: string): Promise<SlaveBot[]> {
-  const data = await request<{ slavebots: SlaveBot[] }>(
-    `/api/slavebots/${encodeURIComponent(managerId)}/children`,
-  );
-  return data.slavebots;
 }
 
 export interface Huddle {
@@ -498,167 +224,6 @@ export interface HuddleDetail {
   messages: HuddleMessage[];
 }
 
-export async function fetchHuddles(): Promise<Huddle[]> {
-  const data = await request<{ huddles: Huddle[] }>("/api/huddles");
-  return data.huddles;
-}
-
-export async function createHuddle(topic: string, slavebot_ids?: string[], team_id?: string): Promise<HuddleDetail> {
-  return request<HuddleDetail>("/api/huddles", {
-    method: "POST",
-    body: JSON.stringify({ topic, slavebot_ids, team_id }),
-  });
-}
-
-export async function fetchHuddleDetail(huddleId: string): Promise<HuddleDetail> {
-  return request<HuddleDetail>(`/api/huddles/${encodeURIComponent(huddleId)}`);
-}
-
-export async function deleteHuddle(huddleId: string): Promise<void> {
-  await request(`/api/huddles/${encodeURIComponent(huddleId)}`, { method: "DELETE" });
-}
-
-export async function huddleChat(
-  huddleId: string,
-  message: string,
-  model?: string,
-): Promise<{ replies: GroupReply[]; total_cost_usd: number; credit_usd: number }> {
-  return request(`/api/huddles/${encodeURIComponent(huddleId)}/chat`, {
-    method: "POST",
-    body: JSON.stringify({ message, model }),
-  });
-}
-
-export async function fetchSummaries(botId: string): Promise<Summaries> {
-  return request<Summaries>(`/api/summaries?slavebot_id=${encodeURIComponent(botId)}`);
-}
-
-export async function runSummary(botId: string): Promise<{ summary: SummaryRow | null; note?: string }> {
-  return request("/api/summaries/run", {
-    method: "POST",
-    body: JSON.stringify({ slavebot_id: botId }),
-  });
-}
-
-export async function uploadAvatar(botId: string, file: File): Promise<void> {
-  const token = getToken();
-  const form = new FormData();
-  form.append("avatar", file);
-  const res = await fetch(`/api/slavebots/${encodeURIComponent(botId)}/avatar`, {
-    method: "POST",
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: form,
-  });
-  const data = (await res.json().catch(() => ({}))) as { error?: string };
-  if (!res.ok) {
-    throw new Error(data.error ?? `Avatar upload failed (${res.status}).`);
-  }
-}
-
-export function avatarUrl(botId: string): string {
-  return `/api/slavebots/${encodeURIComponent(botId)}/avatar`;
-}
-
-export interface StreamHandlers {
-  onToken: (delta: string) => void;
-  onUsage?: (usage: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-  }) => void;
-  signal: AbortSignal;
-}
-
-/** POST /api/chat with stream:true. Resolves with the bot id (X-Chat-Id). */
-export async function streamChat(
-  botId: string,
-  message: string,
-  model: string,
-  handlers: StreamHandlers,
-): Promise<string> {
-  const token = getToken();
-  const res = await fetch("/api/chat", {
-    method: "POST",
-    signal: handlers.signal,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({ slavebot_id: botId, message, model, stream: true }),
-  });
-  if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error ?? `Chat failed (${res.status}).`);
-  }
-  if (!res.body) throw new Error("This browser does not support streaming responses.");
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buffer.indexOf("\n\n")) >= 0) {
-      const frame = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
-      for (const line of frame.split("\n")) {
-        if (!line.startsWith("data:")) continue;
-        const text = line.replace(/^data:\s?/, "");
-        if (text === "" || text === "[DONE]") continue;
-        try {
-          const evt = JSON.parse(text) as {
-            choices?: { delta?: { content?: string } }[];
-            usage?: {
-              prompt_tokens?: number;
-              completion_tokens?: number;
-              total_tokens?: number;
-            };
-          };
-          const delta = evt.choices?.[0]?.delta?.content ?? "";
-          if (delta) handlers.onToken(delta);
-          if (evt.usage) handlers.onUsage?.(evt.usage);
-        } catch {
-          // Ignore non-JSON frames (e.g. keep-alive comments).
-        }
-      }
-    }
-  }
-  return res.headers.get("X-Chat-Id") ?? "";
-}
-
-/** Non-streaming chat: single call, reply + cost inline. */
-export async function plainChat(
-  botId: string,
-  message: string,
-  model: string,
-): Promise<ChatResult> {
-  return request<ChatResult>("/api/chat", {
-    method: "POST",
-    body: JSON.stringify({ slavebot_id: botId, message, model, stream: false }),
-  });
-}
-
-/** Called after an SSE stream ends: persists the reply, logs usage, deducts credit. */
-export async function finishChat(
-  botId: string,
-  content: string,
-  usage: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-  } | null,
-): Promise<ChatResult> {
-  return request<ChatResult>("/api/chat/finish", {
-    method: "POST",
-    body: JSON.stringify({ slavebot_id: botId, content, usage }),
-  });
-}
-
 export interface TranscribeResult {
   transcript: string;
   audio_seconds: number;
@@ -667,10 +232,380 @@ export interface TranscribeResult {
   credit_usd: number;
 }
 
+export interface SpeakResult {
+  audio: Blob;
+  cost_usd: number;
+  credit_usd: number;
+}
+
+const TOKEN_KEY = "slaver_token";
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setToken(token: string | null) {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+let rpcId = 0;
+
+interface RpcEnvelope {
+  result?: { content?: { type: string; text?: string }[]; data?: unknown };
+  error?: { code?: number; message?: string } | string;
+}
+
+/** Call one MCP tool and return its `data` payload (or {} when data-less). */
+async function callTool<T>(tool: string, args: Record<string, unknown> = {}): Promise<T> {
+  const token = getToken();
+  const res = await fetch("/mcp", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "tools/call", params: { name: tool, arguments: args } }),
+  });
+  const data = (await res.json().catch(() => ({}))) as RpcEnvelope;
+  if (!res.ok) {
+    throw new Error(typeof data.error === "string" ? data.error : `Request failed (${res.status}).`);
+  }
+  if (typeof data.error === "string") {
+    throw new Error(data.error);
+  }
+  if (data.error && typeof data.error === "object") {
+    throw new Error(data.error.message ?? "MCP call failed.");
+  }
+  return ((data.result?.data ?? {}) as T);
+}
+
+// ---------- auth ----------
+
+export async function register(
+  email: string,
+  password: string,
+  name: string,
+): Promise<{ token: string; user: User }> {
+  const data = await callTool<{ token: string; user: User }>("auth_register", { email, password, name });
+  setToken(data.token);
+  return data;
+}
+
+export async function login(email: string, password: string): Promise<{ token: string; user: User }> {
+  const data = await callTool<{ token: string; user: User }>("auth_login", { email, password });
+  setToken(data.token);
+  return data;
+}
+
+export async function fetchMe(): Promise<User> {
+  const data = await callTool<{ user: User }>("auth_me");
+  return data.user;
+}
+
+// ---------- models / provider ----------
+
+export async function fetchProviderModels(teamId?: string): Promise<ProviderInfo> {
+  const args: Record<string, unknown> = {};
+  if (teamId) args.team_id = teamId;
+  return callTool<ProviderInfo>("models", args);
+}
+
+export async function setTeamProvider(teamId: string, p: { preset: string; base_url?: string; api_key?: string }): Promise<TeamDetail["team"]> {
+  const data = await callTool<TeamDetail>("teams_set_provider", {
+    team_id: teamId,
+    preset: p.preset,
+    base_url: p.base_url ?? "",
+    api_key: p.api_key ?? "",
+  });
+  return data.team;
+}
+
+export async function clearTeamProvider(teamId: string): Promise<void> {
+  await callTool("teams_clear_provider", { team_id: teamId });
+}
+
+export async function testTeamProvider(teamId: string, model?: string): Promise<ProviderTest> {
+  const data = await callTool<ProviderTest>("teams_test_provider", {
+    team_id: teamId,
+    ...(model?.trim() ? { model: model.trim() } : {}),
+  });
+  return data;
+}
+
+// ---------- teams ----------
+
+export async function fetchTeams(): Promise<Team[]> {
+  const data = await callTool<{ teams: Team[] }>("team_list");
+  return data.teams;
+}
+
+export async function createTeam(name: string): Promise<Team> {
+  const data = await callTool<{ team: Team }>("team_create", { name });
+  return data.team;
+}
+
+export const fetchTeam = fetchTeamDetail;
+
+export async function fetchTeamDetail(teamId: string): Promise<TeamDetail> {
+  return callTool<TeamDetail>("teams_get", { team_id: teamId });
+}
+
+export async function deleteTeam(teamId: string): Promise<void> {
+  await callTool("teams_delete", { team_id: teamId });
+}
+
+export async function updateMember(teamId: string, userId: string, patch: { role?: string; bot_ids?: string[] }): Promise<void> {
+  const args: Record<string, unknown> = { team_id: teamId, user_id: userId };
+  if (patch.role !== undefined) args.role = patch.role;
+  if (patch.bot_ids !== undefined) args.bot_ids = patch.bot_ids;
+  await callTool("teams_set_member", args);
+}
+
+export async function setMemberRole(teamId: string, userId: string, role: string): Promise<void> {
+  await updateMember(teamId, userId, { role });
+}
+
+export async function setGrants(teamId: string, userId: string, bot_ids: string[]): Promise<void> {
+  await updateMember(teamId, userId, { bot_ids });
+}
+
+export async function grantBotAccess(teamId: string, botId: string, userId: string, current: string[]): Promise<void> {
+  await setGrants(teamId, userId, Array.from(new Set([...current, botId])));
+}
+
+export async function revokeBotAccess(teamId: string, botId: string, userId: string, current: string[]): Promise<void> {
+  await setGrants(teamId, userId, current.filter((b) => b !== botId));
+}
+
+export async function inviteMember(teamId: string, email: string, role: string): Promise<void> {
+  await callTool("team_invite", { team_id: teamId, email, role });
+}
+
+export async function removeMember(teamId: string, userId: string): Promise<void> {
+  await callTool("teams_remove_member", { team_id: teamId, user_id: userId });
+}
+
+export async function fetchTeamActivity(teamId: string): Promise<ActivityItem[]> {
+  const data = await callTool<{ activity: ActivityItem[] }>("teams_activity", { team_id: teamId });
+  return data.activity;
+}
+
+// ---------- slaveBots ----------
+
+export async function fetchBots(): Promise<SlaveBot[]> {
+  const data = await callTool<{ slavebots: SlaveBot[] }>("bots_list");
+  return data.slavebots;
+}
+
+export async function createBot(model: string, team_id?: string, owner_user_id?: string): Promise<SlaveBot> {
+  const args: Record<string, unknown> = {};
+  if (model) args.model = model;
+  if (team_id) args.team_id = team_id;
+  if (owner_user_id) args.owner_user_id = owner_user_id;
+  const data = await callTool<{ slavebot: SlaveBot }>("bots_create", args);
+  return data.slavebot;
+}
+
+export async function fetchBotDetail(botId: string): Promise<BotDetail> {
+  return callTool<BotDetail>("bots_get", { slavebot_id: botId });
+}
+
+export async function updateBot(
+  botId: string,
+  patch: {
+    name?: string;
+    memory?: string;
+    role?: string;
+    pinned?: boolean;
+    model?: string;
+    voice?: string;
+    archived?: boolean;
+    active_days?: string;
+    active_start?: string;
+    active_end?: string;
+    relay?: boolean;
+  },
+): Promise<SlaveBot> {
+  const data = await callTool<{ slavebot: SlaveBot }>("bots_update", { slavebot_id: botId, ...patch });
+  return data.slavebot;
+}
+
+export async function transferBot(botId: string, owner_user_id: string): Promise<SlaveBot> {
+  const data = await callTool<{ slavebot: SlaveBot }>("bots_transfer", { slavebot_id: botId, owner_user_id });
+  return data.slavebot;
+}
+
+export async function sendAsBot(fromId: string, to_bot_id: string, message: string): Promise<SendAsResult> {
+  return callTool<SendAsResult>("bot_send", { from_bot_id: fromId, to_bot_id, message });
+}
+
+export async function appendMemory(slavebotId: string, text: string): Promise<{ memory: string }> {
+  const data = await callTool<{ slavebot: SlaveBot }>("bots_append_memory", { slavebot_id: slavebotId, text });
+  return { memory: data.slavebot.memory };
+}
+
+export async function spawnSubBot(
+  managerId: string,
+  sub: { name?: string; role?: string; model?: string },
+): Promise<SlaveBot> {
+  const data = await callTool<{ slavebot: SlaveBot }>("bot_spawn", { manager_id: managerId, ...sub });
+  return data.slavebot;
+}
+
+export async function fetchChildren(managerId: string): Promise<SlaveBot[]> {
+  const data = await callTool<{ children: SlaveBot[] }>("bots_children", { slavebot_id: managerId });
+  return data.children;
+}
+
+// ---------- avatars (data URLs, no REST) ----------
+
+const avatarCache = new Map<string, string | null>();
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("Could not read avatar."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+export async function uploadAvatar(botId: string, file: File): Promise<void> {
+  const dataUrl = await blobToDataUrl(file);
+  const image_base64 = dataUrl.includes(",") ? dataUrl.slice(dataUrl.indexOf(",") + 1) : dataUrl;
+  avatarCache.delete(botId);
+  await callTool("bots_set_avatar", { slavebot_id: botId, image_base64, content_type: file.type || "image/png" });
+}
+
+/** Data URL for a bot avatar (cached per bot id), or null when none is set. */
+export async function fetchAvatar(botId: string): Promise<string | null> {
+  const cached = avatarCache.get(botId);
+  if (cached !== undefined) return cached;
+  try {
+    const data = await callTool<{ data_url?: string }>("bots_get_avatar", { slavebot_id: botId });
+    const url = data.data_url ?? null;
+    avatarCache.set(botId, url);
+    return url;
+  } catch {
+    avatarCache.set(botId, null);
+    return null;
+  }
+}
+
+// ---------- chat (non-streaming; the assistant bubble shows a typing indicator) ----------
+
+export async function sendChat(botId: string, message: string, model?: string): Promise<ChatResult> {
+  const args: Record<string, unknown> = { slavebot_id: botId, message };
+  if (model) args.model = model;
+  return callTool<ChatResult>("chat_send", args);
+}
+
+// ---------- groups ----------
+
+export async function fetchGroups(): Promise<Group[]> {
+  const data = await callTool<{ groups: Group[] }>("groups_list");
+  return data.groups;
+}
+
+export async function createGroup(name: string, team_id?: string): Promise<Group> {
+  const args: Record<string, unknown> = { name };
+  if (team_id) args.team_id = team_id;
+  const data = await callTool<{ group: Group }>("groups_create", args);
+  return data.group;
+}
+
+export async function fetchGroupDetail(groupId: string): Promise<GroupDetail> {
+  return callTool<GroupDetail>("groups_get", { group_id: groupId });
+}
+
+export async function deleteGroup(groupId: string): Promise<void> {
+  await callTool("groups_delete", { group_id: groupId });
+}
+
+export async function addGroupMembers(groupId: string, slavebotIds: string[]): Promise<string[]> {
+  const data = await callTool<{ added: string[] }>("groups_add_member", { group_id: groupId, slavebot_ids: slavebotIds });
+  return data.added;
+}
+
+export async function removeGroupMember(groupId: string, slavebotId: string): Promise<void> {
+  await callTool("groups_remove_member", { group_id: groupId, slavebot_id: slavebotId });
+}
+
+export async function groupChat(
+  groupId: string,
+  message: string,
+  model?: string,
+  saveMemory?: boolean,
+): Promise<{ replies: GroupReply[]; total_cost_usd: number; credit_usd: number; saved_to_memory: string[] }> {
+  const args: Record<string, unknown> = { group_id: groupId, message };
+  if (model) args.model = model;
+  if (saveMemory !== undefined) args.save_memory = saveMemory;
+  return callTool("groups_chat", args);
+}
+
+export async function renameGroup(groupId: string, name: string): Promise<Group> {
+  const data = await callTool<{ group: Group }>("groups_rename", { group_id: groupId, name });
+  return data.group;
+}
+
+export async function broadcast(
+  groupId: string,
+  text: string,
+  saveToMemory: boolean,
+): Promise<{ posted: boolean; saved_to_memory: string[] }> {
+  return callTool("groups_broadcast", { group_id: groupId, text, save_to_memory: saveToMemory });
+}
+
+// ---------- huddles ----------
+
+export async function fetchHuddles(): Promise<Huddle[]> {
+  const data = await callTool<{ huddles: Huddle[] }>("huddle_list");
+  return data.huddles;
+}
+
+export async function createHuddle(topic: string, slavebot_ids?: string[], team_id?: string): Promise<HuddleDetail> {
+  const args: Record<string, unknown> = { topic };
+  if (slavebot_ids) args.slavebot_ids = slavebot_ids;
+  if (team_id) args.team_id = team_id;
+  return callTool<HuddleDetail>("huddle_start", args);
+}
+
+export async function fetchHuddleDetail(huddleId: string): Promise<HuddleDetail> {
+  return callTool<HuddleDetail>("huddle_get", { huddle_id: huddleId });
+}
+
+export async function deleteHuddle(huddleId: string): Promise<void> {
+  await callTool("huddle_delete", { huddle_id: huddleId });
+}
+
+export async function huddleChat(
+  huddleId: string,
+  message: string,
+): Promise<{ replies: GroupReply[]; total_cost_usd: number; credit_usd: number }> {
+  return callTool("huddle_chat", { huddle_id: huddleId, message });
+}
+
+// ---------- summaries ----------
+
+export async function fetchSummaries(botId: string): Promise<Summaries> {
+  return callTool<Summaries>("summaries_get", { slavebot_id: botId });
+}
+
+export async function runSummary(botId: string): Promise<{ summary: SummaryRow | null; note?: string }> {
+  return callTool("summaries_run", { slavebot_id: botId });
+}
+
+// ---------- usage ----------
+
+export async function fetchUsage(): Promise<UsageSummary> {
+  return callTool<UsageSummary>("usage_get");
+}
+
+// ---------- schedules ----------
+
 export async function fetchSchedules(botId: string): Promise<BotSchedule[]> {
-  const data = await request<{ schedules: BotSchedule[] }>(
-    `/api/slavebots/${encodeURIComponent(botId)}/schedules`,
-  );
+  const data = await callTool<{ schedules: BotSchedule[] }>("schedule_list", { slavebot_id: botId });
   return data.schedules;
 }
 
@@ -685,75 +620,58 @@ export async function createSchedule(
     prompt: string;
   },
 ): Promise<BotSchedule> {
-  const data = await request<{ schedule: BotSchedule }>(
-    `/api/slavebots/${encodeURIComponent(botId)}/schedules`,
-    { method: "POST", body: JSON.stringify(schedule) },
-  );
+  const data = await callTool<{ schedule: BotSchedule }>("schedule_create", { slavebot_id: botId, ...schedule });
   return data.schedule;
 }
 
 export async function updateSchedule(scheduleId: string, active: boolean): Promise<BotSchedule> {
-  const data = await request<{ schedule: BotSchedule }>(
-    `/api/schedules/${encodeURIComponent(scheduleId)}`,
-    { method: "PUT", body: JSON.stringify({ active }) },
-  );
+  const data = await callTool<{ schedule: BotSchedule }>("schedules_update", { schedule_id: scheduleId, active });
   return data.schedule;
 }
 
 export async function deleteSchedule(scheduleId: string): Promise<void> {
-  await request(`/api/schedules/${encodeURIComponent(scheduleId)}`, { method: "DELETE" });
+  await callTool("schedule_delete", { schedule_id: scheduleId });
 }
 
-export interface SpeakResult {
-  audio: Blob;
-  cost_usd: number;
-  credit_usd: number;
-}
+// ---------- voice (base64 over MCP) ----------
 
-/** POST /api/voice/speak — server voice (Workers AI Aura). Falls back to browser voice on 501. */
-export async function speakVoice(text: string, voice: string): Promise<SpeakResult> {
-  const token = getToken();
-  const res = await fetch("/api/voice/speak", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({ text: text.slice(0, 2000), voice }),
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = reader.result as string;
+      resolve(url.includes(",") ? url.slice(url.indexOf(",") + 1) : url);
+    };
+    reader.onerror = () => reject(new Error("Could not read audio."));
+    reader.readAsDataURL(blob);
   });
-  if (res.status === 501) {
-    throw new Error("SERVER_VOICE_UNCONFIGURED");
-  }
-  if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error ?? `Voice failed (${res.status}).`);
-  }
-  const audio = await res.blob();
-  return {
-    audio,
-    cost_usd: Number(res.headers.get("X-TTS-Cost-Usd") ?? 0),
-    credit_usd: Number(res.headers.get("X-TTS-Credit-Usd") ?? 0),
-  };
 }
 
-/** POST /api/voice/transcribe — multipart upload of a WAV clip. */
+function base64ToBlob(b64: string, contentType: string): Blob {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: contentType });
+}
+
 export async function transcribeVoice(audio: Blob, teamId?: string): Promise<TranscribeResult> {
-  const token = getToken();
-  const form = new FormData();
-  form.append("audio", audio, "audio.wav");
-  if (teamId) form.append("team_id", teamId);
-  const res = await fetch("/api/voice/transcribe", {
-    method: "POST",
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: form,
-  });
-  const data = (await res.json().catch(() => ({}))) as TranscribeResult & { error?: string };
-  if (!res.ok) {
-    throw new Error(data.error ?? `Transcription failed (${res.status}).`);
-  }
-  return data;
+  const audio_base64 = await blobToBase64(audio);
+  const args: Record<string, unknown> = { audio_base64 };
+  if (teamId) args.team_id = teamId;
+  return callTool<TranscribeResult>("voice_transcribe", args);
+}
+
+/** Server voice (Workers AI Aura). Throws when unconfigured so callers can fall back to browser voice. */
+export async function speakVoice(text: string, voice: string): Promise<SpeakResult> {
+  const data = await callTool<{ audio_base64: string; content_type?: string; cost_usd: number; credit_usd: number }>(
+    "voice_speak",
+    { text: text.slice(0, 2000), voice },
+  );
+  return {
+    audio: base64ToBlob(data.audio_base64, data.content_type || "audio/mpeg"),
+    cost_usd: data.cost_usd,
+    credit_usd: data.credit_usd,
+  };
 }
 
 export function formatUsd(n: number): string {
