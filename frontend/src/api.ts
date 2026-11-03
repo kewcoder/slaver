@@ -3,14 +3,128 @@ export interface User {
   email: string;
   name: string;
   credit_usd: number;
+  provider: string;
+  provider_base_url: string;
+  provider_key_set: boolean;
+}
+
+export async function setProvider(p: { preset: string; base_url?: string; api_key?: string }): Promise<void> {
+  await request("/api/me/provider", { method: "PUT", body: JSON.stringify(p) });
+}
+
+export async function clearProvider(): Promise<void> {
+  await request("/api/me/provider", { method: "DELETE" });
+}
+
+export interface ProviderInfo {
+  provider: string;
+  provider_label: string;
+  key_hint: string;
+  server_key: boolean;
+  models: { id: string; label: string; default: boolean }[];
+  custom_allowed: boolean;
+  default: string;
+}
+
+export async function fetchProviderModels(): Promise<ProviderInfo> {
+  return request<ProviderInfo>("/api/models");
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  owner_user_id: string;
+  personal: number;
+  role: string;
+  created_at: string;
+}
+
+export interface TeamMember {
+  user_id: string;
+  email: string | null;
+  name: string | null;
+  role: string;
+  bot_ids: string[];
+}
+
+export interface TeamDetail {
+  team: { id: string; name: string; owner_user_id: string; personal: number; created_at: string };
+  my_role: string;
+  members: TeamMember[];
+  bots: SlaveBot[];
+}
+
+export async function fetchTeams(): Promise<Team[]> {
+  const data = await request<{ teams: Team[] }>("/api/teams");
+  return data.teams;
+}
+
+export async function createTeam(name: string): Promise<Team> {
+  const data = await request<{ team: Team }>("/api/teams", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+  return data.team;
+}
+
+export async function fetchTeamDetail(teamId: string): Promise<TeamDetail> {
+  return request<TeamDetail>(`/api/teams/${encodeURIComponent(teamId)}`);
+}
+
+export const fetchTeam = fetchTeamDetail;
+
+export async function deleteTeam(teamId: string): Promise<void> {
+  await request(`/api/teams/${encodeURIComponent(teamId)}`, { method: "DELETE" });
+}
+
+export async function setMemberRole(teamId: string, userId: string, role: string): Promise<void> {
+  await updateMember(teamId, userId, { role });
+}
+
+export async function setGrants(teamId: string, userId: string, bot_ids: string[]): Promise<void> {
+  await updateMember(teamId, userId, { bot_ids });
+}
+
+export async function grantBotAccess(teamId: string, botId: string, userId: string, current: string[]): Promise<void> {
+  await setGrants(teamId, userId, Array.from(new Set([...current, botId])));
+}
+
+export async function revokeBotAccess(teamId: string, botId: string, userId: string, current: string[]): Promise<void> {
+  await setGrants(teamId, userId, current.filter((b) => b !== botId));
+}
+
+export async function inviteMember(teamId: string, email: string, role: string): Promise<void> {
+  await request(`/api/teams/${encodeURIComponent(teamId)}/invites`, {
+    method: "POST",
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+export async function removeMember(teamId: string, userId: string): Promise<void> {
+  await request(`/api/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function updateMember(teamId: string, userId: string, patch: { role?: string; bot_ids?: string[] }): Promise<void> {
+  await request(`/api/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    body: JSON.stringify(patch),
+  });
 }
 
 export interface SlaveBot {
   id: string;
+  user_id: string;
+  team_id: string;
   name: string;
   title: string;
   model: string;
   memory: string;
+  role: string;
+  parent_id: string;
+  pinned: number;
+  pinned_by: string;
   avatar_key: string;
   archived: number;
   voice: string;
@@ -72,6 +186,7 @@ export interface UsageLog {
 
 export interface Group {
   id: string;
+  team_id: string;
   name: string;
   created_at: string;
   updated_at: string;
@@ -106,10 +221,10 @@ export async function fetchGroups(): Promise<Group[]> {
   return data.groups;
 }
 
-export async function createGroup(name: string): Promise<Group> {
+export async function createGroup(name: string, team_id?: string): Promise<Group> {
   const data = await request<{ group: Group }>("/api/groups", {
     method: "POST",
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, team_id }),
   });
   return data.group;
 }
@@ -207,14 +322,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
-export async function fetchModels(): Promise<
-  { id: string; label: string; default?: boolean }[]
-> {
-  const data = await request<{ models: { id: string; label: string; default?: boolean }[] }>(
-    "/api/models",
-  );
-  return data.models;
-}
+
 
 export async function register(
   email: string,
@@ -248,10 +356,10 @@ export async function fetchBots(): Promise<SlaveBot[]> {
   return data.slavebots;
 }
 
-export async function createBot(model: string): Promise<SlaveBot> {
+export async function createBot(model: string, team_id?: string): Promise<SlaveBot> {
   const data = await request<{ slavebot: SlaveBot }>("/api/slavebots", {
     method: "POST",
-    body: JSON.stringify({ model }),
+    body: JSON.stringify({ model, team_id }),
   });
   return data.slavebot;
 }
@@ -265,6 +373,8 @@ export async function updateBot(
   patch: {
     name?: string;
     memory?: string;
+    role?: string;
+    pinned?: boolean;
     model?: string;
     voice?: string;
     archived?: boolean;
@@ -282,6 +392,90 @@ export async function updateBot(
 
 export async function fetchUsage(): Promise<UsageSummary> {
   return request<UsageSummary>("/api/usage");
+}
+
+export async function spawnSubBot(
+  managerId: string,
+  sub: { name?: string; role?: string; model?: string },
+): Promise<SlaveBot> {
+  const data = await request<{ slavebot: SlaveBot }>(
+    `/api/slavebots/${encodeURIComponent(managerId)}/spawn`,
+    { method: "POST", body: JSON.stringify(sub) },
+  );
+  return data.slavebot;
+}
+
+export async function fetchChildren(managerId: string): Promise<SlaveBot[]> {
+  const data = await request<{ slavebots: SlaveBot[] }>(
+    `/api/slavebots/${encodeURIComponent(managerId)}/children`,
+  );
+  return data.slavebots;
+}
+
+export interface Huddle {
+  id: string;
+  user_id: string;
+  team_id: string;
+  topic: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HuddleParticipant {
+  huddle_id: string;
+  slavebot_id: string;
+  bot_name: string | null;
+  decision: string;
+  reason: string;
+  created_at: string;
+}
+
+export interface HuddleMessage {
+  id: number;
+  huddle_id: string;
+  slavebot_id: string | null;
+  bot_name: string | null;
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+export interface HuddleDetail {
+  huddle: Huddle;
+  participants: HuddleParticipant[];
+  messages: HuddleMessage[];
+}
+
+export async function fetchHuddles(): Promise<Huddle[]> {
+  const data = await request<{ huddles: Huddle[] }>("/api/huddles");
+  return data.huddles;
+}
+
+export async function createHuddle(topic: string, slavebot_ids?: string[], team_id?: string): Promise<HuddleDetail> {
+  return request<HuddleDetail>("/api/huddles", {
+    method: "POST",
+    body: JSON.stringify({ topic, slavebot_ids, team_id }),
+  });
+}
+
+export async function fetchHuddleDetail(huddleId: string): Promise<HuddleDetail> {
+  return request<HuddleDetail>(`/api/huddles/${encodeURIComponent(huddleId)}`);
+}
+
+export async function deleteHuddle(huddleId: string): Promise<void> {
+  await request(`/api/huddles/${encodeURIComponent(huddleId)}`, { method: "DELETE" });
+}
+
+export async function huddleChat(
+  huddleId: string,
+  message: string,
+  model?: string,
+): Promise<{ replies: GroupReply[]; total_cost_usd: number; credit_usd: number }> {
+  return request(`/api/huddles/${encodeURIComponent(huddleId)}/chat`, {
+    method: "POST",
+    body: JSON.stringify({ message, model }),
+  });
 }
 
 export async function fetchSummaries(botId: string): Promise<Summaries> {

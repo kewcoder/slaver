@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use worker::*;
 
-use crate::{auth, chat, store, util};
+use crate::{auth, chat, provider, store, util};
 
 /// Group missions: one task fans out to many slaveBots, and info can be
 /// broadcast into the shared thread and saved into bot memories.
@@ -9,6 +9,12 @@ use crate::{auth, chat, store, util};
 #[derive(Deserialize)]
 struct GroupNameBody {
     name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GroupRequest {
+    name: Option<String>,
+    team_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -57,14 +63,17 @@ pub async fn list(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     util::json(200, &serde_json::json!({ "groups": groups }))
 }
 
-/// POST /api/groups {name?}
+/// POST /api/groups {name?, team_id?}
 pub async fn create(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let (user_id, db) = need_auth!(&req, &ctx.env);
-    let body: GroupNameBody = match req.json().await {
+    let body: GroupRequest = match req.json().await {
         Ok(b) => b,
-        Err(_) => GroupNameBody { name: None },
+        Err(_) => GroupRequest { name: None, team_id: None },
     };
-    let group = store::create_group(&db, &user_id, body.name.as_deref().unwrap_or("")).await?;
+    let group = match store::create_group(&db, &user_id, body.team_id.as_deref().unwrap_or(""), body.name.as_deref().unwrap_or("")).await {
+        Ok(g) => g,
+        Err(e) => return util::err(403, &e.to_string()),
+    };
     util::json(201, &serde_json::json!({ "group": group }))
 }
 
@@ -143,9 +152,6 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
         .await?
         .map(|u| u.credit_usd)
         .unwrap_or(0.0);
-    if credit <= 0.0 {
-        return util::err(402, "Out of credit (balance $0.00). Demo credit is $10 per user.");
-    }
     let body: GroupChatBody = match req.json().await {
         Ok(b) => b,
         Err(_) => return util::err(400, "Invalid JSON body."),
@@ -153,6 +159,13 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let message = body.message.unwrap_or_default();
     if message.is_empty() || message.len() > 8000 {
         return util::err(400, "message must be 1..8000 characters.");
+    }
+    let prov = match provider::provider_for(&db, &ctx.env, &user_id).await {
+        Ok(v) => v,
+        Err(e) => return util::err(502, &e.to_string()),
+    };
+    if !prov.own && credit <= 0.0 {
+        return util::err(402, "Out of credit (balance $0.00). Demo credit is $10 per user.");
     }
     let group_id = ctx.param("id").cloned().unwrap_or_default();
     if store::get_group(&db, &user_id, &group_id).await?.is_none() {
@@ -170,11 +183,14 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let mut total_cost = 0.0;
     let mut remaining = credit;
     for bot in &members {
-        let model = body
-            .model
-            .clone()
-            .filter(|m| chat::valid_model(m))
-            .unwrap_or_else(|| bot.model.clone());
+        // Staff can only hear from bots they may use; skip the rest silently.
+        if store::bot_access(&db, &user_id, &bot.id).await?.is_none() {
+            continue;
+        }
+        let model = match body.model.clone().filter(|m| provider::valid_for(&prov.preset, m)) {
+            Some(m) => m,
+            None => provider::effective_model(&prov.preset, &bot.model),
+        };
         let mut history = vec![
             chat::ChatMessage {
                 role: "user".to_string(),
@@ -213,7 +229,7 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
         }
         with_context.extend(history);
 
-        let done = match chat::complete_with_usage(&ctx.env, &model, &with_context).await {
+        let done = match chat::complete_with_usage(&prov, &model, &with_context).await {
             Ok(d) => d,
             Err(e) => {
                 console_error!("group chat bot {} failed: {e}", bot.id);
@@ -237,6 +253,7 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
                 estimated: done.estimated,
                 audio_seconds: 0.0,
                 cost_override: None,
+                own_key: prov.own,
             },
         )
         .await?;

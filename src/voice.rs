@@ -3,7 +3,8 @@ use worker::*;
 
 use crate::{auth, chat, pricing, store, util};
 
-/// Muse Voice Transcribe over the Meta Model API.
+/// Muse Voice Transcribe over the Meta Model API (chat models moved to
+/// OpenRouter, which exposes no transcription endpoint — so STT stays here).
 const MODEL: &str = "muse-voice-transcribe-1.0";
 const TRANSCRIBE_URL: &str = "https://api.meta.ai/v1/asr/transcribe";
 /// Matches the provider's 32 MB cap so we never buffer more than it accepts.
@@ -19,16 +20,26 @@ pub async fn transcribe(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         None => return util::err(401, "Log in before using voice."),
     };
     let db = ctx.env.d1("DB")?;
+    let prov = match crate::provider::provider_for(&db, &ctx.env, &user_id).await {
+        Ok(v) => v,
+        Err(e) => return util::err(502, &e.to_string()),
+    };
     let credit = store::get_user(&db, &user_id)
         .await?
         .map(|u| u.credit_usd)
         .unwrap_or(0.0);
-    if credit <= 0.0 {
+    if !prov.own && credit <= 0.0 {
         return util::err(402, "Out of credit (balance $0.00). Demo credit is $10 per user.");
     }
-    let key = ctx.env.secret("META_API_KEY")?.to_string();
+    // Transcription only exists on Meta: prefer the caller's own Meta key,
+    // otherwise the shared server key.
+    let key = if prov.preset == "meta" {
+        prov.api_key.clone()
+    } else {
+        ctx.env.secret("META_API_KEY").map(|s| s.to_string()).unwrap_or_default()
+    };
     if key.is_empty() {
-        return util::err(500, "META_API_KEY is not set on the server.");
+        return util::err(501, "Voice transcription needs a Meta key: pick Meta as provider or ask the server admin to set META_API_KEY.");
     }
 
     let form = req.form_data().await?;
@@ -78,7 +89,7 @@ pub async fn transcribe(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     let request = Request::new_with_init(TRANSCRIBE_URL, &init)?;
     let mut upstream = Fetch::Request(request).send().await.map_err(|e| {
         console_error!("voice upstream fetch failed: {e}");
-        Error::RustError("Could not reach the Meta Model API.".to_string())
+        Error::RustError("Could not reach the transcription API.".to_string())
     })?;
 
     if upstream.status_code() != 200 {
@@ -125,6 +136,7 @@ pub async fn transcribe(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
             estimated,
             audio_seconds: seconds,
             cost_override: Some(cost),
+            own_key: false,
         },
     )
     .await?;
@@ -231,6 +243,7 @@ pub async fn speak(mut req: Request, ctx: RouteContext<()>) -> Result<Response> 
             estimated: false,
             audio_seconds: 0.0,
             cost_override: Some(cost),
+            own_key: false,
         },
     )
     .await?;

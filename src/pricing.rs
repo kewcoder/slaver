@@ -1,10 +1,8 @@
-//! Demo pricing table for the Meta Model API (USD per 1M tokens).
+//! Demo pricing table for OpenRouter models (USD per 1M tokens).
 //!
-//! Sources (Nov 2026): Muse Spark 1.3 contributor tier at
-//! $0.10 input / $0.002 cached input / $0.20 output per 1M tokens;
-//! Muse Wonder at $4.00 input / $0.20 cached input / $20.00 output.
-//! Standard (non-contributor) tiers cost more — treat every figure here as
-//! an estimate for demo credit math, not a billing quote.
+//! Sources: the live OpenRouter catalog (GET /api/v1/models), Nov 2026.
+//! Cached-input rates are estimates (roughly 10% of input) — treat every
+//! figure here as demo credit math, not a billing quote.
 
 pub struct Rates {
     pub input_per_m: f64,
@@ -12,25 +10,33 @@ pub struct Rates {
     pub output_per_m: f64,
 }
 
+fn r(input: f64, cached: f64, output: f64) -> Rates {
+    Rates { input_per_m: input, cached_per_m: cached, output_per_m: output }
+}
+
 pub fn rates_for(model: &str) -> Rates {
-    if model.contains("wonder") {
-        Rates {
-            input_per_m: 4.0,
-            cached_per_m: 0.20,
-            output_per_m: 20.0,
-        }
-    } else {
-        // Default: Muse Spark contributor tier.
-        Rates {
-            input_per_m: 0.10,
-            cached_per_m: 0.002,
-            output_per_m: 0.20,
-        }
+    // Strip the " (summary)" suffix cron summaries attach.
+    let model = model.strip_suffix(" (summary)").unwrap_or(model);
+    match model {
+        "muse-spark-1.3" => r(0.10, 0.002, 0.20),
+        "muse-wonder-1.0" => r(4.0, 0.20, 20.0),
+        "qwen/qwen3.7-flash" => r(0.03, 0.005, 0.13),
+        "meta-llama/llama-3.3-70b-instruct" => r(0.10, 0.01, 0.32),
+        "anthropic/claude-haiku-5.5" => r(0.10, 0.01, 0.50),
+        "deepseek/deepseek-chat" => r(0.26, 0.03, 1.03),
+        "openai/gpt-5-mini" => r(0.25, 0.025, 2.00),
+        "google/gemini-2.5-flash" => r(0.30, 0.03, 2.50),
+        "mistralai/mistral-medium-3-5" => r(1.50, 0.15, 7.50),
+        "x-ai/grok-4.5" => r(2.00, 0.20, 6.00),
+        "anthropic/claude-sonnet-5" => r(2.00, 0.20, 10.00),
+        // Unknown model: bill like the default instead of free.
+        _ => r(0.10, 0.01, 0.32),
     }
 }
 
 /// Cost of speech-to-text in USD for a clip of `seconds` length.
-/// Muse Voice Transcribe is $3.00 per 1000 minutes of audio.
+/// Meta's Muse Voice Transcribe is $3.00 per 1000 minutes of audio
+/// (OpenRouter exposes no transcription endpoint, so STT stays on Meta).
 pub fn tts_cost_usd(chars: usize) -> f64 {
     chars as f64 / 1000.0 * 0.015
 }
@@ -57,25 +63,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn spark_cost_math() {
-        let r = rates_for("muse-spark-1.3");
-        // 1M fresh input + 1M output at contributor rates = $0.30.
+    fn default_model_cost_math() {
+        let r = rates_for("meta-llama/llama-3.3-70b-instruct");
+        // 1M fresh input + 1M output at $0.10/$0.32 = $0.42.
         let cost = cost_usd(&r, 1_000_000, 0, 1_000_000);
-        assert!((cost - 0.30).abs() < 1e-9, "got {cost}");
+        assert!((cost - 0.42).abs() < 1e-9, "got {cost}");
     }
 
     #[test]
     fn cached_input_uses_cached_rate() {
-        let r = rates_for("muse-spark-1.3");
+        let r = rates_for("meta-llama/llama-3.3-70b-instruct");
         let cost = cost_usd(&r, 1_000_000, 1_000_000, 0);
-        assert!((cost - 0.002).abs() < 1e-9, "got {cost}");
+        assert!((cost - 0.01).abs() < 1e-9, "got {cost}");
     }
 
     #[test]
-    fn wonder_is_pricier() {
-        let spark = cost_usd(&rates_for("muse-spark-1.3"), 10_000, 0, 5_000);
-        let wonder = cost_usd(&rates_for("muse-wonder-1.0"), 10_000, 0, 5_000);
-        assert!(wonder > spark * 10.0, "spark={spark} wonder={wonder}");
+    fn sonnet_is_pricier_than_default() {
+        let cheap = cost_usd(&rates_for("meta-llama/llama-3.3-70b-instruct"), 10_000, 0, 5_000);
+        let pricey = cost_usd(&rates_for("anthropic/claude-sonnet-5"), 10_000, 0, 5_000);
+        assert!(pricey > cheap * 10.0, "cheap={cheap} pricey={pricey}");
     }
 
     #[test]
@@ -87,8 +93,8 @@ mod tests {
     }
 
     #[test]
-    fn unknown_model_falls_back_to_spark() {
-        let r = rates_for("muse-something-new");
+    fn unknown_model_falls_back_to_default() {
+        let r = rates_for("some-future-model");
         assert!((r.input_per_m - 0.10).abs() < 1e-12);
     }
 }

@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use worker::*;
 
-use crate::{auth, chat, store, util};
+use crate::{auth, chat, provider, store, util};
 
 #[derive(Deserialize)]
 struct CreateScheduleRequest {
@@ -201,12 +201,13 @@ async fn fire_one(env: &Env, db: &D1Database, sched: &store::ScheduleRow) -> Res
     if !store::bot_in_window(&bot, &now) {
         return Ok(());
     }
+    let prov = provider::provider_for(db, env, &sched.user_id).await.map_err(|e| e.to_string())?;
     let credit = store::get_user(db, &sched.user_id)
         .await
         .map_err(|e| e.to_string())?
         .map(|u| u.credit_usd)
         .unwrap_or(0.0);
-    if credit <= 0.0 {
+    if !prov.own && credit <= 0.0 {
         return Err("owner out of credit".to_string());
     }
     let task = format!("Scheduled task \"{}\": {}\nReply briefly, in character.", sched.name, sched.prompt);
@@ -225,7 +226,8 @@ async fn fire_one(env: &Env, db: &D1Database, sched: &store::ScheduleRow) -> Res
         history.push(m);
     }
     history.push(chat::ChatMessage { role: "user".to_string(), content: task.clone() });
-    let done = chat::complete_with_usage(env, &bot.model, &history)
+    let model = provider::effective_model(&prov.preset, &bot.model);
+    let done = chat::complete_with_usage(&prov, &model, &history)
         .await
         .map_err(|e| format!("model error: {e}"))?;
     store::insert_message(db, &bot.id, "user", &format!("⏰ {}", sched.prompt))
@@ -240,13 +242,14 @@ async fn fire_one(env: &Env, db: &D1Database, sched: &store::ScheduleRow) -> Res
         &sched.user_id,
         Some(&bot.id),
         &store::UsageInput {
-            model: bot.model.clone(),
+            model: model.clone(),
             prompt_tokens: done.prompt_tokens,
             cached_tokens: done.cached_tokens,
             completion_tokens: done.completion_tokens,
             estimated: done.estimated,
             audio_seconds: 0.0,
             cost_override: None,
+            own_key: prov.own,
         },
     )
     .await

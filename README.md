@@ -21,7 +21,7 @@ Full-stack on Cloudflare: **API + MCP in Rust** (Workers via `workers-rs`), **Re
 
 ```sh
 npm install
-cp .dev.vars.example .dev.vars   # fill in JWT_SECRET (random) + META_API_KEY from dev.meta.ai
+cp .dev.vars.example .dev.vars   # fill in JWT_SECRET (random) + OPENROUTER_API_KEY + META_API_KEY (voice transcription only)
 npm run db:migrate:local
 ./node_modules/.bin/wrangler dev --port 8787  # use the project's wrangler (4.156.2)
 ```
@@ -34,8 +34,9 @@ Open http://localhost:8787 in your browser. (An older global wrangler may fail o
 wrangler login
 wrangler d1 create slaver_db   # copy database_id into wrangler.jsonc
 npm run db:migrate:remote
-wrangler secret put META_API_KEY   # key from dev.meta.ai
-wrangler secret put JWT_SECRET     # random string, min 32 chars
+wrangler secret put OPENROUTER_API_KEY   # key from openrouter.ai/keys (chat + summaries + huddle brains)
+wrangler secret put META_API_KEY        # key from dev.meta.ai (voice transcription only)
+wrangler secret put JWT_SECRET          # random string, min 32 chars
 npm run deploy
 ```
 
@@ -47,4 +48,6 @@ curl -X POST localhost:8787/mcp -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-Note: without a real `META_API_KEY`, `/api/chat` returns a 502 carrying the Meta API error — that means the proxy works and only the key is missing.
+Chat, summaries, huddle join-decisions, and schedules run on OpenRouter (9 curated models, billed per model at catalog rates). Voice transcription stays on Meta — OpenRouter exposes no transcription endpoint.
+
+Note: without a real `OPENROUTER_API_KEY`, `/api/chat` returns a 502 carrying the provider error — that means the proxy works and only the key is missing.

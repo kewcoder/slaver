@@ -6,28 +6,46 @@ import {
   broadcast,
   createBot,
   createGroup,
+  createHuddle,
   createSchedule,
+  createTeam,
+  clearProvider,
   deleteGroup,
+  deleteHuddle,
   deleteSchedule,
+  deleteTeam,
   fetchBotDetail,
   fetchBots,
+  fetchChildren,
   fetchGroupDetail,
   fetchGroups,
+  fetchHuddleDetail,
+  fetchHuddles,
   fetchMe,
-  fetchModels,
+  fetchProviderModels,
   fetchSchedules,
   fetchSummaries,
+  fetchTeam,
+  fetchTeams,
   fetchUsage,
   finishChat,
+  grantBotAccess,
+  inviteMember,
+  removeMember,
+  revokeBotAccess,
+  setMemberRole,
   formatUsd,
   groupChat,
+  huddleChat,
   login,
   plainChat,
   register,
   removeGroupMember,
   runSummary,
+  setProvider,
   setToken,
   speakVoice,
+  spawnSubBot,
   streamChat,
   transcribeVoice,
   updateBot,
@@ -36,7 +54,12 @@ import {
   type BotSchedule,
   type Group,
   type GroupDetail,
+  type Huddle,
+  type HuddleDetail,
+  type ProviderInfo,
   type SlaveBot,
+  type Team,
+  type TeamDetail,
   type Summaries,
   type UsageSummary,
   type User,
@@ -203,6 +226,102 @@ interface UiMessage {
   created_at?: string;
 }
 
+const PROVIDER_PRESETS = [
+  { id: "meta", label: "Meta (Spark / Wonder) — default", needs_url: false },
+  { id: "baseten", label: "Baseten", needs_url: true },
+  { id: "modal", label: "Modal", needs_url: true },
+  { id: "openrouter", label: "OpenRouter (last resort)", needs_url: false },
+  { id: "custom", label: "Custom (OpenAI-compatible)", needs_url: true },
+];
+
+function ProviderPanel({ user, onChanged }: { user: User; onChanged: () => void }) {
+  const [preset, setPreset] = useState(user.provider || "meta");
+  const [baseUrl, setBaseUrl] = useState(user.provider_base_url || "");
+  const [apiKey, setApiKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const needsUrl = (PROVIDER_PRESETS.find((x) => x.id === preset)?.needs_url ?? preset === "custom");
+
+  async function save(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await setProvider({ preset, base_url: needsUrl ? baseUrl.trim() : undefined, api_key: apiKey.trim() || undefined });
+      setApiKey("");
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save provider.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm("Remove your personal provider settings and go back to the shared default?")) return;
+    setBusy(true);
+    setError("");
+    try {
+      await clearProvider();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove provider.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={save} className="px-2">
+      <label className="text-xs font-semibold text-zinc-400">
+        AI provider
+        <select value={preset} onChange={(e) => setPreset(e.target.value)} className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-100 focus:border-emerald-500 focus:outline-none">
+          {PROVIDER_PRESETS.map((x) => (
+            <option key={x.id} value={x.id}>{x.label}</option>
+          ))}
+        </select>
+      </label>
+      {needsUrl && (
+        <label className="mt-1 block text-xs font-semibold text-zinc-400">
+          Base URL
+          <input
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            placeholder="https://..."
+            autoComplete="off"
+            className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
+          />
+        </label>
+      )}
+      <label className="mt-1 block text-xs font-semibold text-zinc-400">
+        API key {user.provider_key_set ? "(saved — enter a new one to replace)" : "(optional)"}
+        <input
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder={user.provider_key_set ? "••••••••" : "paste key..."}
+          autoComplete="off"
+          className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
+        />
+      </label>
+      <div className="mt-1 flex items-center gap-2">
+        <button type="submit" disabled={busy} className="rounded-md bg-zinc-700 px-2 py-1 text-xs font-bold text-white hover:bg-zinc-600 disabled:opacity-50">
+          {busy ? "Saving..." : "Save"}
+        </button>
+        {user.provider_key_set && (
+          <button type="button" onClick={remove} disabled={busy} className="rounded px-1 py-0.5 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400 disabled:opacity-50">
+            Remove
+          </button>
+        )}
+      </div>
+      <p className="mt-1 text-[11px] text-zinc-500">
+        {user.provider_key_set ? "Personal key active — your key pays the provider directly, demo credit untouched." : "Using the shared default key. A personal key pays the provider directly."}
+      </p>
+      {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+    </form>
+  );
+}
 function LogsView({ summary }: { summary: UsageSummary | null }) {
   if (!summary) return <div className="p-8 text-center text-zinc-400">Loading usage...</div>;
   return (
@@ -427,7 +546,7 @@ function GroupView({
         {detail.messages.map((m) => (
           <div key={m.id} className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
             {m.slavebot_id ? (
-              <BotAvatar bot={({ id: m.slavebot_id, name: m.bot_name ?? "?", title: "", model: "", memory: "", avatar_key: bots.find((b) => b.id === m.slavebot_id)?.avatar_key ?? "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" }) as SlaveBot} size="sm" />
+              <BotAvatar bot={({ id: m.slavebot_id, name: m.bot_name ?? "?", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", user_id: "u", team_id: "", avatar_key: bots.find((b) => b.id === m.slavebot_id)?.avatar_key ?? "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" }) as SlaveBot} size="sm" />
             ) : (
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-600 text-sm font-bold text-white">Y</div>
             )}
@@ -489,6 +608,263 @@ function GroupView({
           className="max-h-40 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
         />
         <button type="submit" disabled={!task.trim() || busy} className="shrink-0 rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
+          {busy ? "..." : "Send"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function HuddleView({
+  huddleId,
+  bots,
+  teamId,
+  onCreated,
+  onChanged,
+  onDeleted,
+  onOpenBot,
+}: {
+  huddleId: string | null;
+  bots: SlaveBot[];
+  teamId: string | null;
+  onCreated: (id: string) => Promise<void>;
+  onChanged: () => Promise<void>;
+  onDeleted: () => Promise<void>;
+  onOpenBot: (id: string) => void;
+}) {
+  const [detail, setDetail] = useState<HuddleDetail | null>(null);
+  const [topic, setTopic] = useState("");
+  const [picked, setPicked] = useState<string[] | null>(null);
+  const [task, setTask] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [savedNote, setSavedNote] = useState("");
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  const activeBots = bots.filter((b) => !b.archived);
+  const selected = picked ?? activeBots.map((b) => b.id);
+
+  const load = useCallback(async () => {
+    if (!huddleId) {
+      setDetail(null);
+      return;
+    }
+    try {
+      setDetail(await fetchHuddleDetail(huddleId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load huddle.");
+    }
+  }, [huddleId]);
+
+  useEffect(() => {
+    setError("");
+    setSavedNote("");
+    setPicked(null);
+    void load();
+  }, [huddleId, load]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+  }, [detail?.messages.length]);
+
+  function avatarFor(botId: string | null, name: string | null): SlaveBot {
+    const found = botId ? bots.find((b) => b.id === botId) : undefined;
+    if (found) return found;
+    return {
+      id: botId ?? "u", name: name ?? "?", title: "", model: "", memory: "",
+      role: "", parent_id: "", pinned: 0, pinned_by: "", user_id: "u", team_id: "", avatar_key: "", archived: 0, voice: "luna",
+      active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "",
+    };
+  }
+
+  function togglePick(id: string) {
+    setPicked((prev) => {
+      const cur = prev ?? activeBots.map((b) => b.id);
+      return cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+    });
+  }
+
+  async function start(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (!topic.trim() || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const created = await createHuddle(topic.trim(), selected, teamId ?? undefined);
+      setTopic("");
+      setPicked(null);
+      await onCreated(created.huddle.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start huddle.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendTask(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (!task.trim() || busy || !detail) return;
+    setBusy(true);
+    setError("");
+    setSavedNote("");
+    try {
+      const res = await huddleChat(detail.huddle.id, task.trim());
+      setTask("");
+      setSavedNote(`Heard by ${res.replies.length} bot(s) · ${formatUsd(res.total_cost_usd)}`);
+      await load();
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Huddle chat failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (!detail || !window.confirm(`Delete huddle "${detail.huddle.topic}"?`)) return;
+    try {
+      await deleteHuddle(detail.huddle.id);
+      await onDeleted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete huddle.");
+    }
+  }
+
+  if (!huddleId) {
+    return (
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-6">
+        <div>
+          <h2 className="text-xl font-bold">Start a huddle</h2>
+          <p className="mt-1 text-sm text-zinc-400">
+            Notify your slaveBots about a topic. Each bot reads its role and decides by itself whether to join.
+            Up to 8 bots are asked per huddle.
+          </p>
+        </div>
+        {activeBots.length === 0 && <p className="text-sm text-zinc-400">Create a slaveBot first — there is nobody to huddle with yet.</p>}
+        <form onSubmit={start} className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
+          <label className="text-sm font-semibold text-zinc-300">
+            Topic
+            <input
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              placeholder="e.g. Plan next week's launch content"
+              maxLength={500}
+              className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
+            />
+          </label>
+          {activeBots.length > 0 && (
+            <div className="text-sm">
+              <div className="mb-1 font-semibold text-zinc-300">Notify (each decides to join or not)</div>
+              <div className="flex flex-col gap-1">
+                {activeBots.map((b) => (
+                  <label key={b.id} className="flex cursor-pointer items-center gap-2 text-zinc-200">
+                    <input type="checkbox" checked={selected.includes(b.id)} onChange={() => togglePick(b.id)} className="accent-emerald-500" />
+                    <BotAvatar bot={b} size="sm" />
+                    <span>{b.name}</span>
+                    {b.role && <span className="truncate text-xs text-zinc-500">{b.role}</span>}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+          {error && <p className="text-sm text-red-400">{error}</p>}
+          <button type="submit" disabled={busy || !topic.trim() || selected.length === 0} className="self-start rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
+            {busy ? "Asking bots to join..." : "Start huddle"}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  if (!detail) {
+    return <p className="p-8 text-center text-zinc-400">{error || "Loading huddle..."}</p>;
+  }
+
+  const joined = detail.participants.filter((p) => p.decision === "join");
+  const declined = detail.participants.filter((p) => p.decision !== "join");
+
+  return (
+    <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-3 p-4">
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-lg font-bold">{detail.huddle.topic}</h2>
+          <button type="button" onClick={remove} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400">
+            Delete
+          </button>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {joined.map((p) => (
+            <button
+              key={p.slavebot_id}
+              type="button"
+              onClick={() => onOpenBot(p.slavebot_id)}
+              title={p.reason || "joined"}
+              className="flex items-center gap-1.5 rounded-full border border-emerald-800 bg-emerald-950 py-1 pl-1 pr-2 text-sm hover:bg-emerald-900"
+            >
+              <BotAvatar bot={avatarFor(p.slavebot_id, p.bot_name)} size="sm" />
+              <span className="text-emerald-200">{p.bot_name ?? "?"}</span>
+            </button>
+          ))}
+          {declined.map((p) => (
+            <button
+              key={p.slavebot_id}
+              type="button"
+              onClick={() => onOpenBot(p.slavebot_id)}
+              title={p.reason ? `Declined: ${p.reason}` : "Declined"}
+              className="flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900 py-1 pl-1 pr-2 text-sm opacity-70 hover:opacity-100"
+            >
+              <BotAvatar bot={avatarFor(p.slavebot_id, p.bot_name)} size="sm" />
+              <span className="text-zinc-400 line-through">{p.bot_name ?? "?"}</span>
+            </button>
+          ))}
+        </div>
+        {declined.length > 0 && (
+          <p className="mt-1 text-xs text-zinc-500">Hover a declined bot to see why it sat out.</p>
+        )}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {detail.messages.length === 0 && (
+          <p className="py-8 text-center text-zinc-500">The bots that joined are listening. Say something to start the discussion.</p>
+        )}
+        {detail.messages.map((m) => (
+          <div key={m.id} className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
+            {m.slavebot_id ? (
+              <BotAvatar bot={avatarFor(m.slavebot_id, m.bot_name)} size="sm" />
+            ) : (
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-600 text-sm font-bold text-white">Y</div>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline gap-2">
+                <span className="text-sm font-bold">{m.slavebot_id ? (m.bot_name ?? "SlaveBot") : "You"}</span>
+                <span className="text-xs text-zinc-500">{new Date(m.created_at).toLocaleString()}</span>
+              </div>
+              <div className="whitespace-pre-wrap break-words text-[15px] text-zinc-200">{m.content}</div>
+            </div>
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+
+      {error && <p className="py-1 text-sm text-red-400">{error}</p>}
+      {savedNote && <p className="py-1 text-sm text-emerald-400">{savedNote}</p>}
+
+      <form onSubmit={sendTask} className="mt-2 flex items-end gap-2 rounded-lg bg-zinc-800 p-2">
+        <textarea
+          value={task}
+          onChange={(e) => setTask(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              sendTask();
+            }
+          }}
+          placeholder={joined.length === 0 ? "Nobody joined — nothing to discuss" : "Talk to the bots that joined..."}
+          rows={1}
+          disabled={busy || joined.length === 0}
+          className="max-h-40 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
+        />
+        <button type="submit" disabled={!task.trim() || busy} className="shrink-0 rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
           {busy ? "..." : "Send"}
         </button>
       </form>
@@ -643,17 +1019,297 @@ function SchedulesView({ botId }: { botId: string }) {
   );
 }
 
+function TeamView({ bot, onOpenBot, onTeamChanged }: { bot: SlaveBot; onOpenBot: (id: string) => void; onTeamChanged: () => void }) {
+  const [children, setChildren] = useState<SlaveBot[]>([]);
+  const [parent, setParent] = useState<SlaveBot | null>(null);
+  const [subName, setSubName] = useState("");
+  const [subRole, setSubRole] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      setChildren(await fetchChildren(bot.id));
+    } catch {
+      /* keep old list */
+    }
+    if (bot.parent_id) {
+      try {
+        const detail = await fetchBotDetail(bot.parent_id);
+        setParent(detail.slavebot);
+      } catch {
+        setParent(null);
+      }
+    } else {
+      setParent(null);
+    }
+  }, [bot.id, bot.parent_id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function spawn(e: React.FormEvent) {
+    e.preventDefault();
+    if (!subName.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const child = await spawnSubBot(bot.id, { name: subName.trim(), role: subRole.trim() });
+      setSubName("");
+      setSubRole("");
+      setChildren((prev) => [...prev, child]);
+      onTeamChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not spawn sub-bot.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mb-8 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
+      <h3 className="font-semibold text-zinc-200">Team</h3>
+      <p className="mb-3 mt-1 text-xs text-zinc-500">
+        Managers grow sub-bots for specific tasks. Sub-bots report to their manager and can be huddled, scheduled, and grouped like any bot.
+      </p>
+      {parent && (
+        <p className="mb-2 text-sm text-zinc-300">
+          Reports to{" "}
+          <button type="button" onClick={() => onOpenBot(parent.id)} className="font-semibold text-emerald-400 hover:underline">
+            {parent.name}
+          </button>
+          {parent.role && <span className="text-zinc-500"> · {parent.role}</span>}
+        </p>
+      )}
+      {children.length > 0 ? (
+        <ul className="mb-3 flex flex-col gap-2">
+          {children.map((c) => (
+            <li key={c.id} className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm">
+              <BotAvatar bot={c} size="sm" />
+              <button type="button" onClick={() => onOpenBot(c.id)} className="min-w-0 flex-1 text-left">
+                <span className="block truncate font-semibold text-zinc-200">{c.name}</span>
+                {(c.role || c.title) && <span className="block truncate text-xs text-zinc-500">{c.role || c.title}</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mb-3 text-sm text-zinc-500">No sub-bots yet.</p>
+      )}
+      <form onSubmit={spawn} className="grid grid-cols-2 gap-2">
+        <label className="text-sm font-semibold text-zinc-300">
+          Sub-bot name
+          <input
+            value={subName}
+            onChange={(e) => setSubName(e.target.value)}
+            placeholder="e.g. Scout"
+            maxLength={40}
+            className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
+          />
+        </label>
+        <label className="text-sm font-semibold text-zinc-300">
+          Task / role
+          <input
+            value={subRole}
+            onChange={(e) => setSubRole(e.target.value)}
+            placeholder="e.g. Track competitor prices"
+            maxLength={120}
+            className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
+          />
+        </label>
+        <div className="col-span-2">
+          <button type="submit" disabled={busy || !subName.trim()} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
+            {busy ? "Spawning..." : "Spawn sub-bot"}
+          </button>
+        </div>
+      </form>
+      {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
+    </div>
+  );
+}
+
+function TeamsView({
+  teams,
+  teamId,
+  userId,
+  onChanged,
+  onSelect,
+}: {
+  teams: Team[];
+  teamId: string | null;
+  userId: string;
+  onChanged: () => Promise<void>;
+  onSelect: (id: string) => void;
+}) {
+  const [detail, setDetail] = useState<TeamDetail | null>(null);
+  const [name, setName] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("staff");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const activeId = teamId ?? teams[0]?.id ?? null;
+
+  useEffect(() => {
+    if (!activeId) {
+      setDetail(null);
+      return;
+    }
+    fetchTeam(activeId)
+      .then(setDetail)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Could not load team."));
+  }, [activeId, teams.length]);
+
+  async function run(fn: () => Promise<unknown>) {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+      if (activeId) setDetail(await fetchTeam(activeId));
+      await onChanged();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Team action failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const myRole = detail?.my_role ?? "staff";
+  const canManage = myRole === "owner" || myRole === "admin";
+
+  return (
+    <div className="mx-auto max-w-3xl px-4 py-6">
+      <h2 className="text-xl font-bold">Teams</h2>
+      <p className="mt-1 text-sm text-zinc-400">Each team owns its slaveBots, groups, and huddles. Owners and admins manage everything; staff only see bots granted to them.</p>
+      <form
+        onSubmit={(e) => { e.preventDefault(); if (name.trim()) void run(() => createTeam(name.trim())); setName(""); }}
+        className="mt-4 flex gap-2"
+      >
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="New team name"
+          className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
+        />
+        <button type="submit" disabled={busy || !name.trim()} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
+          Create
+        </button>
+      </form>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {teams.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onSelect(t.id)}
+            className={`rounded-md border px-3 py-1.5 text-sm font-semibold ${t.id === activeId ? "border-emerald-600 bg-zinc-800 text-zinc-100" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
+          >
+            {t.name} <span className="text-xs text-zinc-500">{t.role}{t.personal ? " · personal" : ""}</span>
+          </button>
+        ))}
+      </div>
+      {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+      {detail && (
+        <div className="mt-6 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold">{detail.team.name}</h3>
+            {canManage && !detail.team.personal && (
+              <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Delete team ${detail.team.name}? Its bots are archived; groups and huddles are removed.`)) void run(() => deleteTeam(detail.team.id)); }} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400 disabled:opacity-50">
+                Delete team
+              </button>
+            )}
+          </div>
+          <h4 className="mt-4 text-sm font-bold uppercase tracking-wide text-zinc-500">Members ({detail.members.length})</h4>
+          <ul className="mt-2 space-y-1">
+            {detail.members.map((m) => (
+              <li key={m.user_id} className="flex items-center gap-2 rounded-md bg-zinc-800/60 px-3 py-2 text-sm">
+                <span className="min-w-0 flex-1 truncate">{m.name || m.email} <span className="text-xs text-zinc-500">{m.email}</span></span>
+                {canManage && m.user_id !== userId ? (
+                  <select value={m.role} disabled={busy} onChange={(e) => void run(() => setMemberRole(detail.team.id, m.user_id, e.target.value))} className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 focus:border-emerald-500 focus:outline-none">
+                    <option value="admin">admin</option>
+                    <option value="staff">staff</option>
+                  </select>
+                ) : (
+                  <span className="rounded border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">{m.role}</span>
+                )}
+                {canManage && m.user_id !== userId && (
+                  <button type="button" disabled={busy} onClick={() => void run(() => removeMember(detail.team.id, m.user_id))} className="rounded px-1 text-xs text-zinc-500 hover:text-red-400 disabled:opacity-50">Remove</button>
+                )}
+              </li>
+            ))}
+          </ul>
+          {canManage && (
+            <form
+              onSubmit={(e) => { e.preventDefault(); if (inviteEmail.trim()) void run(() => inviteMember(detail.team.id, inviteEmail.trim(), inviteRole)); setInviteEmail(""); }}
+              className="mt-3 flex gap-2"
+            >
+              <input
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="teammate@example.com"
+                autoComplete="off"
+                className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
+              />
+              <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none">
+                <option value="admin">admin</option>
+                <option value="staff">staff</option>
+              </select>
+              <button type="submit" disabled={busy || !inviteEmail.trim()} className="rounded-md bg-zinc-700 px-3 py-2 text-sm font-bold text-white hover:bg-zinc-600 disabled:opacity-50">
+                Invite
+              </button>
+            </form>
+          )}
+          <h4 className="mt-5 text-sm font-bold uppercase tracking-wide text-zinc-500">SlaveBots ({detail.bots.length})</h4>
+          <ul className="mt-2 space-y-1">
+            {detail.bots.map((b) => (
+              <li key={b.id} className="rounded-md bg-zinc-800/60 px-3 py-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate font-semibold">{b.name}</span>
+                </div>
+                {canManage && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {detail.members.filter((m) => m.role === "staff").map((m) => {
+                      const has = m.bot_ids.includes(b.id);
+                      return (
+                        <button
+                          key={m.user_id}
+                          type="button"
+                          disabled={busy}
+                          title={has ? `Revoke ${b.name} from ${m.email}` : `Grant ${b.name} to ${m.email}`}
+                          onClick={() => void run(() => has ? revokeBotAccess(detail.team.id, b.id, m.user_id, m.bot_ids) : grantBotAccess(detail.team.id, b.id, m.user_id, m.bot_ids))}
+                          className={`rounded border px-2 py-0.5 text-xs ${has ? "border-emerald-700 text-emerald-400" : "border-zinc-700 text-zinc-500 hover:text-zinc-200"}`}
+                        >
+                          {m.email}: {has ? "granted" : "grant"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </li>
+            ))}
+            {detail.bots.length === 0 && <p className="text-sm text-zinc-600">No bots in this team yet.</p>}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BotView({
   bot,
-  models,
+  providerInfo,
   onSaved,
+  onOpenBot,
+  onTeamChanged,
 }: {
   bot: SlaveBot;
-  models: { id: string; label: string }[];
+  providerInfo: ProviderInfo | null;
   onSaved: (bot: SlaveBot) => void;
+  onOpenBot: (id: string) => void;
+  onTeamChanged: () => void;
 }) {
   const [name, setName] = useState(bot.name);
   const [memory, setMemory] = useState(bot.memory);
+  const [role, setRole] = useState(bot.role || "");
   const [model, setModel] = useState(bot.model);
   const [voice, setVoice] = useState(bot.voice || "luna");
   const [activeDays, setActiveDays] = useState(bot.active_days || "all");
@@ -670,6 +1326,7 @@ function BotView({
   useEffect(() => {
     setName(bot.name);
     setMemory(bot.memory);
+    setRole(bot.role || "");
     setModel(bot.model);
     setVoice(bot.voice || "luna");
     setActiveDays(bot.active_days || "all");
@@ -678,7 +1335,7 @@ function BotView({
     setError("");
     setSummaries(null);
     fetchSummaries(bot.id).then(setSummaries).catch(() => {});
-  }, [bot.id, bot.name, bot.memory, bot.model, bot.voice, bot.active_days, bot.active_start, bot.active_end]);
+  }, [bot.id, bot.name, bot.memory, bot.role, bot.model, bot.voice, bot.active_days, bot.active_start, bot.active_end]);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -689,6 +1346,7 @@ function BotView({
       const updated = await updateBot(bot.id, {
         name,
         memory,
+        role,
         model,
         voice,
         active_days: activeDays,
@@ -713,6 +1371,24 @@ function BotView({
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update archive state.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function togglePin() {
+    if (!bot.pinned && bot.archived) {
+      setError("Restore the bot before pinning it.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await updateBot(bot.id, { pinned: !bot.pinned });
+      onSaved(updated);
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update pin state.");
     } finally {
       setBusy(false);
     }
@@ -767,6 +1443,17 @@ function BotView({
           <input value={name} onChange={(e) => { setName(e.target.value); setSaved(false); }} maxLength={40} className={inputCls} />
         </label>
         <label className="text-sm font-semibold text-zinc-300">
+          Role (personal identity)
+          <input
+            value={role}
+            onChange={(e) => { setRole(e.target.value); setSaved(false); }}
+            placeholder="e.g. Sales manager — tracks leads and reminds me to follow up"
+            maxLength={120}
+            className={inputCls}
+          />
+        </label>
+        <p className="-mt-2 text-xs text-zinc-500">The role guides huddle join decisions: bots join only when the topic fits their job. New bots ask for this in their first message.</p>
+        <label className="text-sm font-semibold text-zinc-300">
           Avatar
           <span className="mt-1 flex items-center gap-3">
             <input
@@ -783,13 +1470,19 @@ function BotView({
         </label>
         <label className="text-sm font-semibold text-zinc-300">
           Model
-          <select value={model} onChange={(e) => { setModel(e.target.value); setSaved(false); }} className={inputCls}>
-            {models.map((m) => (
+          <input value={model} onChange={(e) => { setModel(e.target.value); setSaved(false); }} list="bot-model-list" className={inputCls} />
+          <datalist id="bot-model-list">
+            {(providerInfo?.models ?? []).map((m) => (
               <option key={m.id} value={m.id}>
                 {m.label}
               </option>
             ))}
-          </select>
+          </datalist>
+          {providerInfo && (
+            <span className="mt-1 block text-xs font-normal text-zinc-500">
+              Provider: {providerInfo.provider_label ?? providerInfo.provider} · default {providerInfo.default}
+            </span>
+          )}
         </label>
         <label className="text-sm font-semibold text-zinc-300">
           Voice (spoken replies)
@@ -842,6 +1535,15 @@ function BotView({
           <button
             type="button"
             disabled={busy}
+            onClick={togglePin}
+            title={bot.pinned ? "Unpin: no bot auto-opens on visit" : "Pin: this bot opens automatically on every visit"}
+            className={`rounded-md border px-4 py-2 text-sm font-semibold disabled:opacity-50 ${bot.pinned ? "border-emerald-600 text-emerald-400 hover:bg-emerald-950" : "border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
+          >
+            {bot.pinned ? "Unpin bot" : "Pin bot"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
             onClick={toggleArchive}
             title={bot.archived ? "Restore this bot to the active list" : "Hide this bot from lists, groups, and crons (history is kept)"}
             className={`rounded-md border px-4 py-2 text-sm font-semibold disabled:opacity-50 ${bot.archived ? "border-emerald-600 text-emerald-400 hover:bg-emerald-950" : "border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
@@ -852,6 +1554,8 @@ function BotView({
       </form>
 
       <SchedulesView botId={bot.id} />
+
+      <TeamView bot={bot} onOpenBot={onOpenBot} onTeamChanged={onTeamChanged} />
 
       <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
         <div className="mb-3 flex items-center justify-between">
@@ -885,13 +1589,17 @@ function BotView({
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [checking, setChecking] = useState(true);
-  const [models, setModels] = useState<{ id: string; label: string }[]>([]);
-  const [view, setView] = useState<"chat" | "group" | "bot" | "logs">("chat");
+  const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [teamId, setTeamId] = useState<string | null>(null);
+  const [view, setView] = useState<"chat" | "group" | "huddle" | "bot" | "logs" | "teams">("chat");
   const [bots, setBots] = useState<SlaveBot[]>([]);
   const [botId, setBotId] = useState<string | null>(null);
   const [bot, setBot] = useState<SlaveBot | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [groupId, setGroupId] = useState<string | null>(null);
+  const [huddles, setHuddles] = useState<Huddle[]>([]);
+  const [huddleId, setHuddleId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -911,6 +1619,7 @@ export default function App() {
   const recTimer = useRef<number | null>(null);
   const converseRef = useRef(false);
   const audioRef = useRef<{ stop: () => void } | null>(null);
+  const autoOpenedRef = useRef(false);
 
   const refreshUser = useCallback(async () => {
     try {
@@ -937,21 +1646,50 @@ export default function App() {
     }
   }, []);
 
+  const refreshHuddles = useCallback(async () => {
+    try {
+      setHuddles(await fetchHuddles());
+    } catch {
+      /* keep old list on transient failure */
+    }
+  }, []);
+
   useEffect(() => {
     warmUpVoices();
     refreshUser().finally(() => setChecking(false));
-    fetchModels().then(setModels).catch(() => {});
+    fetchProviderModels().then(setProviderInfo).catch(() => {});
+    fetchTeams().then((list) => {
+      setTeams(list);
+      if (list.length > 0) setTeamId((prev) => prev ?? list[0].id);
+    }).catch(() => {});
   }, [refreshUser]);
 
   useEffect(() => {
     if (user) {
-      refreshBots();
+      autoOpenedRef.current = false;
+      // First load per login: open the pinned bot automatically, if any.
+      void (async () => {
+        try {
+          const list = await fetchBots();
+          setBots(list);
+          if (!autoOpenedRef.current) {
+            autoOpenedRef.current = true;
+            const pinned = list.find((b) => b.pinned && b.pinned_by === user.id && !b.archived);
+            if (pinned) await openBot(pinned.id);
+          }
+        } catch {
+          /* keep old list on transient failure */
+        }
+      })();
       refreshGroups();
+      refreshHuddles();
     } else {
       setBots([]);
       setGroups([]);
+      setHuddles([]);
     }
-  }, [user, refreshBots, refreshGroups]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, teamId]);
 
   useEffect(() => {
     if (view === "logs" && user) {
@@ -1018,16 +1756,29 @@ export default function App() {
       stopRecordingUi();
     }
     setGroupId(id);
+    setHuddleId(null);
     setBotId(null);
     setBot(null);
     setMessages([]);
     setView("group");
   }
 
+  function openHuddle(id: string | null) {
+    setError("");
+    stopConverse();
+    if (recorder) {
+      recorder.cancel();
+      stopRecordingUi();
+    }
+    setHuddleId(id);
+    setGroupId(null);
+    setView("huddle");
+  }
+
   async function newGroup() {
     setError("");
     try {
-      const created = await createGroup("");
+      const created = await createGroup("", teamId ?? undefined);
       await refreshGroups();
       await openGroup(created.id);
     } catch (err) {
@@ -1044,6 +1795,7 @@ export default function App() {
     }
     setBotId(id);
     setGroupId(null);
+    setHuddleId(null);
     setView("chat");
     if (!id) {
       setBot(null);
@@ -1064,7 +1816,7 @@ export default function App() {
   async function newBot() {
     setError("");
     try {
-      const created = await createBot(models[0]?.id ?? "muse-spark-1.3");
+      const created = await createBot(providerInfo?.default ?? "meta-llama/llama-3.3-70b-instruct", teamId ?? undefined);
       await refreshBots();
       await openBot(created.id);
     } catch (err) {
@@ -1266,6 +2018,7 @@ export default function App() {
   }
 
   function logout() {
+    autoOpenedRef.current = false;
     stopConverse();
     if (recorder) {
       recorder.cancel();
@@ -1279,14 +2032,51 @@ export default function App() {
     setBot(null);
     setGroups([]);
     setGroupId(null);
+    setHuddles([]);
+    setHuddleId(null);
     setUsage(null);
   }
 
   if (checking) return <div className="flex min-h-screen items-center justify-center text-zinc-400">Loading...</div>;
   if (!user) return <AuthView onAuth={setUser} />;
 
-  const activeBots = bots.filter((b) => !b.archived);
-  const archivedBots = bots.filter((b) => b.archived);
+  // Team scope: only rows of the selected team ("" = legacy row, shown as fallback).
+  const inTeam = (t: string) => !teamId || t === teamId || t === "";
+  const teamGroups = groups.filter((g) => inTeam(g.team_id));
+  const teamHuddles = huddles.filter((h) => inTeam(h.team_id));
+  const activeBots = bots.filter((b) => !b.archived && inTeam(b.team_id));
+  const archivedBots = bots.filter((b) => b.archived && inTeam(b.team_id));
+  const childMap = new Map<string, SlaveBot[]>();
+  for (const b of activeBots) {
+    if (b.parent_id) {
+      const list = childMap.get(b.parent_id) ?? [];
+      list.push(b);
+      childMap.set(b.parent_id, list);
+    }
+  }
+  const topBots = activeBots.filter((b) => !b.parent_id);
+  const orphanBots = activeBots.filter((b) => b.parent_id && !activeBots.some((p) => p.id === b.parent_id));
+
+  function botRow(b: SlaveBot, indented: boolean) {
+    return (
+      <button
+        key={b.id}
+        type="button"
+        onClick={() => openBot(b.id)}
+        title={(b.role ? `${b.role} — ` : "") + (b.title || b.name)}
+        className={`flex items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-zinc-800 ${b.id === botId ? "bg-zinc-800" : ""} ${indented ? "ml-5 border-l border-zinc-800" : ""}`}
+      >
+        <BotAvatar bot={b} size="sm" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-semibold">{b.name}</span>
+          {(b.role || b.title) && <span className="block truncate text-xs text-zinc-500">{b.role || b.title}</span>}
+        </span>
+        {b.pinned ? (
+          <span title="Pinned — opens automatically on visit" className="shrink-0 rounded border border-emerald-700 px-1 text-[10px] font-bold text-emerald-400">PIN</span>
+        ) : null}
+      </button>
+    );
+  }
 
   const tabCls = (active: boolean) =>
     `rounded-md px-3 py-1.5 text-sm font-medium ${active ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`;
@@ -1295,6 +2085,21 @@ export default function App() {
     <div className="flex h-screen bg-zinc-950 text-zinc-100">
       {/* Sidebar — bot list */}
       <aside className="flex w-60 shrink-0 flex-col border-r border-zinc-800 bg-zinc-950">
+        <div className="border-b border-zinc-800 px-3 py-2">
+          <label className="block text-[11px] font-bold uppercase tracking-wide text-zinc-500">
+            Team
+            <select
+              value={teamId ?? ""}
+              onChange={(e) => { setTeamId(e.target.value || null); setBotId(null); setBot(null); setGroupId(null); setHuddleId(null); setMessages([]); }}
+              className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs font-semibold text-zinc-100 focus:border-emerald-500 focus:outline-none"
+            >
+              {teams.map((t) => (
+                <option key={t.id} value={t.id}>{t.name} ({t.role})</option>
+              ))}
+              {teams.length === 0 && <option value="">No team yet</option>}
+            </select>
+          </label>
+        </div>
         <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
           <div className="font-bold">SlaveBots</div>
           <button type="button" onClick={newBot} className="rounded-md px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
@@ -1302,21 +2107,8 @@ export default function App() {
           </button>
         </div>
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
-          {activeBots.map((b) => (
-            <button
-              key={b.id}
-              type="button"
-              onClick={() => openBot(b.id)}
-              title={b.title || b.name}
-              className={`flex items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-zinc-800 ${b.id === botId ? "bg-zinc-800" : ""}`}
-            >
-              <BotAvatar bot={b} size="sm" />
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold">{b.name}</span>
-                {b.title && <span className="block truncate text-xs text-zinc-500">{b.title}</span>}
-              </span>
-            </button>
-          ))}
+          {topBots.flatMap((b) => [botRow(b, false), ...(childMap.get(b.id) ?? []).map((c) => botRow(c, true))])}
+          {orphanBots.map((b) => botRow(b, false))}
           {activeBots.length === 0 && <p className="px-2 py-2 text-sm text-zinc-500">No slaveBots yet — create one to start.</p>}
           {archivedBots.length > 0 && (
             <button
@@ -1351,7 +2143,7 @@ export default function App() {
           </button>
         </div>
         <nav className="flex max-h-40 flex-col gap-1 overflow-y-auto p-2 pt-1">
-          {groups.map((g) => (
+          {teamGroups.map((g) => (
             <button
               key={g.id}
               type="button"
@@ -1362,7 +2154,27 @@ export default function App() {
               <span className="mr-1 text-zinc-500">##</span>{g.name}
             </button>
           ))}
-          {groups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">No groups yet.</p>}
+          {teamGroups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">No groups yet.</p>}
+        </nav>
+        <div className="flex items-center justify-between border-t border-zinc-800 px-4 pb-1 pt-3">
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Huddles</div>
+          <button type="button" onClick={() => openHuddle(null)} className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
+            + New
+          </button>
+        </div>
+        <nav className="flex max-h-40 flex-col gap-1 overflow-y-auto p-2 pt-1">
+          {teamHuddles.map((h) => (
+            <button
+              key={h.id}
+              type="button"
+              onClick={() => openHuddle(h.id)}
+              title={h.topic}
+              className={`truncate rounded-md px-2 py-2 text-left text-sm hover:bg-zinc-800 ${h.id === huddleId ? "bg-zinc-800 font-semibold" : "text-zinc-300"}`}
+            >
+              <span className="mr-1 text-zinc-500">◉</span>{h.topic.length > 40 ? `${h.topic.slice(0, 40)}…` : h.topic}
+            </button>
+          ))}
+          {teamHuddles.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">No huddles yet.</p>}
         </nav>
         <div className="flex flex-col items-start gap-2 border-t border-zinc-800 p-3">
           <button type="button" onClick={() => { setView("logs"); fetchUsage().then(setUsage).catch(() => {}); }} className="rounded-md px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
@@ -1370,6 +2182,7 @@ export default function App() {
           </button>
           <div className="px-2 text-sm font-bold text-emerald-400">{formatUsd(user.credit_usd)} left</div>
           <div className="px-2 text-xs text-zinc-500">{user.email}</div>
+          <ProviderPanel user={user} onChanged={() => { void refreshUser(); }} />
           <button type="button" onClick={logout} className="rounded-md px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
             Log out
           </button>
@@ -1384,8 +2197,10 @@ export default function App() {
             <span className="font-semibold">{bot ? bot.name : "pick a slaveBot"}</span>
             <button type="button" onClick={() => setView("chat")} className={tabCls(view === "chat")}>Chat</button>
           <button type="button" onClick={() => groupId && setView("group")} disabled={!groupId} className={`${tabCls(view === "group")} disabled:opacity-40`}>Group</button>
+            <button type="button" onClick={() => setView("huddle")} className={tabCls(view === "huddle")}>Huddle</button>
             <button type="button" onClick={() => bot && setView("bot")} disabled={!bot} className={`${tabCls(view === "bot")} disabled:opacity-40`}>Bot</button>
             <button type="button" onClick={() => setView("logs")} className={tabCls(view === "logs")}>Logs</button>
+            <button type="button" onClick={() => setView("teams")} className={tabCls(view === "teams")}>Teams</button>
           </div>
           <button
             type="button"
@@ -1399,6 +2214,20 @@ export default function App() {
 
         {view === "logs" ? (
           <main className="flex-1 overflow-y-auto"><LogsView summary={usage} /></main>
+        ) : view === "teams" ? (
+          <main className="flex-1 overflow-y-auto">
+            <TeamsView
+              teams={teams}
+              teamId={teamId}
+              userId={user.id}
+              onChanged={async () => {
+                const list = await fetchTeams();
+                setTeams(list);
+                if (!list.some((t) => t.id === teamId)) setTeamId(list[0]?.id ?? null);
+              }}
+              onSelect={(id) => { setTeamId(id); setView("chat"); }}
+            />
+          </main>
         ) : view === "group" && groupId ? (
           <main className="flex-1 overflow-y-auto">
             <GroupView
@@ -1412,14 +2241,37 @@ export default function App() {
               }}
             />
           </main>
+        ) : view === "huddle" ? (
+          <main className="flex-1 overflow-y-auto">
+            <HuddleView
+              huddleId={huddleId}
+              bots={bots}
+              teamId={teamId}
+              onCreated={async (id) => {
+                await refreshHuddles();
+                openHuddle(id);
+              }}
+              onChanged={refreshHuddles}
+              onDeleted={async () => {
+                setHuddleId(null);
+                await refreshHuddles();
+                setView("chat");
+              }}
+              onOpenBot={openBot}
+            />
+          </main>
         ) : view === "bot" && bot ? (
           <main className="flex-1 overflow-y-auto">
             <BotView
               bot={bot}
-              models={models}
+              providerInfo={providerInfo}
               onSaved={(updated) => {
                 setBot(updated);
                 setBots((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
+              }}
+              onOpenBot={openBot}
+              onTeamChanged={() => {
+                void refreshBots();
               }}
             />
           </main>
@@ -1444,7 +2296,7 @@ export default function App() {
               )}
               {messages.map((m) => (
                 <div key={m.key} className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
-                  <BotAvatar bot={bot ?? { id: "u", name: m.role === "user" ? (user.name || "You") : "A", title: "", model: "", memory: "", avatar_key: "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" } as SlaveBot} size="sm" />
+                  <BotAvatar bot={bot ?? { id: "u", name: m.role === "user" ? (user.name || "You") : "A", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", user_id: "u", team_id: "", avatar_key: "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" } as SlaveBot} size="sm" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
                       <span className="text-sm font-bold">{m.role === "user" ? (user.name || "You") : (bot?.name ?? "Assistant")}</span>

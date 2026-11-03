@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 use worker::*;
 
-use crate::{auth, chat, meta, store, util};
+use crate::{auth, chat, provider, store, util};
 
 /// GET /mcp — human-readable pointer (real MCP clients use POST /mcp).
 pub fn info() -> Result<Response> {
@@ -12,7 +12,7 @@ pub fn info() -> Result<Response> {
             "transport": "streamable-http",
             "endpoint": "/mcp",
             "methods": ["initialize", "tools/list", "tools/call"],
-            "tools": ["chat", "models", "bot_archive", "schedule_create", "schedule_list", "schedule_delete"],
+            "tools": ["chat", "models", "bot_archive", "bot_pin", "bot_set_role", "bot_spawn", "team_create", "team_list", "team_invite", "schedule_create", "schedule_list", "schedule_delete", "huddle_start", "huddle_list", "huddle_chat"],
         }),
     )
 }
@@ -31,7 +31,7 @@ fn rpc_err(id: Value, code: i32, message: &str) -> Result<Response> {
 fn chat_tool_def() -> Value {
     json!({
         "name": "chat",
-        "description": "Chat completion via Meta Model API (Muse Spark/Wonder). Returns assistant text.",
+        "description": "Chat completion via OpenRouter (many models). Returns assistant text.",
         "inputSchema": {
             "type": "object",
             "required": ["messages"],
@@ -108,6 +108,126 @@ fn schedule_list_tool_def() -> Value {
     })
 }
 
+fn bot_pin_tool_def() -> Value {
+    json!({
+        "name": "bot_pin",
+        "description": "Pin a slaveBot so it auto-opens on visit (only one pin per user; pinning unpins the previous one), or unpin it.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["slavebot_id", "pinned"],
+            "properties": {
+                "slavebot_id": { "type": "string" },
+                "pinned": { "type": "boolean" }
+            }
+        }
+    })
+}
+
+fn bot_set_role_tool_def() -> Value {
+    json!({
+        "name": "bot_set_role",
+        "description": "Set a slaveBot's personal identity/role (e.g. sales manager). The role guides huddle join decisions and is shown in the Bot tab.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["slavebot_id", "role"],
+            "properties": {
+                "slavebot_id": { "type": "string" },
+                "role": { "type": "string" }
+            }
+        }
+    })
+}
+
+fn bot_spawn_tool_def() -> Value {
+    json!({
+        "name": "bot_spawn",
+        "description": "Grow a sub-bot under a manager bot for one specific task. The child inherits the manager's model unless overridden.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["manager_id"],
+            "properties": {
+                "manager_id": { "type": "string" },
+                "name": { "type": "string" },
+                "role": { "type": "string" },
+                "model": { "type": "string" }
+            }
+        }
+    })
+}
+
+fn huddle_start_tool_def() -> Value {
+    json!({
+        "name": "huddle_start",
+        "description": "Start a Slack-style huddle: notify bots about a topic; each bot decides by itself (from its role) whether to join. Notifies up to 8 active team bots, or the given slavebot_ids. team_id defaults to the personal team.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["topic"],
+            "properties": {
+                "topic": { "type": "string" },
+                "slavebot_ids": { "type": "array", "items": { "type": "string" } }
+            }
+        }
+    })
+}
+
+fn team_create_tool_def() -> Value {
+    json!({
+        "name": "team_create",
+        "description": "Create a team for shared slaveBots. The creator becomes owner.",
+        "inputSchema": {
+            "type": "object",
+            "properties": { "name": { "type": "string" } }
+        }
+    })
+}
+
+fn team_list_tool_def() -> Value {
+    json!({
+        "name": "team_list",
+        "description": "List my teams with my role on each.",
+        "inputSchema": { "type": "object", "properties": {} }
+    })
+}
+
+fn team_invite_tool_def() -> Value {
+    json!({
+        "name": "team_invite",
+        "description": "Invite a registered user to a team by email as admin or staff (owner-only for admin). Staff only see bots explicitly granted to them.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["team_id", "email"],
+            "properties": {
+                "team_id": { "type": "string" },
+                "email": { "type": "string" },
+                "role": { "type": "string", "enum": ["admin", "staff"] }
+            }
+        }
+    })
+}
+
+fn huddle_list_tool_def() -> Value {
+    json!({
+        "name": "huddle_list",
+        "description": "List huddles with their join/decline participants.",
+        "inputSchema": { "type": "object", "properties": {} }
+    })
+}
+
+fn huddle_chat_tool_def() -> Value {
+    json!({
+        "name": "huddle_chat",
+        "description": "Send a message into a huddle; every bot that joined replies. Replies are saved and billed per bot.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["huddle_id", "message"],
+            "properties": {
+                "huddle_id": { "type": "string" },
+                "message": { "type": "string" }
+            }
+        }
+    })
+}
+
 fn schedule_delete_tool_def() -> Value {
     json!({
         "name": "schedule_delete",
@@ -142,7 +262,7 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
             Ok(Response::empty()?.with_status(202))
         }
         "ping" => rpc_ok(id, json!({})),
-        "tools/list" => rpc_ok(id, json!({ "tools": [chat_tool_def(), models_tool_def(), bot_archive_tool_def(), schedule_create_tool_def(), schedule_list_tool_def(), schedule_delete_tool_def()] })),
+        "tools/list" => rpc_ok(id, json!({ "tools": [chat_tool_def(), models_tool_def(), bot_archive_tool_def(), bot_pin_tool_def(), bot_set_role_tool_def(), bot_spawn_tool_def(), team_create_tool_def(), team_list_tool_def(), team_invite_tool_def(), schedule_create_tool_def(), schedule_list_tool_def(), schedule_delete_tool_def(), huddle_start_tool_def(), huddle_list_tool_def(), huddle_chat_tool_def()] })),
         "tools/call" => {
             let user_id = match auth::bearer_sub(&req, &ctx.env)? {
                 Some(uid) => uid,
@@ -152,13 +272,32 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
             let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(Value::Null);
             match name {
-                "models" => rpc_ok(id, json!({ "content": [{ "type": "text", "text": meta::model_list(&ctx.env).to_string() }] })),
+                "models" => {
+                    let db = match ctx.env.d1("DB") {
+                        Ok(db) => db,
+                        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+                    };
+                    let preset = provider::provider_for(&db, &ctx.env, &user_id)
+                        .await
+                        .map(|p| p.preset)
+                        .unwrap_or_else(|_| "meta".to_string());
+                    rpc_ok(id, json!({ "content": [{ "type": "text", "text": provider::model_list(&preset).to_string() }] }))
+                }
                 "chat" => call_chat(id, &ctx.env, &user_id, &args).await,
                 "bot_archive" => call_bot_archive(id, &ctx.env, &user_id, &args).await,
+                "bot_pin" => call_bot_pin(id, &ctx.env, &user_id, &args).await,
+                "bot_set_role" => call_bot_set_role(id, &ctx.env, &user_id, &args).await,
+                "bot_spawn" => call_bot_spawn(id, &ctx.env, &user_id, &args).await,
                 "schedule_create" => call_schedule_create(id, &ctx.env, &user_id, &args).await,
                 "schedule_list" => call_schedule_list(id, &ctx.env, &user_id, &args).await,
                 "schedule_delete" => call_schedule_delete(id, &ctx.env, &user_id, &args).await,
-                _ => rpc_err(id, -32602, "Unknown tool. Available: chat, models, bot_archive, schedule_create, schedule_list, schedule_delete."),
+                "huddle_start" => call_huddle_start(id, &ctx.env, &user_id, &args).await,
+                "team_create" => call_team_create(id, &ctx.env, &user_id, &args).await,
+                "team_list" => call_team_list(id, &ctx.env, &user_id, &args).await,
+                "team_invite" => call_team_invite(id, &ctx.env, &user_id, &args).await,
+                "huddle_list" => call_huddle_list(id, &ctx.env, &user_id, &args).await,
+                "huddle_chat" => call_huddle_chat(id, &ctx.env, &user_id, &args).await,
+                _ => rpc_err(id, -32602, "Unknown tool. Run tools/list for the current catalogue."),
             }
         }
         "" => rpc_err(id, -32600, "Invalid Request: missing method field."),
@@ -168,6 +307,174 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
 
 fn mcp_text(id: Value, text: String) -> Result<Response> {
     rpc_ok(id, json!({ "content": [{ "type": "text", "text": text }] }))
+}
+
+async fn call_bot_pin(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+    let bot_id = args.get("slavebot_id").and_then(|v| v.as_str()).unwrap_or("");
+    let pinned = args.get("pinned").and_then(|v| v.as_bool()).unwrap_or(true);
+    if bot_id.is_empty() {
+        return rpc_err(id, -32602, "The slavebot_id argument is required.");
+    }
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+    };
+    match store::set_pinned(&db, user_id, bot_id, pinned).await {
+        Ok(Some(bot)) => mcp_text(id, format!("{} is now {}.", bot.name, if pinned { "pinned" } else { "unpinned" })),
+        Ok(None) => rpc_err(id, -32602, "SlaveBot not found."),
+        Err(e) => rpc_err(id, -32602, &format!("Pin failed: {e}")),
+    }
+}
+
+async fn call_bot_set_role(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+    let bot_id = args.get("slavebot_id").and_then(|v| v.as_str()).unwrap_or("");
+    let role = args.get("role").and_then(|v| v.as_str()).unwrap_or("");
+    if bot_id.is_empty() {
+        return rpc_err(id, -32602, "The slavebot_id argument is required.");
+    }
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+    };
+    match store::update_bot(&db, user_id, bot_id, None, None, None, None, None, None, None, Some(role)).await {
+        Ok(Some(bot)) => mcp_text(id, format!("{} is now: {}.", bot.name, if bot.role.is_empty() { "no role" } else { &bot.role })),
+        Ok(None) => rpc_err(id, -32602, "SlaveBot not found."),
+        Err(e) => rpc_err(id, -32000, &format!("Set role failed: {e}")),
+    }
+}
+
+async fn call_bot_spawn(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+    let manager_id = args.get("manager_id").and_then(|v| v.as_str()).unwrap_or("");
+    if manager_id.is_empty() {
+        return rpc_err(id, -32602, "The manager_id argument is required.");
+    }
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+    };
+    let manager = match store::get_bot(&db, user_id, manager_id).await {
+        Ok(Some(m)) => m,
+        Ok(None) => return rpc_err(id, -32602, "Manager bot not found."),
+        Err(e) => return rpc_err(id, -32000, &format!("Database error: {e}")),
+    };
+    let preset = provider::provider_for(&db, env, user_id)
+        .await
+        .map(|p| p.preset)
+        .unwrap_or_else(|_| "meta".to_string());
+    let requested = args.get("model").and_then(|v| v.as_str()).unwrap_or("");
+    let model = if provider::valid_for(&preset, requested) {
+        requested.to_string()
+    } else {
+        provider::effective_model(&preset, &manager.model)
+    };
+    let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let role = args.get("role").and_then(|v| v.as_str()).unwrap_or("");
+    match store::spawn_bot(&db, user_id, manager_id, name, role, &model).await {
+        Ok(child) => mcp_text(id, format!("Spawned {} (id {}) under {}.", child.name, child.id, manager.name)),
+        Err(e) => rpc_err(id, -32602, &format!("Spawn failed: {e}")),
+    }
+}
+
+async fn call_team_create(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+    let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("Team");
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+    };
+    match store::create_team(&db, user_id, name, false).await {
+        Ok(t) => mcp_text(id, format!("Team {} created (id {}). You are the owner.", t.name, t.id)),
+        Err(e) => rpc_err(id, -32000, &format!("Create failed: {e}")),
+    }
+}
+
+async fn call_team_list(id: Value, env: &Env, user_id: &str, _args: &Value) -> Result<Response> {
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+    };
+    match store::list_user_teams(&db, user_id).await {
+        Ok(list) => mcp_text(id, serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string())),
+        Err(e) => rpc_err(id, -32000, &format!("List failed: {e}")),
+    }
+}
+
+async fn call_team_invite(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+    let team_id = args.get("team_id").and_then(|v| v.as_str()).unwrap_or("");
+    let email = args.get("email").and_then(|v| v.as_str()).unwrap_or("");
+    let role = args.get("role").and_then(|v| v.as_str()).unwrap_or("staff");
+    if team_id.is_empty() || email.is_empty() {
+        return rpc_err(id, -32602, "The team_id and email arguments are required.");
+    }
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+    };
+    match store::add_member_by_email(&db, team_id, user_id, email, role).await {
+        Ok(m) => mcp_text(id, format!("{} joined as {}.", m.user_id, m.role)),
+        Err(e) => rpc_err(id, -32602, &e),
+    }
+}
+
+async fn call_huddle_start(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+    let topic = args.get("topic").and_then(|v| v.as_str()).unwrap_or("");
+    let team_id = args.get("team_id").and_then(|v| v.as_str()).unwrap_or("");
+    let ids: Option<Vec<String>> = args.get("slavebot_ids").and_then(|v| {
+        v.as_array().map(|a| {
+            a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect()
+        })
+    });
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+    };
+    match crate::huddle::start_huddle(env, &db, user_id, team_id, topic, ids).await {
+        Ok((huddle, participants)) => mcp_text(
+            id,
+            format!(
+                "Huddle {} started on \"{}\": {}",
+                huddle.id,
+                huddle.topic,
+                serde_json::to_string(&participants).unwrap_or_else(|_| "[]".to_string())
+            ),
+        ),
+        Err(e) => rpc_err(id, -32000, &e),
+    }
+}
+
+async fn call_huddle_list(id: Value, env: &Env, user_id: &str, _args: &Value) -> Result<Response> {
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+    };
+    match store::list_huddles(&db, user_id).await {
+        Ok(list) => mcp_text(id, serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string())),
+        Err(e) => rpc_err(id, -32000, &format!("List failed: {e}")),
+    }
+}
+
+async fn call_huddle_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+    let huddle_id = args.get("huddle_id").and_then(|v| v.as_str()).unwrap_or("");
+    let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    if huddle_id.is_empty() || message.is_empty() {
+        return rpc_err(id, -32602, "The huddle_id and message arguments are required.");
+    }
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+    };
+    match crate::huddle::post_message(env, &db, user_id, huddle_id, message, None).await {
+        Ok(r) => mcp_text(
+            id,
+            format!(
+                "{} replie(s), total ${:.6}, credit ${:.4}: {}",
+                r.replies.len(),
+                r.total_cost,
+                r.credit,
+                serde_json::to_string(&r.replies).unwrap_or_else(|_| "[]".to_string())
+            ),
+        ),
+        Err(e) => rpc_err(id, -32000, &e),
+    }
 }
 
 async fn call_bot_archive(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
@@ -243,12 +550,7 @@ async fn call_schedule_delete(id: Value, env: &Env, user_id: &str, args: &Value)
 }
 
 async fn call_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
-    let model = args
-        .get("model")
-        .and_then(|m| m.as_str())
-        .filter(|m| !m.trim().is_empty())
-        .unwrap_or("muse-spark-1.3")
-        .to_string();
+    let requested = args.get("model").and_then(|m| m.as_str()).unwrap_or("");
     let messages: Vec<chat::ChatMessage> = match args.get("messages") {
         Some(v) => match serde_json::from_value(v.clone()) {
             Ok(m) => m,
@@ -260,14 +562,23 @@ async fn call_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<
         return rpc_err(id, -32602, "messages must have 1..30 items.");
     }
     let db = env.d1("DB")?;
+    let prov = match provider::provider_for(&db, env, user_id).await {
+        Ok(v) => v,
+        Err(e) => return rpc_err(id, -32000, &e.to_string()),
+    };
+    let model = if provider::valid_for(&prov.preset, requested) {
+        requested.to_string()
+    } else {
+        provider::effective_model(&prov.preset, "")
+    };
     let credit = crate::store::get_user(&db, user_id)
         .await
         .map(|u| u.map(|u| u.credit_usd).unwrap_or(0.0))
         .unwrap_or(0.0);
-    if credit <= 0.0 {
+    if !prov.own && credit <= 0.0 {
         return rpc_err(id, -32000, "Out of credit (balance $0.00). Demo credit is $10 per user.");
     }
-    match chat::complete_with_usage(env, &model, &messages).await {
+    match chat::complete_with_usage(&prov, &model, &messages).await {
         Ok(done) => {
             let (cost, _) = crate::store::record_usage(
                 &db,
@@ -281,6 +592,7 @@ async fn call_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<
                     estimated: done.estimated,
                     audio_seconds: 0.0,
                     cost_override: None,
+                    own_key: prov.own,
                 },
             )
             .await
@@ -293,6 +605,6 @@ async fn call_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<
                 ] }),
             )
         }
-        Err(e) => rpc_err(id, -32000, &format!("Meta API error: {e}")),
+        Err(e) => rpc_err(id, -32000, &format!("Model API error: {e}")),
     }
 }

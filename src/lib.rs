@@ -3,8 +3,10 @@ mod avatar;
 mod chat;
 mod group;
 mod mcp;
-mod meta;
+mod provider;
+mod huddle;
 mod pricing;
+mod teams;
 mod schedule;
 mod store;
 mod summarize;
@@ -28,12 +30,25 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 &serde_json::json!({ "ok": true, "service": "slaver" }),
             )
         })
-        .get("/api/models", |_, ctx| {
-            util::json(200, &meta::model_list(&ctx.env))
+        .get_async("/api/models", |req: Request, ctx: RouteContext<()>| async move {
+            // Authenticated callers get their own provider's list; strangers get Meta's.
+            let preset = match auth::bearer_sub(&req, &ctx.env)? {
+                Some(user_id) => {
+                    let db = ctx.env.d1("DB")?;
+                    provider::provider_for(&db, &ctx.env, &user_id)
+                        .await
+                        .map(|p| p.preset)
+                        .unwrap_or_else(|_| "meta".to_string())
+                }
+                None => "meta".to_string(),
+            };
+            util::json(200, &provider::model_list(&preset))
         })
         .post_async("/api/auth/register", auth::register)
         .post_async("/api/auth/login", auth::login)
         .get_async("/api/me", auth::me)
+        .put_async("/api/me/provider", auth::set_provider)
+        .delete_async("/api/me/provider", auth::clear_provider)
         .post_async("/api/chat", chat::chat)
         .post_async("/api/chat/finish", chat::finish)
         .get_async("/api/slavebots", chat::list_bots)
@@ -57,6 +72,20 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .post_async("/api/groups/:id/chat", group::chat)
         .post_async("/api/groups/:id/broadcast", group::broadcast)
         .post_async("/api/slavebots/:id/memory", group::append_memory)
+        .post_async("/api/slavebots/:id/spawn", chat::spawn_sub_bot)
+        .get_async("/api/slavebots/:id/children", chat::sub_bot_children)
+        .get_async("/api/teams", teams::list)
+        .post_async("/api/teams", teams::create)
+        .get_async("/api/teams/:id", teams::detail)
+        .post_async("/api/teams/:id/invites", teams::invite)
+        .delete_async("/api/teams/:id/members/:uid", teams::remove_member)
+        .delete_async("/api/teams/:id", teams::delete_team)
+        .put_async("/api/teams/:id/members/:uid", teams::update_member)
+        .get_async("/api/huddles", huddle::list)
+        .post_async("/api/huddles", huddle::create)
+        .get_async("/api/huddles/:id", huddle::detail)
+        .delete_async("/api/huddles/:id", huddle::delete)
+        .post_async("/api/huddles/:id/chat", huddle::chat)
         .get_async("/api/slavebots/:id/schedules", schedule::list_for_bot)
         .post_async("/api/slavebots/:id/schedules", schedule::create_for_bot)
         .put_async("/api/schedules/:sid", schedule::update)

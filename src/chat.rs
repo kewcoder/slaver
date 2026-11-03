@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use worker::*;
 
-use crate::{auth, meta, pricing, schedule, store, util};
+use crate::{auth, pricing, provider, schedule, store, util};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ChatMessage {
@@ -34,6 +34,7 @@ struct FinishRequest {
 #[derive(Deserialize)]
 struct CreateBotRequest {
     model: Option<String>,
+    team_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -43,14 +44,14 @@ struct UpdateBotRequest {
     model: Option<String>,
     voice: Option<String>,
     archived: Option<bool>,
+    pinned: Option<bool>,
     active_days: Option<String>,
     active_start: Option<String>,
     active_end: Option<String>,
+    role: Option<String>,
 }
 
-pub fn valid_model(model: &str) -> bool {
-    model == "muse-spark-1.3" || model == "muse-wonder-1.0"
-}
+
 
 /// Build the upstream message list: bot memory and past-conversation recaps
 /// first (as system context), then the saved history (which already ends with
@@ -88,9 +89,6 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
         .await?
         .map(|u| u.credit_usd)
         .unwrap_or(0.0);
-    if credit <= 0.0 {
-        return util::err(402, "Out of credit (balance $0.00). Demo credit is $10 per user.");
-    }
 
     let body: ChatRequest = match req.json().await {
         Ok(b) => b,
@@ -108,10 +106,6 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
         Some(b) => b,
         None => return util::err(404, "SlaveBot not found."),
     };
-    let model = body
-        .model
-        .filter(|m| valid_model(m))
-        .unwrap_or(bot.model.clone());
     let stream = body.stream.unwrap_or(true);
 
     // Slash commands run locally (no model call, nothing saved to history).
@@ -119,6 +113,20 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     if message.starts_with('/') {
         return handle_command(&ctx.env, &db, &user_id, &bot, &message).await;
     }
+
+    // The user's own provider/key wins; the shared demo credit only gates
+    // shared-key calls.
+    let prov = match provider::provider_for(&db, &ctx.env, &user_id).await {
+        Ok(v) => v,
+        Err(e) => return util::err(502, &e.to_string()),
+    };
+    if !prov.own && credit <= 0.0 {
+        return util::err(402, "Out of credit (balance $0.00). Demo credit is $10 per user.");
+    }
+    let model = match body.model.filter(|m| provider::valid_for(&prov.preset, m)) {
+        Some(m) => m,
+        None => provider::effective_model(&prov.preset, &bot.model),
+    };
 
     store::insert_message(&db, &bot_id, "user", &message).await?;
     store::maybe_title_bot(&db, &bot_id, &message).await?;
@@ -128,11 +136,11 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let history = with_memory(&bot.memory, &recaps, store::recent_messages(&db, &bot_id, 20).await?);
 
     let mut upstream =
-        match meta::post_chat_completions(&ctx.env, &model, &history, stream).await {
+        match provider::post_chat_completions(&prov, &model, &history, stream).await {
             Ok(r) => r,
             Err(e) => {
                 console_error!("chat upstream fetch failed: {e}");
-                return util::err(502, "Could not reach the Meta Model API.");
+                return util::err(502, "Could not reach the model provider.");
             }
         };
 
@@ -180,7 +188,7 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
             &db,
             &user_id,
             Some(&bot_id),
-            &store::UsageInput { model: model.clone(), prompt_tokens: prompt, cached_tokens: cached, completion_tokens: completion, estimated, audio_seconds: 0.0, cost_override: None },
+            &store::UsageInput { model: model.clone(), prompt_tokens: prompt, cached_tokens: cached, completion_tokens: completion, estimated, audio_seconds: 0.0, cost_override: None, own_key: prov.own },
         )
         .await?;
         return util::json(
@@ -249,11 +257,12 @@ pub async fn finish(mut req: Request, ctx: RouteContext<()>) -> Result<Response>
 
     store::insert_message(&db, &bot_id, "assistant", &content).await?;
     store::touch_bot(&db, &bot_id).await?;
+    let own = provider::provider_for(&db, &ctx.env, &user_id).await.map(|p| p.own).unwrap_or(false);
     let (cost, remaining) = store::record_usage(
         &db,
         &user_id,
         Some(&bot_id),
-        &store::UsageInput { model: bot.model.clone(), prompt_tokens: prompt, cached_tokens: 0, completion_tokens: completion, estimated, audio_seconds: 0.0, cost_override: None },
+        &store::UsageInput { model: bot.model.clone(), prompt_tokens: prompt, cached_tokens: 0, completion_tokens: completion, estimated, audio_seconds: 0.0, cost_override: None, own_key: own },
     )
     .await?;
     util::json(
@@ -278,7 +287,9 @@ pub async fn list_bots(req: Request, ctx: RouteContext<()>) -> Result<Response> 
     util::json(200, &serde_json::json!({ "slavebots": bots }))
 }
 
-/// POST /api/slavebots — create a new bot. Body: {model?}.
+/// POST /api/slavebots — create a new bot in a team. Body: {model?, team_id?}.
+/// The new bot opens with a greeting that asks the owner what its job is,
+/// so every bot gets a personal identity from the first exchange.
 pub async fn create_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let user_id = match auth::bearer_sub(&req, &ctx.env)? {
         Some(id) => id,
@@ -286,15 +297,94 @@ pub async fn create_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     };
     let body: CreateBotRequest = match req.json().await {
         Ok(b) => b,
-        Err(_) => CreateBotRequest { model: None },
+        Err(_) => CreateBotRequest { model: None, team_id: None },
     };
+    let db = ctx.env.d1("DB")?;
+    let prov = provider::provider_for(&db, &ctx.env, &user_id)
+        .await
+        .unwrap_or(provider::Provider { preset: "meta".to_string(), base_url: String::new(), api_key: String::new(), own: false });
     let model = body
         .model
-        .filter(|m| valid_model(m))
-        .unwrap_or_else(|| meta::default_model(&ctx.env));
-    let db = ctx.env.d1("DB")?;
-    let bot = store::create_bot(&db, &user_id, &model).await?;
+        .filter(|m| provider::valid_for(&prov.preset, m))
+        .unwrap_or_else(|| provider::effective_model(&prov.preset, ""));
+    let team_id = body.team_id.unwrap_or_default();
+    let bot = match store::create_bot(&db, &user_id, &team_id, &model).await {
+        Ok(b) => b,
+        Err(e) => return util::err(403, &e.to_string()),
+    };
+    let greeting = format!(
+        "Hi, I'm {name}! Before we start — what should my job be? Tell me my role in a sentence or two, \
+        for example \"You are my sales manager — track my leads and remind me to follow up\". \
+        You can also set it anytime in the Bot tab, and I can grow my own little team later with /spawn.",
+        name = bot.name,
+    );
+    store::insert_message(&db, &bot.id, "assistant", &greeting).await?;
+    let bot = store::get_bot(&db, &user_id, &bot.id)
+        .await?
+        .unwrap_or(bot);
     util::json(201, &serde_json::json!({ "slavebot": bot }))
+}
+
+#[derive(Deserialize)]
+struct SpawnBody {
+    name: Option<String>,
+    role: Option<String>,
+    model: Option<String>,
+}
+
+/// POST /api/slavebots/:id/spawn — a manager bot grows a sub-bot for one
+/// specific task. Body: {name?, role?, model?}.
+pub async fn spawn_sub_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
+        Some(id) => id,
+        None => return util::err(401, "Unauthorized."),
+    };
+    let body: SpawnBody = match req.json().await {
+        Ok(b) => b,
+        Err(_) => return util::err(400, "Invalid JSON body."),
+    };
+    let manager_id = ctx.param("id").cloned().unwrap_or_default();
+    let db = ctx.env.d1("DB")?;
+    let manager = match store::get_bot(&db, &user_id, &manager_id).await? {
+        Some(m) => m,
+        None => return util::err(404, "SlaveBot not found."),
+    };
+    let preset = provider::provider_for(&db, &ctx.env, &user_id)
+        .await
+        .map(|p| p.preset)
+        .unwrap_or_else(|_| "meta".to_string());
+    let model = body
+        .model
+        .filter(|m| provider::valid_for(&preset, m))
+        .unwrap_or_else(|| provider::effective_model(&preset, &manager.model));
+    let child = match store::spawn_bot(
+        &db,
+        &user_id,
+        &manager_id,
+        &body.name.unwrap_or_default(),
+        &body.role.unwrap_or_default(),
+        &model,
+    )
+    .await
+    {
+        Ok(c) => c,
+        Err(e) => return util::err(400, &e.to_string()),
+    };
+    let task = if child.role.trim().is_empty() {
+        "My specific task is not set yet — tell me what to focus on.".to_string()
+    } else {
+        format!("My task: {}.", child.role.trim())
+    };
+    let greeting = format!(
+        "Hi, I'm {name}! I report to {manager}. {task} What should I do first?",
+        name = child.name,
+        manager = manager.name,
+    );
+    store::insert_message(&db, &child.id, "assistant", &greeting).await?;
+    let child = store::get_bot_any(&db, &child.id)
+        .await?
+        .unwrap_or(child);
+    util::json(201, &serde_json::json!({ "slavebot": child, "manager_id": manager_id }))
 }
 
 /// GET /api/slavebots/:id — one bot with its full message history.
@@ -311,6 +401,21 @@ pub async fn bot_detail(req: Request, ctx: RouteContext<()>) -> Result<Response>
     }
 }
 
+/// GET /api/slavebots/:id/children — direct sub-bots spawned under this manager.
+pub async fn sub_bot_children(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
+        Some(id) => id,
+        None => return util::err(401, "Unauthorized."),
+    };
+    let bot_id = ctx.param("id").cloned().unwrap_or_default();
+    let db = ctx.env.d1("DB")?;
+    if store::get_bot(&db, &user_id, &bot_id).await?.is_none() {
+        return util::err(404, "SlaveBot not found.");
+    }
+    let children = store::children_of(&db, &user_id, &bot_id).await?;
+    util::json(200, &serde_json::json!({ "slavebots": children }))
+}
+
 /// PUT /api/slavebots/:id — rename, set memory/model/voice, archive, or set
 /// active hours. Body: {name?, memory?, model?, voice?, archived?, active_days?, active_start?, active_end?}.
 pub async fn update_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -324,10 +429,26 @@ pub async fn update_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     };
     let bot_id = ctx.param("id").cloned().unwrap_or_default();
     let db = ctx.env.d1("DB")?;
+    let preset = provider::provider_for(&db, &ctx.env, &user_id)
+        .await
+        .map(|p| p.preset)
+        .unwrap_or_else(|_| "meta".to_string());
+    let model = match body.model {
+        Some(m) if provider::valid_for(&preset, &m) => Some(m),
+        Some(_) => return util::err(400, "That model is not available on your provider."),
+        None => None,
+    };
     if let Some(archived) = body.archived {
         return match store::set_archived(&db, &user_id, &bot_id, archived).await? {
             Some(bot) => util::json(200, &serde_json::json!({ "slavebot": bot })),
             None => util::err(404, "SlaveBot not found."),
+        };
+    }
+    if let Some(pinned) = body.pinned {
+        return match store::set_pinned(&db, &user_id, &bot_id, pinned).await {
+            Ok(Some(bot)) => util::json(200, &serde_json::json!({ "slavebot": bot })),
+            Ok(None) => util::err(404, "SlaveBot not found."),
+            Err(e) => util::err(400, &e.to_string()),
         };
     }
     match store::update_bot(
@@ -336,11 +457,12 @@ pub async fn update_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         &bot_id,
         body.name.as_deref(),
         body.memory.as_deref(),
-        body.model.as_deref(),
+        model.as_deref(),
         body.voice.as_deref(),
         body.active_days.as_deref(),
         body.active_start.as_deref(),
         body.active_end.as_deref(),
+        body.role.as_deref(),
     )
     .await?
     {
@@ -434,8 +556,35 @@ async fn handle_command(
             Ok(_) => format!("{} archived. Restore it anytime from the Bot tab.", bot.name),
             Err(e) => format!("Could not archive: {e}"),
         }
+    } else if message.starts_with("/spawn") {
+        let rest = message.strip_prefix("/spawn").unwrap_or("").trim();
+        let (name, role) = match rest.split_once(" - ") {
+            Some((n, r)) => (n.trim(), r.trim()),
+            None => (rest, ""),
+        };
+        if name.is_empty() {
+            "Usage: /spawn <name> - <task or role>. Example: /spawn Scout - track competitor prices every morning.".to_string()
+        } else {
+            match store::spawn_bot(db, user_id, &bot.id, name, role, &bot.model).await {
+                Ok(child) => {
+                    let task = if child.role.trim().is_empty() {
+                        "My specific task is not set yet — tell me what to focus on.".to_string()
+                    } else {
+                        format!("My task: {}.", child.role.trim())
+                    };
+                    let greeting = format!(
+                        "Hi, I'm {name}! I report to {manager}. {task} What should I do first?",
+                        name = child.name,
+                        manager = bot.name,
+                    );
+                    let _ = store::insert_message(db, &child.id, "assistant", &greeting).await;
+                    format!("Spawned {} under {}. {}", child.name, bot.name, task)
+                }
+                Err(e) => format!("Could not spawn a sub-bot: {e}"),
+            }
+        }
     } else if message.starts_with("/help") {
-        "Commands:\n/remind daily HH:MM text — daily reminder (HH:MM Jakarta time)\n/remind weekdays|weekends|mon,wed HH:MM text\n/remind every N text — every N minutes (N ≥ 5)\n/remind once HH:MM text — one-time\n/schedules — list this bot's schedules\n/unschedule <id> — delete a schedule\n/archive — archive this bot".to_string()
+        "Commands:\n/remind daily HH:MM text — daily reminder (HH:MM Jakarta time)\n/remind weekdays|weekends|mon,wed HH:MM text\n/remind every N text — every N minutes (N ≥ 5)\n/remind once HH:MM text — one-time\n/schedules — list this bot's schedules\n/unschedule <id> — delete a schedule\n/archive — archive this bot\n/spawn <name> - <task> — grow a sub-bot under this one".to_string()
     } else {
         "Unknown command. Try /help.".to_string()
     };
@@ -476,14 +625,15 @@ pub struct Completion {
 }
 
 /// Shared helper used by the MCP `chat` tool (and reuse-safe elsewhere):
-/// non-streaming completion with usage attached.
+/// non-streaming completion with usage attached. `prov` is the resolved
+/// provider (personal settings or shared server key).
 pub async fn complete_with_usage(
-    env: &Env,
+    prov: &provider::Provider,
     model: &str,
     messages: &[ChatMessage],
 ) -> Result<Completion, String> {
     let mut upstream =
-        meta::post_chat_completions(env, model, messages, false)
+        provider::post_chat_completions(prov, model, messages, false)
             .await
             .map_err(|e| format!("fetch failed: {e}"))?;
     if upstream.status_code() != 200 {
@@ -537,14 +687,14 @@ fn upstream_message(text: &str) -> Option<String> {
 
 pub(crate) fn describe_upstream_error(status: u16, text: &str) -> String {
     let hint = match status {
-        401 => " Check that META_API_KEY is valid.",
+        401 => " Check that OPENROUTER_API_KEY is valid.",
         404 => " The model or endpoint may not exist.",
         429 => " Rate limited — wait a bit and retry.",
         500..=599 => " The provider had an internal error — retry later.",
         _ => "",
     };
     match upstream_message(text) {
-        Some(m) => format!("Meta Model API error ({status}): {m}.{hint}"),
-        None => format!("Meta Model API error ({status}).{hint}"),
+        Some(m) => format!("Model API error ({status}): {m}.{hint}"),
+        None => format!("Model API error ({status}).{hint}"),
     }
 }

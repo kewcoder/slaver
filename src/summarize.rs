@@ -27,14 +27,20 @@ async fn summarize_text(
     db: &D1Database,
     user_id: &str,
     bot_id: &str,
-    model: &str,
+    _period: &str,
     prompt: &str,
 ) -> Result<String> {
     let messages = vec![chat::ChatMessage {
         role: "user".to_string(),
         content: prompt.to_string(),
     }];
-    match chat::complete_with_usage(env, "muse-spark-1.3", &messages).await {
+    // Summaries always use the provider default model; `model` here is the period name.
+    // They run on the owner's key when set (cron included), else the server key.
+    let prov = crate::provider::provider_for(db, env, user_id)
+        .await
+        .map_err(|e| Error::RustError(e.to_string()))?;
+    let summary_model = crate::provider::effective_model(&prov.preset, "");
+    match chat::complete_with_usage(&prov, &summary_model, &messages).await {
         Ok(done) => {
             let text = done.text.trim().to_string();
             if text.is_empty() {
@@ -45,13 +51,14 @@ async fn summarize_text(
                 user_id,
                 Some(bot_id),
                 &store::UsageInput {
-                    model: format!("{model} (summary)"),
+                    model: format!("{summary_model} (summary)"),
                     prompt_tokens: done.prompt_tokens,
                     cached_tokens: done.cached_tokens,
                     completion_tokens: done.completion_tokens,
                     estimated: done.estimated,
                     audio_seconds: 0.0,
                     cost_override: None,
+                    own_key: prov.own,
                 },
             )
             .await;
