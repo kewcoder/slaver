@@ -28,7 +28,7 @@ pub const PRESETS: &[Preset] = &[
     Preset { id: "baseten", label: "Baseten", default_base: "https://inference.baseten.co/v1", key_hint: "Your Baseten API key" },
     Preset { id: "modal", label: "Modal", default_base: "", key_hint: "Your Modal key + your deployed function URL below" },
     Preset { id: "openrouter", label: "OpenRouter (last resort)", default_base: "https://openrouter.ai/api/v1", key_hint: "Key from openrouter.ai/keys (sk-or-v1-...)" },
-    Preset { id: "opencode", label: "OpenCode / local gateway (OpenAI-compatible)", default_base: "http://localhost:4096/v1", key_hint: "Key if your gateway needs one — leave empty for keyless local servers" },
+    Preset { id: "opencode", label: "OpenCode (Go subscription or Console credits)", default_base: "https://opencode.ai/inference/go/openai/v1", key_hint: "Your opencode.ai API key (oc_sk-...). Go subscribers use the /go/ endpoint; pay-as-you-go uses /inference/openai/v1" },
     Preset { id: "ollama", label: "Ollama (local)", default_base: "http://localhost:11434/v1", key_hint: "Ollama needs no key — leave empty (any value also works)" },
     Preset { id: "custom", label: "Custom OpenAI-compatible", default_base: "", key_hint: "Your API key (leave empty only for keyless local servers)" },
 ];
@@ -71,7 +71,7 @@ pub fn models_for(preset: &str) -> (&'static [ModelInfo], bool) {
 pub fn example_models_for(preset: &str) -> &'static str {
     match preset {
         "ollama" => "e.g. qwen3:8b, llama3.3:70b, mistral-small3.1 (ollama list)",
-        "opencode" => "e.g. the model id your gateway exposes (must match /v1/models)",
+        "opencode" => "Go via chat/completions, e.g. glm-5.3-flash, kimi-k2.7-code, deepseek-v4.1-flash, muse-spark-1.3-contributor (full list: opencode.ai inference /v1/models)",
         "baseten" => "e.g. your deployed Baseten model id",
         "modal" => "e.g. your deployed Modal model id",
         _ => "e.g. gpt-4o-mini, qwen3:8b — must exist on your server",
@@ -316,11 +316,21 @@ pub async fn test_provider(prov: &Provider, model: &str) -> serde_json::Value {
         Some(h)
     };
 
-    // 1) Optional: GET /models — supported by Ollama, vLLM, LM Studio,
-    // OpenCode gateways and most OpenAI-compatible servers.
+    // 1) Optional: GET /models — supported by Ollama, vLLM, LM Studio
+    // and most OpenAI-compatible servers. OpenCode hosts its catalogue at
+    // /inference[/go]/v1/models instead of under the OpenAI base, so map it.
+    let models_url = if base.contains("opencode.ai/inference") {
+        if base.contains("/inference/go") {
+            "https://opencode.ai/inference/go/v1/models".to_string()
+        } else {
+            "https://opencode.ai/inference/v1/models".to_string()
+        }
+    } else {
+        format!("{base}/models")
+    };
     let mut listed_models: Vec<String> = Vec::new();
     {
-        let url = format!("{base}/models");
+        let url = models_url;
         let mut ok = false;
         if let Some(h) = headers() {
             let mut init = RequestInit::new();

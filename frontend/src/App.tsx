@@ -1129,7 +1129,7 @@ function TeamView({ bot, onOpenBot, onTeamChanged }: { bot: SlaveBot; onOpenBot:
 const TEAM_PROVIDER_PRESETS = [
   { id: "meta", label: "Meta (Spark / Wonder) — default", needs_url: false, placeholder: "", help: "One key from dev.meta.ai. Models: muse-spark-1.3, muse-wonder-1.0." },
   { id: "openrouter", label: "OpenRouter (last resort)", needs_url: false, placeholder: "", help: "Key sk-or-v1-… from openrouter.ai/keys. Fixed model list." },
-  { id: "opencode", label: "OpenCode gateway (OpenAI-compatible) — recommended for BYOK", needs_url: true, placeholder: "http://localhost:4096/v1", help: "Point at your OpenCode / OpenAI-compatible gateway root ending in /v1. Do NOT append /chat/completions. Key optional for local servers." },
+  { id: "opencode", label: "OpenCode (Go subscription or Console credits)", needs_url: true, placeholder: "https://opencode.ai/inference/go/openai/v1", help: "Go subscribers: https://opencode.ai/inference/go/openai/v1. Pay-as-you-go instead: https://opencode.ai/inference/openai/v1 (needs console credits). Do NOT append /chat/completions." },
   { id: "ollama", label: "Ollama (local, no key)", needs_url: true, placeholder: "http://localhost:11434/v1", help: "Local Ollama. No key needed. Model must be pulled first — run `ollama list` and use that exact id in Bot settings." },
   { id: "baseten", label: "Baseten", needs_url: true, placeholder: "https://inference.baseten.co/v1", help: "Your Baseten deployment base URL + API key." },
   { id: "modal", label: "Modal", needs_url: true, placeholder: "https://<you>--<app>.modal.run/v1", help: "Your deployed Modal function URL (API root) + key." },
