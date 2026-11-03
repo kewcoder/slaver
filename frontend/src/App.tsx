@@ -9,7 +9,7 @@ import {
   createHuddle,
   createSchedule,
   createTeam,
-  clearProvider,
+  clearTeamProvider,
   deleteGroup,
   deleteHuddle,
   deleteSchedule,
@@ -42,7 +42,7 @@ import {
   register,
   removeGroupMember,
   runSummary,
-  setProvider,
+  setTeamProvider,
   setToken,
   speakVoice,
   spawnSubBot,
@@ -226,102 +226,6 @@ interface UiMessage {
   created_at?: string;
 }
 
-const PROVIDER_PRESETS = [
-  { id: "meta", label: "Meta (Spark / Wonder) — default", needs_url: false },
-  { id: "baseten", label: "Baseten", needs_url: true },
-  { id: "modal", label: "Modal", needs_url: true },
-  { id: "openrouter", label: "OpenRouter (last resort)", needs_url: false },
-  { id: "custom", label: "Custom (OpenAI-compatible)", needs_url: true },
-];
-
-function ProviderPanel({ user, onChanged }: { user: User; onChanged: () => void }) {
-  const [preset, setPreset] = useState(user.provider || "meta");
-  const [baseUrl, setBaseUrl] = useState(user.provider_base_url || "");
-  const [apiKey, setApiKey] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const needsUrl = (PROVIDER_PRESETS.find((x) => x.id === preset)?.needs_url ?? preset === "custom");
-
-  async function save(e?: React.FormEvent) {
-    e?.preventDefault();
-    if (busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await setProvider({ preset, base_url: needsUrl ? baseUrl.trim() : undefined, api_key: apiKey.trim() || undefined });
-      setApiKey("");
-      onChanged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save provider.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove() {
-    if (!window.confirm("Remove your personal provider settings and go back to the shared default?")) return;
-    setBusy(true);
-    setError("");
-    try {
-      await clearProvider();
-      onChanged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not remove provider.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form onSubmit={save} className="px-2">
-      <label className="text-xs font-semibold text-zinc-400">
-        AI provider
-        <select value={preset} onChange={(e) => setPreset(e.target.value)} className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-100 focus:border-emerald-500 focus:outline-none">
-          {PROVIDER_PRESETS.map((x) => (
-            <option key={x.id} value={x.id}>{x.label}</option>
-          ))}
-        </select>
-      </label>
-      {needsUrl && (
-        <label className="mt-1 block text-xs font-semibold text-zinc-400">
-          Base URL
-          <input
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="https://..."
-            autoComplete="off"
-            className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
-          />
-        </label>
-      )}
-      <label className="mt-1 block text-xs font-semibold text-zinc-400">
-        API key {user.provider_key_set ? "(saved — enter a new one to replace)" : "(optional)"}
-        <input
-          type="password"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder={user.provider_key_set ? "••••••••" : "paste key..."}
-          autoComplete="off"
-          className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
-        />
-      </label>
-      <div className="mt-1 flex items-center gap-2">
-        <button type="submit" disabled={busy} className="rounded-md bg-zinc-700 px-2 py-1 text-xs font-bold text-white hover:bg-zinc-600 disabled:opacity-50">
-          {busy ? "Saving..." : "Save"}
-        </button>
-        {user.provider_key_set && (
-          <button type="button" onClick={remove} disabled={busy} className="rounded px-1 py-0.5 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400 disabled:opacity-50">
-            Remove
-          </button>
-        )}
-      </div>
-      <p className="mt-1 text-[11px] text-zinc-500">
-        {user.provider_key_set ? "Personal key active — your key pays the provider directly, demo credit untouched." : "Using the shared default key. A personal key pays the provider directly."}
-      </p>
-      {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
-    </form>
-  );
-}
 function LogsView({ summary }: { summary: UsageSummary | null }) {
   if (!summary) return <div className="p-8 text-center text-zinc-400">Loading usage...</div>;
   return (
@@ -1129,6 +1033,93 @@ function TeamView({ bot, onOpenBot, onTeamChanged }: { bot: SlaveBot; onOpenBot:
   );
 }
 
+const TEAM_PROVIDER_PRESETS = [
+  { id: "meta", label: "Meta (Spark / Wonder) — default", needs_url: false },
+  { id: "baseten", label: "Baseten", needs_url: true },
+  { id: "modal", label: "Modal", needs_url: true },
+  { id: "openrouter", label: "OpenRouter (last resort)", needs_url: false },
+  { id: "custom", label: "Custom (OpenAI-compatible)", needs_url: true },
+];
+
+function TeamProviderSection({ team, onChanged }: { team: TeamDetail["team"]; onChanged: () => void }) {
+  const [preset, setPreset] = useState(team.provider || "meta");
+  const [baseUrl, setBaseUrl] = useState(team.provider_base_url || "");
+  const [apiKey, setApiKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const needsUrl = (TEAM_PROVIDER_PRESETS.find((x) => x.id === preset)?.needs_url ?? preset === "custom");
+
+  async function save(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await setTeamProvider(team.id, { preset, base_url: needsUrl ? baseUrl.trim() : undefined, api_key: apiKey.trim() || undefined });
+      setApiKey("");
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save provider.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm("Remove this team's API key? Bots in this team will stop working until a new key is added.")) return;
+    setBusy(true);
+    setError("");
+    try {
+      await clearTeamProvider(team.id);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove key.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-md border border-zinc-800 bg-zinc-800/40 p-3">
+      <h4 className="text-sm font-bold uppercase tracking-wide text-zinc-500">AI provider</h4>
+      <form onSubmit={save} className="mt-2">
+        <label className="block text-xs font-semibold text-zinc-400">
+          Preset
+          <select value={preset} onChange={(e) => setPreset(e.target.value)} className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none">
+            {TEAM_PROVIDER_PRESETS.map((x) => (
+              <option key={x.id} value={x.id}>{x.label}</option>
+            ))}
+          </select>
+        </label>
+        {needsUrl && (
+          <label className="mt-2 block text-xs font-semibold text-zinc-400">
+            Base URL
+            <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://..." autoComplete="off" className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+          </label>
+        )}
+        <label className="mt-2 block text-xs font-semibold text-zinc-400">
+          API key {team.provider_key_set ? "(saved — enter a new one to replace)" : "(required)"}
+          <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={team.provider_key_set ? "••••••••" : "paste key..."} autoComplete="off" className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+        </label>
+        <div className="mt-2 flex items-center gap-2">
+          <button type="submit" disabled={busy} className="rounded-md bg-zinc-700 px-3 py-1.5 text-sm font-bold text-white hover:bg-zinc-600 disabled:opacity-50">
+            {busy ? "Saving..." : "Save provider"}
+          </button>
+          {team.provider_key_set && (
+            <button type="button" onClick={remove} disabled={busy} className="rounded px-2 py-1 text-xs text-zinc-500 hover:text-red-400 disabled:opacity-50">
+              Remove key
+            </button>
+          )}
+        </div>
+        <p className="mt-1 text-[11px] text-zinc-500">
+          {team.provider_key_set ? "Team key active — this key pays the provider directly, demo credit untouched." : "No key yet — bots in this team cannot chat until an owner or admin adds one."}
+        </p>
+        {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+      </form>
+    </div>
+  );
+}
+
 function TeamsView({
   teams,
   teamId,
@@ -1218,6 +1209,18 @@ function TeamsView({
               </button>
             )}
           </div>
+          {canManage && (
+            <TeamProviderSection
+              key={detail.team.id}
+              team={detail.team}
+              onChanged={() => { void (async () => { setDetail(await fetchTeam(activeId!)); await onChanged(); })(); }}
+            />
+          )}
+          {!canManage && (
+            <p className="mt-4 rounded-md border border-zinc-800 bg-zinc-800/40 px-3 py-2 text-xs text-zinc-500">
+              AI provider: {detail.team.provider || "meta"}{detail.team.provider_key_set ? " · key set" : " · no key yet — ask an owner or admin to add one"}.
+            </p>
+          )}
           <h4 className="mt-4 text-sm font-bold uppercase tracking-wide text-zinc-500">Members ({detail.members.length})</h4>
           <ul className="mt-2 space-y-1">
             {detail.members.map((m) => (
@@ -1665,6 +1668,12 @@ export default function App() {
   }, [refreshUser]);
 
   useEffect(() => {
+    if (teams.length > 0 || teamId) {
+      fetchProviderModels(teamId ?? undefined).then(setProviderInfo).catch(() => {});
+    }
+  }, [teamId, teams.length]);
+
+  useEffect(() => {
     if (user) {
       autoOpenedRef.current = false;
       // First load per login: open the pinned bot automatically, if any.
@@ -1847,7 +1856,7 @@ export default function App() {
       setError("");
       try {
         const wav = await rec.stop();
-        const res = await transcribeVoice(wav);
+        const res = await transcribeVoice(wav, teamId ?? undefined);
         setInput((prev) => (prev ? `${prev} ${res.transcript}` : res.transcript));
         await refreshUser();
       } catch (err) {
@@ -1998,7 +2007,7 @@ export default function App() {
         }
         if (!converseRef.current || !turn) break;
         try {
-          const res = await transcribeVoice(turn.wav);
+          const res = await transcribeVoice(turn.wav, teamId ?? undefined);
           await refreshUser();
           if (!converseRef.current) break;
           if (!res.transcript.trim()) continue;
@@ -2182,7 +2191,7 @@ export default function App() {
           </button>
           <div className="px-2 text-sm font-bold text-emerald-400">{formatUsd(user.credit_usd)} left</div>
           <div className="px-2 text-xs text-zinc-500">{user.email}</div>
-          <ProviderPanel user={user} onChanged={() => { void refreshUser(); }} />
+          <p className="px-2 text-[11px] leading-snug text-zinc-500">AI keys live in Teams settings — open the Teams tab, pick a team, and configure its provider.</p>
           <button type="button" onClick={logout} className="rounded-md px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
             Log out
           </button>

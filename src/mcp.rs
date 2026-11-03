@@ -277,10 +277,11 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
                         Ok(db) => db,
                         Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
                     };
-                    let preset = provider::provider_for(&db, &ctx.env, &user_id)
-                        .await
-                        .map(|p| p.preset)
-                        .unwrap_or_else(|_| "meta".to_string());
+                    let team = store::ensure_personal_team(&db, &user_id).await.ok();
+                    let preset = match team {
+                        Some(t) => provider::preset_for_team(&db, &t.id).await,
+                        None => "meta".to_string(),
+                    };
                     rpc_ok(id, json!({ "content": [{ "type": "text", "text": provider::model_list(&preset).to_string() }] }))
                 }
                 "chat" => call_chat(id, &ctx.env, &user_id, &args).await,
@@ -357,10 +358,7 @@ async fn call_bot_spawn(id: Value, env: &Env, user_id: &str, args: &Value) -> Re
         Ok(None) => return rpc_err(id, -32602, "Manager bot not found."),
         Err(e) => return rpc_err(id, -32000, &format!("Database error: {e}")),
     };
-    let preset = provider::provider_for(&db, env, user_id)
-        .await
-        .map(|p| p.preset)
-        .unwrap_or_else(|_| "meta".to_string());
+    let preset = provider::preset_for_team(&db, &manager.team_id).await;
     let requested = args.get("model").and_then(|v| v.as_str()).unwrap_or("");
     let model = if provider::valid_for(&preset, requested) {
         requested.to_string()
@@ -562,7 +560,11 @@ async fn call_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<
         return rpc_err(id, -32602, "messages must have 1..30 items.");
     }
     let db = env.d1("DB")?;
-    let prov = match provider::provider_for(&db, env, user_id).await {
+    let team_id = store::ensure_personal_team(&db, user_id)
+        .await
+        .map(|t| t.id)
+        .unwrap_or_default();
+    let prov = match provider::provider_for(&db, &team_id).await {
         Ok(v) => v,
         Err(e) => return rpc_err(id, -32000, &e.to_string()),
     };

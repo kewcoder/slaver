@@ -18,6 +18,20 @@ pub async fn list(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     util::json(200, &serde_json::json!({ "teams": teams }))
 }
 
+/// Team JSON without the provider API key (managers see key_set only).
+fn safe_team(t: &store::TeamRow) -> serde_json::Value {
+    serde_json::json!({
+        "id": t.id,
+        "name": t.name,
+        "owner_user_id": t.owner_user_id,
+        "personal": t.personal,
+        "provider": t.provider,
+        "provider_base_url": t.provider_base_url,
+        "provider_key_set": !t.provider_api_key.trim().is_empty(),
+        "created_at": t.created_at,
+    })
+}
+
 #[derive(Deserialize)]
 struct CreateBody {
     name: Option<String>,
@@ -34,7 +48,7 @@ pub async fn create(mut req: Request, ctx: RouteContext<()>) -> Result<Response>
     };
     let db = ctx.env.d1("DB")?;
     let team = store::create_team(&db, &user_id, &body.name.unwrap_or_default(), false).await?;
-    util::json(201, &serde_json::json!({ "team": team }))
+    util::json(201, &serde_json::json!({ "team": safe_team(&team) }))
 }
 
 pub async fn detail(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -70,7 +84,7 @@ pub async fn detail(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         .into_iter()
         .filter(|b| b.team_id == team_id)
         .collect();
-    util::json(200, &serde_json::json!({ "team": team, "my_role": my_role, "members": members_out, "bots": bots }))
+    util::json(200, &serde_json::json!({ "team": safe_team(&team), "my_role": my_role, "members": members_out, "bots": bots }))
 }
 
 #[derive(Deserialize)]
@@ -114,6 +128,74 @@ pub async fn delete_team(req: Request, ctx: RouteContext<()>) -> Result<Response
     match store::delete_team(&db, &team_id, &user_id).await {
         Ok(()) => util::json(200, &serde_json::json!({ "deleted": true })),
         Err(e) => util::err(400, &e),
+    }
+}
+
+#[derive(Deserialize)]
+struct ProviderBody {
+    preset: Option<String>,
+    base_url: Option<String>,
+    api_key: Option<String>,
+}
+
+/// PUT /api/teams/:id/provider — owner/admin set the team's AI provider.
+/// Body: {preset: meta|baseten|modal|openrouter|custom, base_url?, api_key?}.
+/// An empty api_key keeps the stored key (lets admins change preset/URL only).
+pub async fn set_provider(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
+        Some(id) => id,
+        None => return util::err(401, "Log in first."),
+    };
+    let body: ProviderBody = match req.json().await {
+        Ok(b) => b,
+        Err(_) => return util::err(400, "Invalid JSON body."),
+    };
+    let preset = body.preset.unwrap_or_else(|| "meta".to_string());
+    let known = ["meta", "baseten", "modal", "openrouter", "custom"];
+    if !known.contains(&preset.as_str()) {
+        return util::err(400, "Unknown provider preset.");
+    }
+    let team_id = ctx.param("id").cloned().unwrap_or_default();
+    let db = ctx.env.d1("DB")?;
+    let stored = store::get_team(&db, &team_id).await?;
+    if (preset == "modal" || preset == "custom")
+        && body.base_url.as_deref().unwrap_or("").trim().is_empty()
+        && stored.as_ref().map(|t| t.provider_base_url.trim().is_empty()).unwrap_or(true)
+    {
+        return util::err(400, "This provider needs a base URL.");
+    }
+    let api_key = body.api_key.unwrap_or_default();
+    if !api_key.is_empty() && !crate::provider::key_prefix_ok(&preset, &api_key) {
+        return util::err(400, "That key does not look like a valid key for this provider.");
+    }
+    let current_base = stored.as_ref().map(|t| t.provider_base_url.clone()).unwrap_or_default();
+    let current_key = stored.as_ref().map(|t| t.provider_api_key.clone()).unwrap_or_default();
+    let base_url = if body.base_url.as_deref().unwrap_or("").trim().is_empty() { current_base } else { body.base_url.unwrap_or_default() };
+    let api_key = if api_key.is_empty() { current_key } else { api_key };
+    match store::set_team_provider(&db, &team_id, &user_id, &preset, &base_url, &api_key).await {
+        Ok(()) => match store::get_team(&db, &team_id).await? {
+            Some(t) => util::json(200, &serde_json::json!({ "team": safe_team(&t) })),
+            None => util::err(404, "Team not found."),
+        },
+        Err(e) => util::err(403, &e),
+    }
+}
+
+/// DELETE /api/teams/:id/provider — owner/admin remove the team's key.
+pub async fn clear_provider(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
+        Some(id) => id,
+        None => return util::err(401, "Log in first."),
+    };
+    let team_id = ctx.param("id").cloned().unwrap_or_default();
+    let db = ctx.env.d1("DB")?;
+    let preset = store::get_team(&db, &team_id)
+        .await?
+        .map(|t| t.provider)
+        .unwrap_or_else(|| "meta".to_string());
+    match store::set_team_provider(&db, &team_id, &user_id, &preset, "", "").await {
+        Ok(()) => util::json(200, &serde_json::json!({ "cleared": true })),
+        Err(e) => util::err(403, &e),
     }
 }
 

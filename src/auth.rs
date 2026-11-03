@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 use worker::*;
 
-use crate::{store, util};
+use crate::util;
 
 const B64: base64::engine::general_purpose::GeneralPurpose =
     base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -30,19 +30,6 @@ struct UserRow {
     password_salt: String,
     password_hash: String,
     credit_usd: f64,
-    openrouter_key: String,
-    provider: String,
-    provider_base_url: String,
-    provider_api_key: String,
-}
-
-/// Public provider summary for a user row (keys never leave the server).
-fn provider_summary(preset: &str, base_url: &str, api_key: &str) -> serde_json::Value {
-    serde_json::json!({
-        "provider": preset,
-        "provider_base_url": base_url,
-        "provider_key_set": !api_key.trim().is_empty(),
-    })
 }
 
 fn b64url(data: &[u8]) -> String {
@@ -142,7 +129,7 @@ pub async fn register(mut req: Request, ctx: RouteContext<()>) -> Result<Respons
 
     let db = ctx.env.d1("DB")?;
     let existing: Option<UserRow> = db
-        .prepare("SELECT id, email, name, password_salt, password_hash, credit_usd, openrouter_key, provider, provider_base_url, provider_api_key FROM users WHERE email = ?")
+        .prepare("SELECT id, email, name, password_salt, password_hash, credit_usd FROM users WHERE email = ?")
         .bind(&[JsValue::from_str(&email)])?
         .first(None)
         .await?;
@@ -168,7 +155,7 @@ pub async fn register(mut req: Request, ctx: RouteContext<()>) -> Result<Respons
     let token = sign_jwt(&secret, &id, &email)?;
     util::json(
         201,
-        &serde_json::json!({ "token": token, "user": { "id": id, "email": email, "name": name, "credit_usd": 10.0, "provider": "meta", "provider_base_url": "", "provider_key_set": false } }),
+        &serde_json::json!({ "token": token, "user": { "id": id, "email": email, "name": name, "credit_usd": 10.0 } }),
     )
 }
 
@@ -185,7 +172,7 @@ pub async fn login(mut req: Request, ctx: RouteContext<()>) -> Result<Response> 
 
     let db = ctx.env.d1("DB")?;
     let row: Option<UserRow> = db
-        .prepare("SELECT id, email, name, password_salt, password_hash, credit_usd, openrouter_key, provider, provider_base_url, provider_api_key FROM users WHERE email = ?")
+        .prepare("SELECT id, email, name, password_salt, password_hash, credit_usd FROM users WHERE email = ?")
         .bind(&[JsValue::from_str(&email)])?
         .first(None)
         .await?;
@@ -199,61 +186,8 @@ pub async fn login(mut req: Request, ctx: RouteContext<()>) -> Result<Response> 
 
     let secret = ctx.env.secret("JWT_SECRET")?.to_string();
     let token = sign_jwt(&secret, &row.id, &row.email)?;
-    let mut user = serde_json::json!({ "id": row.id, "email": row.email, "name": row.name, "credit_usd": row.credit_usd });
-    for (k, v) in provider_summary(&row.provider, &row.provider_base_url, &row.provider_api_key).as_object().cloned().unwrap_or_default() {
-        user[k] = v;
-    }
+    let user = serde_json::json!({ "id": row.id, "email": row.email, "name": row.name, "credit_usd": row.credit_usd });
     util::json(200, &serde_json::json!({ "token": token, "user": user }))
-}
-
-#[derive(Deserialize)]
-struct ProviderBody {
-    preset: Option<String>,
-    base_url: Option<String>,
-    api_key: Option<String>,
-}
-
-/// PUT /api/me/provider — set the caller's AI provider.
-/// Body: {preset: meta|baseten|modal|openrouter|custom, base_url?, api_key?}.
-/// Keys are only ever used server-side and never returned. When the caller
-/// uses their own key, that key pays the provider directly and demo credit
-/// is left alone.
-pub async fn set_provider(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let user_id = match bearer_sub(&req, &ctx.env)? {
-        Some(id) => id,
-        None => return util::err(401, "Unauthorized."),
-    };
-    let body: ProviderBody = match req.json().await {
-        Ok(b) => b,
-        Err(_) => return util::err(400, "Invalid JSON body."),
-    };
-    let preset = body.preset.unwrap_or_else(|| "meta".to_string());
-    let known = ["meta", "baseten", "modal", "openrouter", "custom"];
-    if !known.contains(&preset.as_str()) {
-        return util::err(400, "Unknown provider. Use meta, baseten, modal, openrouter, or custom.");
-    }
-    let base_url = body.base_url.unwrap_or_default().trim().to_string();
-    let api_key = body.api_key.unwrap_or_default().trim().to_string();
-    if api_key.len() > 500 || base_url.len() > 500 {
-        return util::err(400, "Provider settings are too long.");
-    }
-    if !api_key.is_empty() && !crate::provider::key_prefix_ok(&preset, &api_key) {
-        return util::err(400, "That doesn't look like an OpenRouter key (they start with sk-or-).");
-    }
-    let db = ctx.env.d1("DB")?;
-    store::set_provider(&db, &user_id, &preset, &base_url, &api_key).await?;
-    util::json(200, &serde_json::json!({ "provider": preset, "provider_key_set": !api_key.is_empty(), "provider_base_url": base_url }))
-}
-
-/// DELETE /api/me/provider — reset to Meta defaults, clearing custom settings.
-pub async fn clear_provider(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let user_id = match bearer_sub(&req, &ctx.env)? {
-        Some(id) => id,
-        None => return util::err(401, "Unauthorized."),
-    };
-    let db = ctx.env.d1("DB")?;
-    store::set_provider(&db, &user_id, "meta", "", "").await?;
-    util::json(200, &serde_json::json!({ "provider": "meta", "provider_key_set": false, "provider_base_url": "" }))
 }
 
 pub async fn me(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -263,16 +197,13 @@ pub async fn me(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     };
     let db = ctx.env.d1("DB")?;
     let row: Option<crate::store::UserRecord> = db
-        .prepare("SELECT id, email, name, credit_usd, openrouter_key, provider, provider_base_url, provider_api_key FROM users WHERE id = ?")
+        .prepare("SELECT id, email, name, credit_usd FROM users WHERE id = ?")
         .bind(&[JsValue::from_str(&user_id)])?
         .first(None)
         .await?;
     match row {
         Some(v) => {
-            let mut user = serde_json::json!({ "id": v.id, "email": v.email, "name": v.name, "credit_usd": v.credit_usd });
-            for (k, val) in provider_summary(&v.provider, &v.provider_base_url, &v.provider_api_key).as_object().cloned().unwrap_or_default() {
-                user[k] = val;
-            }
+            let user = serde_json::json!({ "id": v.id, "email": v.email, "name": v.name, "credit_usd": v.credit_usd });
             util::json(200, &serde_json::json!({ "user": user }))
         }
         None => util::err(404, "User not found."),

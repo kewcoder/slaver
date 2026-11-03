@@ -12,10 +12,6 @@ pub struct UserRecord {
     pub email: String,
     pub name: String,
     pub credit_usd: f64,
-    pub openrouter_key: String,
-    pub provider: String,
-    pub provider_base_url: String,
-    pub provider_api_key: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -70,17 +66,24 @@ fn str_val(s: &str) -> JsValue {
 }
 
 pub async fn get_user(db: &D1Database, id: &str) -> Result<Option<UserRecord>> {
-    db.prepare("SELECT id, email, name, credit_usd, openrouter_key, provider, provider_base_url, provider_api_key FROM users WHERE id = ?")
+    db.prepare("SELECT id, email, name, credit_usd FROM users WHERE id = ?")
         .bind(&[str_val(id)])?
         .first(None)
         .await
 }
 
-pub async fn set_provider(db: &D1Database, user_id: &str, preset: &str, base_url: &str, api_key: &str) -> Result<()> {
-    db.prepare("UPDATE users SET provider = ?, provider_base_url = ?, provider_api_key = ? WHERE id = ?")
-        .bind(&[str_val(preset), str_val(base_url), str_val(api_key), str_val(user_id)])?
+/// Set a team's AI provider. Only owners and admins may do this.
+pub async fn set_team_provider(db: &D1Database, team_id: &str, actor_id: &str, preset: &str, base_url: &str, api_key: &str) -> Result<(), String> {
+    match membership(db, team_id, actor_id).await.map_err(|e| e.to_string())? {
+        Some(r) if r == "owner" || r == "admin" => {}
+        _ => return Err("Only owners and admins can change the team AI provider.".to_string()),
+    }
+    db.prepare("UPDATE teams SET provider = ?, provider_base_url = ?, provider_api_key = ? WHERE id = ?")
+        .bind(&[str_val(preset), str_val(base_url), str_val(api_key), str_val(team_id)])
+        .map_err(|e| e.to_string())?
         .run()
-        .await?;
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1299,6 +1302,9 @@ pub struct TeamRow {
     pub name: String,
     pub owner_user_id: String,
     pub personal: i64,
+    pub provider: String,
+    pub provider_base_url: String,
+    pub provider_api_key: String,
     pub created_at: String,
 }
 
@@ -1319,6 +1325,9 @@ pub struct TeamWithRole {
     pub owner_user_id: String,
     pub personal: i64,
     pub role: String,
+    pub provider: String,
+    pub provider_base_url: String,
+    pub provider_key_set: i64,
     pub created_at: String,
 }
 
@@ -1341,7 +1350,7 @@ pub async fn create_team(db: &D1Database, owner_id: &str, name: &str, personal: 
 /// Personal teams cannot be deleted.
 pub async fn delete_team(db: &D1Database, team_id: &str, actor_id: &str) -> Result<(), String> {
     let team: Option<TeamRow> = db
-        .prepare("SELECT id, name, owner_user_id, personal, created_at FROM teams WHERE id = ?")
+        .prepare("SELECT id, name, owner_user_id, personal, provider, provider_base_url, provider_api_key, created_at FROM teams WHERE id = ?")
         .bind(&[str_val(team_id)])
         .map_err(|e| e.to_string())?
         .first(None)
@@ -1381,7 +1390,7 @@ pub async fn delete_team(db: &D1Database, team_id: &str, actor_id: &str) -> Resu
 }
 
 pub async fn get_team(db: &D1Database, team_id: &str) -> Result<Option<TeamRow>> {
-    db.prepare("SELECT id, name, owner_user_id, personal, created_at FROM teams WHERE id = ?")
+    db.prepare("SELECT id, name, owner_user_id, personal, provider, provider_base_url, provider_api_key, created_at FROM teams WHERE id = ?")
         .bind(&[str_val(team_id)])?
         .first(None)
         .await
@@ -1389,7 +1398,7 @@ pub async fn get_team(db: &D1Database, team_id: &str) -> Result<Option<TeamRow>>
 
 pub async fn list_user_teams(db: &D1Database, user_id: &str) -> Result<Vec<TeamWithRole>> {
     db.prepare(
-        "SELECT t.id, t.name, t.owner_user_id, t.personal, m.role, t.created_at \
+        "SELECT t.id, t.name, t.owner_user_id, t.personal, m.role, t.provider, t.provider_base_url, (t.provider_api_key <> '') AS provider_key_set, t.created_at \
          FROM teams t JOIN team_members m ON m.team_id = t.id \
          WHERE m.user_id = ? ORDER BY t.personal DESC, t.created_at ASC",
     )
@@ -1417,7 +1426,7 @@ struct TeamRole {
 /// team-less rows) on first use.
 pub async fn ensure_personal_team(db: &D1Database, user_id: &str) -> Result<TeamRow> {
     let existing: Option<TeamRow> = db
-        .prepare("SELECT id, name, owner_user_id, personal, created_at FROM teams WHERE owner_user_id = ? AND personal = 1")
+        .prepare("SELECT id, name, owner_user_id, personal, provider, provider_base_url, provider_api_key, created_at FROM teams WHERE owner_user_id = ? AND personal = 1")
         .bind(&[str_val(user_id)])?
         .first(None)
         .await?;

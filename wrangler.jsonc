@@ -17,10 +17,8 @@
       "enabled": true
     }
   },
-  "vars": {
-    "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
-    "DEFAULT_MODEL": "meta-llama/llama-3.3-70b-instruct",
-    "TTS_MODEL": "@cf/deepgram/aura-1"
+  "ai": {
+    "binding": "AI"
   },
   "d1_databases": [
     {

@@ -1,13 +1,4 @@
 # Local only (never commit the real .dev.vars file). Copy to .dev.vars:
-# Chat, summaries, huddle decisions: any OpenRouter key (https://openrouter.ai/keys).
-OPENROUTER_API_KEY="replace-with-openrouter-key"
-# Voice transcription only (OpenRouter has no transcription endpoint):
-META_API_KEY="replace-with-key-from-dev.meta.ai"
+# Only the JWT secret lives in env now — every AI key is configured per team
+# in Teams settings (owner/admin), and voice uses the Workers AI binding.
 JWT_SECRET="random-string-min-32-chars"
-OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
-DEFAULT_MODEL="meta-llama/llama-3.3-70b-instruct"
-TTS_MODEL="@cf/deepgram/aura-1"
-# Cloudflare account for Workers AI voice (https://dash.cloudflare.com -> Manage account -> Account ID).
-# CF_AI_TOKEN needs Workers AI run permission (API token with Account / Workers AI / Write).
-CF_ACCOUNT_ID="replace-with-cloudflare-account-id"
-CF_AI_TOKEN="replace-with-cloudflare-api-token"

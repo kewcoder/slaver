@@ -31,14 +31,26 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             )
         })
         .get_async("/api/models", |req: Request, ctx: RouteContext<()>| async move {
-            // Authenticated callers get their own provider's list; strangers get Meta's.
+            // Optional ?team_id= selects that team's provider list; strangers
+            // and keyless teams get the Meta default list.
             let preset = match auth::bearer_sub(&req, &ctx.env)? {
                 Some(user_id) => {
                     let db = ctx.env.d1("DB")?;
-                    provider::provider_for(&db, &ctx.env, &user_id)
-                        .await
-                        .map(|p| p.preset)
-                        .unwrap_or_else(|_| "meta".to_string())
+                    let url = req.url().map(|u| u.to_string()).unwrap_or_default();
+                    let team_id = url
+                        .split("team_id=")
+                        .nth(1)
+                        .unwrap_or("")
+                        .split('&')
+                        .next()
+                        .unwrap_or("")
+                        .to_string();
+                    if team_id.trim().is_empty() {
+                        let team = store::ensure_personal_team(&db, &user_id).await.ok();
+                        team.map(|t| t.provider).unwrap_or_else(|| "meta".to_string())
+                    } else {
+                        provider::preset_for_team(&db, &team_id).await
+                    }
                 }
                 None => "meta".to_string(),
             };
@@ -47,8 +59,6 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .post_async("/api/auth/register", auth::register)
         .post_async("/api/auth/login", auth::login)
         .get_async("/api/me", auth::me)
-        .put_async("/api/me/provider", auth::set_provider)
-        .delete_async("/api/me/provider", auth::clear_provider)
         .post_async("/api/chat", chat::chat)
         .post_async("/api/chat/finish", chat::finish)
         .get_async("/api/slavebots", chat::list_bots)
@@ -81,6 +91,8 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .delete_async("/api/teams/:id/members/:uid", teams::remove_member)
         .delete_async("/api/teams/:id", teams::delete_team)
         .put_async("/api/teams/:id/members/:uid", teams::update_member)
+        .put_async("/api/teams/:id/provider", teams::set_provider)
+        .delete_async("/api/teams/:id/provider", teams::clear_provider)
         .get_async("/api/huddles", huddle::list)
         .post_async("/api/huddles", huddle::create)
         .get_async("/api/huddles/:id", huddle::detail)

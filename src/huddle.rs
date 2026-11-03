@@ -107,7 +107,7 @@ async fn ask_to_join(
 /// Core huddle start, shared by the HTTP route and the MCP tool.
 /// Returns the huddle plus every bot's join/decline decision.
 pub async fn start_huddle(
-    env: &Env,
+    _env: &Env,
     db: &D1Database,
     user_id: &str,
     team_id: &str,
@@ -117,7 +117,7 @@ pub async fn start_huddle(
     if topic.trim().is_empty() || topic.len() > 500 {
         return Err("topic must be 1..500 characters.".to_string());
     }
-    let prov = provider::provider_for(db, env, user_id).await.map_err(|e| e.to_string())?;
+    let prov = provider::provider_for(db, team_id).await.map_err(|e| e.to_string())?;
     let credit = store::get_user(db, user_id)
         .await
         .map_err(|e| e.to_string())?
@@ -250,7 +250,7 @@ pub struct HuddleChatResult {
 
 /// Core huddle fan-out, shared by the HTTP route and the MCP tool.
 pub async fn post_message(
-    env: &Env,
+    _env: &Env,
     db: &D1Database,
     user_id: &str,
     huddle_id: &str,
@@ -260,7 +260,14 @@ pub async fn post_message(
     if message.is_empty() || message.len() > 8000 {
         return Err("message must be 1..8000 characters.".to_string());
     }
-    let prov = provider::provider_for(db, env, user_id).await.map_err(|e| e.to_string())?;
+    let huddle = store::get_huddle(db, user_id, huddle_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let huddle = match huddle {
+        Some(h) => h,
+        None => return Err("Huddle not found.".to_string()),
+    };
+    let prov = provider::provider_for(db, &huddle.team_id).await.map_err(|e| e.to_string())?;
     let credit = store::get_user(db, user_id)
         .await
         .map_err(|e| e.to_string())?
@@ -268,13 +275,6 @@ pub async fn post_message(
         .unwrap_or(0.0);
     if !prov.own && credit <= 0.0 {
         return Err("Out of credit (balance $0.00). Demo credit is $10 per user.".to_string());
-    }
-    if store::get_huddle(db, user_id, huddle_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .is_none()
-    {
-        return Err("Huddle not found.".to_string());
     }
     // Full bot rows for the joined participants (participants only carry names).
     let mut members: Vec<store::BotRow> = Vec::new();

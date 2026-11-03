@@ -160,16 +160,17 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     if message.is_empty() || message.len() > 8000 {
         return util::err(400, "message must be 1..8000 characters.");
     }
-    let prov = match provider::provider_for(&db, &ctx.env, &user_id).await {
+    let group_id = ctx.param("id").cloned().unwrap_or_default();
+    let group = match store::get_group(&db, &user_id, &group_id).await? {
+        Some(g) => g,
+        None => return util::err(404, "Group not found."),
+    };
+    let prov = match provider::provider_for(&db, &group.team_id).await {
         Ok(v) => v,
         Err(e) => return util::err(502, &e.to_string()),
     };
     if !prov.own && credit <= 0.0 {
         return util::err(402, "Out of credit (balance $0.00). Demo credit is $10 per user.");
-    }
-    let group_id = ctx.param("id").cloned().unwrap_or_default();
-    if store::get_group(&db, &user_id, &group_id).await?.is_none() {
-        return util::err(404, "Group not found.");
     }
     let members = store::group_members(&db, &user_id, &group_id).await?;
     if members.is_empty() {

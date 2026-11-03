@@ -20,7 +20,20 @@ pub async fn transcribe(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         None => return util::err(401, "Log in before using voice."),
     };
     let db = ctx.env.d1("DB")?;
-    let prov = match crate::provider::provider_for(&db, &ctx.env, &user_id).await {
+    let form = req.form_data().await?;
+    let form_team = match form.get("team_id") {
+        Some(FormEntry::Field(f)) => f,
+        _ => String::new(),
+    };
+    let team_id = if form_team.trim().is_empty() {
+        store::ensure_personal_team(&db, &user_id)
+            .await
+            .map(|t| t.id)
+            .unwrap_or_default()
+    } else {
+        form_team
+    };
+    let prov = match crate::provider::provider_for(&db, &team_id).await {
         Ok(v) => v,
         Err(e) => return util::err(502, &e.to_string()),
     };
@@ -31,18 +44,11 @@ pub async fn transcribe(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     if !prov.own && credit <= 0.0 {
         return util::err(402, "Out of credit (balance $0.00). Demo credit is $10 per user.");
     }
-    // Transcription only exists on Meta: prefer the caller's own Meta key,
-    // otherwise the shared server key.
-    let key = if prov.preset == "meta" {
-        prov.api_key.clone()
-    } else {
-        ctx.env.secret("META_API_KEY").map(|s| s.to_string()).unwrap_or_default()
-    };
-    if key.is_empty() {
-        return util::err(501, "Voice transcription needs a Meta key: pick Meta as provider or ask the server admin to set META_API_KEY.");
+    // Transcription only exists on Meta, so the team's provider must be Meta.
+    if prov.preset != "meta" {
+        return util::err(501, "Voice transcription needs Meta: set this team's provider to Meta in Teams settings.");
     }
-
-    let form = req.form_data().await?;
+    let key = prov.api_key.clone();
     let audio: Vec<u8> = match form.get("audio") {
         Some(FormEntry::File(f)) => f.bytes().await?,
         _ => return util::err(400, "Missing audio file (multipart field \"audio\")."),
@@ -153,9 +159,8 @@ pub async fn transcribe(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
 }
 
 /// Meta has no TTS model (STT only), so spoken replies use a common
-/// third-party voice model through Cloudflare Workers AI instead:
+/// third-party voice through the Workers AI binding instead (no env keys):
 /// POST /api/voice/speak {text, voice?} -> audio/mpeg (Aura voice).
-/// Needs CF_ACCOUNT_ID + CF_AI_TOKEN secrets; model via TTS_MODEL var.
 pub async fn speak(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let user_id = match auth::bearer_sub(&req, &ctx.env)? {
         Some(id) => id,
@@ -189,43 +194,23 @@ pub async fn speak(mut req: Request, ctx: RouteContext<()>) -> Result<Response> 
         .map(str::trim)
         .filter(|v| ["luna", "athena", "orion", "zeus", "hera", "perseus", "angus", "stella"].contains(v))
         .unwrap_or("luna");
-    let account = ctx.env.secret("CF_ACCOUNT_ID").map(|s| s.to_string()).unwrap_or_default();
-    let token = ctx.env.secret("CF_AI_TOKEN").map(|s| s.to_string()).unwrap_or_default();
-    if account.is_empty() || token.is_empty() {
-        return util::err(501, "Server voice is not configured yet (missing Cloudflare AI credentials). Use the built-in browser voice instead.");
-    }
-    let model = ctx.env.var("TTS_MODEL").map(|v| v.to_string()).unwrap_or_else(|_| "@cf/deepgram/aura-1".to_string());
-    let url = format!("https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}");
-    let headers = Headers::new();
-    headers.set("Authorization", &format!("Bearer {token}"))?;
-    headers.set("Content-Type", "application/json")?;
-    let payload = serde_json::json!({ "text": text, "speaker": speaker }).to_string();
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post);
-    init.with_headers(headers);
-    let js_body: JsValue = js_sys::Uint8Array::from(payload.as_bytes()).into();
-    init.with_body(Some(js_body));
-    let request = Request::new_with_init(&url, &init)?;
-    let mut upstream = Fetch::Request(request).send().await.map_err(|e| {
-        console_error!("tts upstream fetch failed: {e}");
-        Error::RustError("Could not reach the voice model.".to_string())
+    // Spoken replies run on the Workers AI binding — no API tokens in env.
+    const TTS_MODEL: &str = "@cf/deepgram/aura-1";
+    let ai = ctx.env.ai("AI").map_err(|e| {
+        console_error!("ai binding unavailable: {e}");
+        Error::RustError("Server voice is not configured yet (missing Workers AI binding). Use the built-in browser voice instead.".to_string())
     })?;
-    if upstream.status_code() != 200 {
-        let status = upstream.status_code();
-        let text = upstream.text().await.unwrap_or_default();
-        console_error!("tts upstream status={} body={}", status, util::truncate(&text, 300));
-        return util::json(502, &serde_json::json!({ "error": chat::describe_upstream_error(status, &text) }));
-    }
-    let content_type = upstream.headers().get("content-type").unwrap_or_default().unwrap_or_default();
-    let audio: Vec<u8> = if content_type.contains("json") {
-        let data: serde_json::Value = upstream.json().await.unwrap_or(serde_json::Value::Null);
-        let b64 = data.pointer("/result/audio").and_then(|v| v.as_str()).unwrap_or("");
-        match base64_decode(b64) {
-            Some(bytes) if !bytes.is_empty() => bytes,
-            _ => return util::err(502, "Voice model returned no audio."),
-        }
-    } else {
-        upstream.bytes().await.unwrap_or_default()
+    let data: serde_json::Value = ai
+        .run(TTS_MODEL, serde_json::json!({ "text": text, "speaker": speaker }))
+        .await
+        .map_err(|e| {
+            console_error!("tts run failed: {e}");
+            Error::RustError("Could not reach the voice model.".to_string())
+        })?;
+    let b64 = data.pointer("/result/audio").and_then(|v| v.as_str()).unwrap_or("");
+    let audio: Vec<u8> = match base64_decode(b64) {
+        Some(bytes) if !bytes.is_empty() => bytes,
+        _ => return util::err(502, "Voice model returned no audio."),
     };
     if audio.is_empty() {
         return util::err(502, "Voice model returned no audio.");

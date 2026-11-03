@@ -23,7 +23,7 @@ fn truncate_chars(s: &str, n: usize) -> String {
 }
 
 async fn summarize_text(
-    env: &Env,
+    _env: &Env,
     db: &D1Database,
     user_id: &str,
     bot_id: &str,
@@ -36,7 +36,16 @@ async fn summarize_text(
     }];
     // Summaries always use the provider default model; `model` here is the period name.
     // They run on the owner's key when set (cron included), else the server key.
-    let prov = crate::provider::provider_for(db, env, user_id)
+    let team_id = crate::store::get_bot_any(db, bot_id)
+        .await?
+        .map(|b| b.team_id)
+        .unwrap_or_default();
+    let team_id = if team_id.trim().is_empty() {
+        crate::store::ensure_personal_team(db, user_id).await.map(|t| t.id).unwrap_or_default()
+    } else {
+        team_id
+    };
+    let prov = crate::provider::provider_for(db, &team_id)
         .await
         .map_err(|e| Error::RustError(e.to_string()))?;
     let summary_model = crate::provider::effective_model(&prov.preset, "");

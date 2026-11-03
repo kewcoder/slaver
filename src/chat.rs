@@ -114,9 +114,8 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
         return handle_command(&ctx.env, &db, &user_id, &bot, &message).await;
     }
 
-    // The user's own provider/key wins; the shared demo credit only gates
-    // shared-key calls.
-    let prov = match provider::provider_for(&db, &ctx.env, &user_id).await {
+    // The team's own key pays; demo credit is never touched for team-key calls.
+    let prov = match provider::provider_for(&db, &bot.team_id).await {
         Ok(v) => v,
         Err(e) => return util::err(502, &e.to_string()),
     };
@@ -257,7 +256,7 @@ pub async fn finish(mut req: Request, ctx: RouteContext<()>) -> Result<Response>
 
     store::insert_message(&db, &bot_id, "assistant", &content).await?;
     store::touch_bot(&db, &bot_id).await?;
-    let own = provider::provider_for(&db, &ctx.env, &user_id).await.map(|p| p.own).unwrap_or(false);
+    let own = provider::provider_for(&db, &bot.team_id).await.map(|p| p.own).unwrap_or(false);
     let (cost, remaining) = store::record_usage(
         &db,
         &user_id,
@@ -300,14 +299,17 @@ pub async fn create_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         Err(_) => CreateBotRequest { model: None, team_id: None },
     };
     let db = ctx.env.d1("DB")?;
-    let prov = provider::provider_for(&db, &ctx.env, &user_id)
-        .await
-        .unwrap_or(provider::Provider { preset: "meta".to_string(), base_url: String::new(), api_key: String::new(), own: false });
+    let requested_team = body.team_id.unwrap_or_default();
+    let team_id = if requested_team.trim().is_empty() {
+        store::ensure_personal_team(&db, &user_id).await.map(|t| t.id).unwrap_or_default()
+    } else {
+        requested_team
+    };
+    let preset = provider::preset_for_team(&db, &team_id).await;
     let model = body
         .model
-        .filter(|m| provider::valid_for(&prov.preset, m))
-        .unwrap_or_else(|| provider::effective_model(&prov.preset, ""));
-    let team_id = body.team_id.unwrap_or_default();
+        .filter(|m| provider::valid_for(&preset, m))
+        .unwrap_or_else(|| provider::effective_model(&preset, ""));
     let bot = match store::create_bot(&db, &user_id, &team_id, &model).await {
         Ok(b) => b,
         Err(e) => return util::err(403, &e.to_string()),
@@ -349,10 +351,7 @@ pub async fn spawn_sub_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Re
         Some(m) => m,
         None => return util::err(404, "SlaveBot not found."),
     };
-    let preset = provider::provider_for(&db, &ctx.env, &user_id)
-        .await
-        .map(|p| p.preset)
-        .unwrap_or_else(|_| "meta".to_string());
+    let preset = provider::preset_for_team(&db, &manager.team_id).await;
     let model = body
         .model
         .filter(|m| provider::valid_for(&preset, m))
@@ -429,10 +428,10 @@ pub async fn update_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     };
     let bot_id = ctx.param("id").cloned().unwrap_or_default();
     let db = ctx.env.d1("DB")?;
-    let preset = provider::provider_for(&db, &ctx.env, &user_id)
-        .await
-        .map(|p| p.preset)
-        .unwrap_or_else(|_| "meta".to_string());
+    let preset = match store::get_bot(&db, &user_id, &bot_id).await? {
+        Some(b) => provider::preset_for_team(&db, &b.team_id).await,
+        None => "meta".to_string(),
+    };
     let model = match body.model {
         Some(m) if provider::valid_for(&preset, &m) => Some(m),
         Some(_) => return util::err(400, "That model is not available on your provider."),
@@ -687,7 +686,7 @@ fn upstream_message(text: &str) -> Option<String> {
 
 pub(crate) fn describe_upstream_error(status: u16, text: &str) -> String {
     let hint = match status {
-        401 => " Check that OPENROUTER_API_KEY is valid.",
+        401 => " Check that the team API key is valid (Teams settings).",
         404 => " The model or endpoint may not exist.",
         429 => " Rate limited — wait a bit and retry.",
         500..=599 => " The provider had an internal error — retry later.",

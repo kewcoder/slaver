@@ -189,7 +189,7 @@ pub async fn run_due(env: &Env, db: &D1Database) -> usize {
     fired
 }
 
-async fn fire_one(env: &Env, db: &D1Database, sched: &store::ScheduleRow) -> Result<(), String> {
+async fn fire_one(_env: &Env, db: &D1Database, sched: &store::ScheduleRow) -> Result<(), String> {
     let bot = store::get_bot(db, &sched.user_id, &sched.slavebot_id)
         .await
         .map_err(|e| e.to_string())?
@@ -201,7 +201,7 @@ async fn fire_one(env: &Env, db: &D1Database, sched: &store::ScheduleRow) -> Res
     if !store::bot_in_window(&bot, &now) {
         return Ok(());
     }
-    let prov = provider::provider_for(db, env, &sched.user_id).await.map_err(|e| e.to_string())?;
+    let prov = provider::provider_for(db, &bot.team_id).await.map_err(|e| e.to_string())?;
     let credit = store::get_user(db, &sched.user_id)
         .await
         .map_err(|e| e.to_string())?

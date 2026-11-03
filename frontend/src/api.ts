@@ -3,31 +3,32 @@ export interface User {
   email: string;
   name: string;
   credit_usd: number;
-  provider: string;
-  provider_base_url: string;
-  provider_key_set: boolean;
 }
 
-export async function setProvider(p: { preset: string; base_url?: string; api_key?: string }): Promise<void> {
-  await request("/api/me/provider", { method: "PUT", body: JSON.stringify(p) });
+export async function setTeamProvider(teamId: string, p: { preset: string; base_url?: string; api_key?: string }): Promise<TeamDetail["team"]> {
+  const data = await request<{ team: TeamDetail["team"] }>(`/api/teams/${encodeURIComponent(teamId)}/provider`, {
+    method: "PUT",
+    body: JSON.stringify(p),
+  });
+  return data.team;
 }
 
-export async function clearProvider(): Promise<void> {
-  await request("/api/me/provider", { method: "DELETE" });
+export async function clearTeamProvider(teamId: string): Promise<void> {
+  await request(`/api/teams/${encodeURIComponent(teamId)}/provider`, { method: "DELETE" });
 }
 
 export interface ProviderInfo {
   provider: string;
   provider_label: string;
   key_hint: string;
-  server_key: boolean;
   models: { id: string; label: string; default: boolean }[];
   custom_allowed: boolean;
   default: string;
 }
 
-export async function fetchProviderModels(): Promise<ProviderInfo> {
-  return request<ProviderInfo>("/api/models");
+export async function fetchProviderModels(teamId?: string): Promise<ProviderInfo> {
+  const q = teamId ? `?team_id=${encodeURIComponent(teamId)}` : "";
+  return request<ProviderInfo>(`/api/models${q}`);
 }
 
 export interface Team {
@@ -36,6 +37,9 @@ export interface Team {
   owner_user_id: string;
   personal: number;
   role: string;
+  provider: string;
+  provider_base_url: string;
+  provider_key_set: boolean;
   created_at: string;
 }
 
@@ -48,7 +52,7 @@ export interface TeamMember {
 }
 
 export interface TeamDetail {
-  team: { id: string; name: string; owner_user_id: string; personal: number; created_at: string };
+  team: { id: string; name: string; owner_user_id: string; personal: number; provider: string; provider_base_url: string; provider_key_set: boolean; created_at: string };
   my_role: string;
   members: TeamMember[];
   bots: SlaveBot[];
@@ -686,10 +690,11 @@ export async function speakVoice(text: string, voice: string): Promise<SpeakResu
 }
 
 /** POST /api/voice/transcribe — multipart upload of a WAV clip. */
-export async function transcribeVoice(audio: Blob): Promise<TranscribeResult> {
+export async function transcribeVoice(audio: Blob, teamId?: string): Promise<TranscribeResult> {
   const token = getToken();
   const form = new FormData();
   form.append("audio", audio, "audio.wav");
+  if (teamId) form.append("team_id", teamId);
   const res = await fetch("/api/voice/transcribe", {
     method: "POST",
     headers: {

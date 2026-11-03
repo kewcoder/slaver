@@ -20,16 +20,15 @@ pub struct Preset {
     pub id: &'static str,
     pub label: &'static str,
     pub default_base: &'static str,
-    pub server_key_env: Option<&'static str>,
     pub key_hint: &'static str,
 }
 
 pub const PRESETS: &[Preset] = &[
-    Preset { id: "meta", label: "Meta (default)", default_base: "https://api.meta.ai/v1", server_key_env: Some("META_API_KEY"), key_hint: "Key from dev.meta.ai" },
-    Preset { id: "baseten", label: "Baseten", default_base: "https://inference.baseten.co/v1", server_key_env: None, key_hint: "Your Baseten API key" },
-    Preset { id: "modal", label: "Modal", default_base: "", server_key_env: None, key_hint: "Your Modal key + your deployed function URL below" },
-    Preset { id: "openrouter", label: "OpenRouter (last resort)", default_base: "https://openrouter.ai/api/v1", server_key_env: Some("OPENROUTER_API_KEY"), key_hint: "Key from openrouter.ai/keys (sk-or-v1-...)" },
-    Preset { id: "custom", label: "Custom OpenAI-compatible", default_base: "", server_key_env: None, key_hint: "Your API key" },
+    Preset { id: "meta", label: "Meta (default)", default_base: "https://api.meta.ai/v1", key_hint: "Key from dev.meta.ai" },
+    Preset { id: "baseten", label: "Baseten", default_base: "https://inference.baseten.co/v1", key_hint: "Your Baseten API key" },
+    Preset { id: "modal", label: "Modal", default_base: "", key_hint: "Your Modal key + your deployed function URL below" },
+    Preset { id: "openrouter", label: "OpenRouter (last resort)", default_base: "https://openrouter.ai/api/v1", key_hint: "Key from openrouter.ai/keys (sk-or-v1-...)" },
+    Preset { id: "custom", label: "Custom OpenAI-compatible", default_base: "", key_hint: "Your API key" },
 ];
 
 pub fn preset_of(id: &str) -> &'static Preset {
@@ -107,37 +106,36 @@ pub fn key_prefix_ok(preset: &str, key: &str) -> bool {
     }
 }
 
-/// Resolve the effective provider for a user: their own settings win,
-/// otherwise the server key for that preset (Meta/OpenRouter only).
-pub async fn provider_for(db: &D1Database, env: &Env, user_id: &str) -> Result<Provider, Error> {
-    let user = store::get_user(db, user_id).await?;
-    let (preset, base_cfg, key_cfg) = match user {
-        Some(u) => (u.provider, u.provider_base_url, u.provider_api_key),
-        None => (String::new(), String::new(), String::new()),
-    };
-    let def = preset_of(if preset.trim().is_empty() { "meta" } else { preset.trim() });
-    let base_url = if base_cfg.trim().is_empty() {
+/// Resolve the preset id for a team without needing its key (used for
+/// default-model selection when creating bots).
+pub async fn preset_for_team(db: &D1Database, team_id: &str) -> String {
+    match store::get_team(db, team_id).await {
+        Ok(Some(t)) if !t.provider.trim().is_empty() => t.provider.trim().to_string(),
+        _ => "meta".to_string(),
+    }
+}
+
+/// Resolve the effective provider for a team: the team's own key always
+/// pays (own: true), so team usage is logged but never touches demo credit.
+/// There is no server fallback — every team configures its key in team settings.
+pub async fn provider_for(db: &D1Database, team_id: &str) -> Result<Provider, Error> {
+    let team = store::get_team(db, team_id)
+        .await?
+        .ok_or_else(|| Error::RustError("Team not found.".to_string()))?;
+    let def = preset_of(if team.provider.trim().is_empty() { "meta" } else { team.provider.trim() });
+    let base_url = if team.provider_base_url.trim().is_empty() {
         def.default_base.to_string()
     } else {
-        base_cfg.trim().trim_end_matches('/').to_string()
+        team.provider_base_url.trim().trim_end_matches('/').to_string()
     };
-    let key_cfg = key_cfg.trim().to_string();
-    if !key_cfg.is_empty() {
-        return Ok(Provider { preset: def.id.to_string(), base_url, api_key: key_cfg, own: true });
-    }
-    let server = def
-        .server_key_env
-        .and_then(|name| env.secret(name).ok())
-        .map(|s| s.to_string())
-        .unwrap_or_default();
-    if server.trim().is_empty() {
+    let key = team.provider_api_key.trim().to_string();
+    if key.is_empty() {
         return Err(Error::RustError(format!(
-            "No model key is set: add your {} key in the sidebar{}.",
+            "No model key is set for this team: an owner or admin must add the {} key in Teams settings.",
             def.label,
-            def.server_key_env.map(|_| " or set it on the server").unwrap_or(""),
         )));
     }
-    Ok(Provider { preset: def.id.to_string(), base_url, api_key: server, own: false })
+    Ok(Provider { preset: def.id.to_string(), base_url, api_key: key, own: true })
 }
 
 pub fn model_list(preset: &str) -> serde_json::Value {
@@ -152,7 +150,6 @@ pub fn model_list(preset: &str) -> serde_json::Value {
         "provider": def.id,
         "provider_label": def.label,
         "key_hint": def.key_hint,
-        "server_key": def.server_key_env.is_some(),
         "models": models,
         "custom_allowed": custom_allowed,
         "default": dflt,
@@ -169,7 +166,7 @@ pub async fn post_chat_completions(
         return Err(Error::RustError("No model key is set.".to_string()));
     }
     if prov.base_url.trim().is_empty() {
-        return Err(Error::RustError("This provider needs a base URL — set it in the sidebar.".to_string()));
+        return Err(Error::RustError("This provider needs a base URL — an owner or admin must set it in Teams settings.".to_string()));
     }
     let url = format!("{}/chat/completions", prov.base_url.trim_end_matches('/'));
     // usage.include makes usage-reporting providers (OpenRouter) attach exact
