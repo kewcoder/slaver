@@ -1,0 +1,5 @@
+# Local only (never commit the real .dev.vars file). Copy to .dev.vars:
+META_API_KEY="replace-with-key-from-dev.meta.ai"
+JWT_SECRET="random-string-min-32-chars"
+META_API_BASE_URL="https://api.meta.ai/v1"
+DEFAULT_MODEL="muse-spark-1.3"

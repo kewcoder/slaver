@@ -1,0 +1,10 @@
+node_modules/
+frontend/dist/
+frontend/node_modules/
+build/
+target/
+.wrangler/
+.dev.vars
+dist/
+*.log
+.DS_Store

@@ -1,0 +1,22 @@
+{
+  "name": "slaver",
+  "private": true,
+  "type": "module",
+  "workspaces": ["frontend"],
+  "scripts": {
+    "dev": "wrangler dev",
+    "dev:frontend": "npm --workspace frontend run dev",
+    "build:frontend": "npm --workspace frontend run build",
+    "build:worker": "worker-build --release",
+    "build": "npm run build:frontend && npm run build:worker",
+    "deploy": "npm run build && wrangler deploy",
+    "deploy:dry-run": "npm run build && wrangler deploy --dry-run",
+    "typecheck:frontend": "npm --workspace frontend run typecheck",
+    "db:migrate:local": "wrangler d1 migrations apply slaver_db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply slaver_db --remote",
+    "cf:types": "wrangler types"
+  },
+  "devDependencies": {
+    "wrangler": "^4.156.2"
+  }
+}

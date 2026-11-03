@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "slaver",
+  "main": "build/worker/shim.mjs",
+  "compatibility_date": "2026-11-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "build": {
+    "command": "worker-build --release"
+  },
+  "assets": {
+    "directory": "./frontend/dist",
+    "not_found_handling": "single-page-application"
+  },
+  "observability": {
+    "enabled": true,
+    "traces": {
+      "enabled": true
+    }
+  },
+  "vars": {
+    "META_API_BASE_URL": "https://api.meta.ai/v1",
+    "DEFAULT_MODEL": "muse-spark-1.3"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "slaver_db",
+      "database_id": "715313cd-e33e-432d-bfc2-c03222437800",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
