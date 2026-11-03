@@ -416,6 +416,7 @@ function GroupView({
               <input
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Escape") setRenaming(false); }}
                 maxLength={40}
                 autoFocus
                 className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
@@ -428,7 +429,14 @@ function GroupView({
               </button>
             </form>
           ) : (
-            <h2 className="min-w-0 flex-1 truncate font-bold text-zinc-100">{detail.group.name}</h2>
+            <button
+              type="button"
+              onClick={() => { setNewName(detail.group.name); setRenaming(true); }}
+              title="Rename group"
+              className="min-w-0 flex-1 truncate rounded px-1 text-left font-bold text-zinc-100 hover:bg-zinc-800"
+            >
+              {detail.group.name}
+            </button>
           )}
           {!renaming && (
             <div className="flex shrink-0 items-center">
@@ -1470,6 +1478,7 @@ function BotView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [titleEdit, setTitleEdit] = useState<string | null>(null);
   const [summaries, setSummaries] = useState<Summaries | null>(null);
   const [summarizing, setSummarizing] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
@@ -1584,7 +1593,46 @@ function BotView({
       <div className="mb-6 flex items-center gap-4">
         <BotAvatar bot={bot} size="lg" />
         <div>
-          <h2 className="text-xl font-bold text-zinc-100">{bot.name}</h2>
+          {titleEdit === null ? (
+            <button
+              type="button"
+              onClick={() => setTitleEdit(bot.name)}
+              title="Rename slaveBot"
+              className="rounded px-1 text-left text-xl font-bold text-zinc-100 hover:bg-zinc-800"
+            >
+              {bot.name}
+            </button>
+          ) : (
+            <input
+              value={titleEdit}
+              onChange={(e) => setTitleEdit(e.target.value.slice(0, 40))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  const next = titleEdit.trim();
+                  if (next && next !== bot.name) {
+                    setName(next);
+                    void (async () => {
+                      try {
+                        const updated = await updateBot(bot.id, { name: next });
+                        onSaved(updated);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "Could not rename.");
+                      }
+                    })();
+                  }
+                  setTitleEdit(null);
+                } else if (e.key === "Escape") {
+                  setTitleEdit(null);
+                }
+              }}
+              onBlur={() => setTitleEdit(null)}
+              autoFocus
+              maxLength={40}
+              aria-label="Rename slaveBot"
+              className="w-full max-w-xs rounded-md border border-emerald-600 bg-zinc-800 px-2 py-0.5 text-xl font-bold text-zinc-100 focus:outline-none"
+            />
+          )}
           {bot.title && <p className="text-sm text-zinc-400">{bot.title}</p>}
           <p className="mt-0.5 text-xs text-zinc-500">◈ Partner: {partnerName} · transfer in Teams settings</p>
         </div>
