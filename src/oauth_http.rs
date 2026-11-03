@@ -8,7 +8,6 @@
 //! - GET  /oauth/userinfo                                      -> profile + team role
 
 use axum::{
-    body::Bytes,
     extract::{Form, Query, State},
     http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},

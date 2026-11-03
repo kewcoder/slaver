@@ -351,6 +351,56 @@ pub async fn mark_template(db: &Db, repo_id: &str, template: bool) -> Result<()>
     Ok(())
 }
 
+/// Delete a team repo and its on-disk bare clone. Owner/admin of the owning
+/// team only. Refuses templates and repos still backing active licenses or
+/// attached projects (unpublish / detach first).
+pub async fn delete_repo(db: &Db, user_id: &str, repo_id: &str, git_root: &str) -> Result<bool, String> {
+    let repo = get_repo(db, user_id, repo_id).await.map_err(|e| e.to_string())?;
+    let repo = match repo {
+        Some(r) => r,
+        None => return Ok(false),
+    };
+    if repo.team_id.is_empty() {
+        return Err("Legacy repos cannot be deleted this way.".to_string());
+    }
+    match crate::store::membership(db, &repo.team_id, user_id).await.map_err(|e| e.to_string())? {
+        Some(r) if r == "owner" || r == "admin" => {}
+        _ => return Ok(false),
+    }
+    if repo.template != 0 {
+        return Err("Unpublish a template before deleting it.".to_string());
+    }
+    let licensed: Option<LicenseRow> = db
+        .prepare("SELECT id, team_id, repo_id, kind, support_until, status, provider, amount_cents, created_at FROM licenses WHERE repo_id = ? AND status = 'active' LIMIT 1")
+        .bind(&[v_text(repo_id)])
+        .map_err(|e| e.to_string())?
+        .first(None)
+        .await
+        .map_err(|e| e.to_string())?;
+    if licensed.is_some() {
+        return Err("An active license references this repo — it cannot be deleted.".to_string());
+    }
+    // Detach projects that point at it, then remove DB rows + bare repo.
+    db.prepare("UPDATE projects SET repo_id = '' WHERE repo_id = ?")
+        .bind(&[v_text(repo_id)])
+        .map_err(|e| e.to_string())?
+        .run()
+        .await
+        .map_err(|e| e.to_string())?;
+    // Runs that cloned it keep their history rows; only the repo row goes.
+    db.prepare("DELETE FROM repos WHERE id = ?")
+        .bind(&[v_text(repo_id)])
+        .map_err(|e| e.to_string())?
+        .run()
+        .await
+        .map_err(|e| e.to_string())?;
+    let path = bare_repo_path(git_root, repo_id);
+    if path.exists() {
+        tokio::fs::remove_dir_all(&path).await.map_err(|e| e.to_string())?;
+    }
+    Ok(true)
+}
+
 pub fn bare_repo_path(git_root: &str, repo_id: &str) -> std::path::PathBuf {
     let mut p = std::path::PathBuf::from(git_root);
     for seg in [repo_id] {
@@ -651,45 +701,6 @@ pub async fn buy_bundle(
     let project = set_project_repo(db, user_id, &project.id, &fork.id).await?;
     Ok((lic, fork, project))
 }
-
-fn fork_placeholder() -> crate::store::GroupRow {
-    crate::store::GroupRow {
-        id: String::new(),
-        team_id: String::new(),
-        name: String::new(),
-        is_public: 0,
-        repo_id: String::new(),
-        created_at: String::new(),
-        updated_at: String::new(),
-    }
-}
-
-fn bot_placeholder() -> crate::store::BotRow {
-    crate::store::BotRow {
-        id: String::new(),
-        user_id: String::new(),
-        team_id: String::new(),
-        name: String::new(),
-        title: String::new(),
-        model: String::new(),
-        memory: String::new(),
-        role: String::new(),
-        parent_id: String::new(),
-        pinned: 0,
-        pinned_by: String::new(),
-        owner_user_id: String::new(),
-        relay: 0,
-        avatar_key: String::new(),
-        archived: 0,
-        voice: String::new(),
-        active_days: String::new(),
-        active_start: String::new(),
-        active_end: String::new(),
-        created_at: String::new(),
-        updated_at: String::new(),
-    }
-}
-
 // ---------- VPS targets & deployments ----------
 
 #[derive(Deserialize, Serialize, Clone)]

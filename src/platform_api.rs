@@ -52,6 +52,7 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "repos_diff", "description": "Show a commit (or working diff vs HEAD).", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" }, "commit": { "type": "string" } } } }),
         json!({ "name": "repos_fork", "description": "Fork a template repo into your team.", "inputSchema": { "type": "object", "required": ["repo_id", "team_id"], "properties": { "repo_id": { "type": "string" }, "team_id": { "type": "string" } } } }),
         json!({ "name": "repos_publish", "description": "Publish/unpublish a team repo as a marketplace template. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id", "template"], "properties": { "repo_id": { "type": "string" }, "template": { "type": "boolean" } } } }),
+        json!({ "name": "repos_delete", "description": "Delete a team repo and its data. Owner/admin only; templates cannot be deleted.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
         json!({ "name": "licenses_buy", "description": "Buy a perpetual license for a template (mock checkout), auto-forks the repo and creates a project. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "repo_id"], "properties": { "team_id": { "type": "string" }, "repo_id": { "type": "string" }, "provider": { "type": "string" } } } }),
         json!({ "name": "licenses_checkout", "description": "Start a HitPay checkout for a template license. Returns a payment URL (or instant mock license when HitPay is not configured). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "repo_id"], "properties": { "team_id": { "type": "string" }, "repo_id": { "type": "string" } } } }),
         json!({ "name": "payments_status", "description": "Live status of a checkout payment (refreshes from HitPay when pending).", "inputSchema": { "type": "object", "required": ["payment_id"], "properties": { "payment_id": { "type": "string" } } } }),
@@ -291,6 +292,17 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }
+        "repos_delete" => {
+            let rid = arg_str(args, "repo_id");
+            if rid.is_empty() {
+                return Some(rpc_err(id, -32602, "repo_id is required."));
+            }
+            match platform::delete_repo(db, user_id, &rid, &state.git_root.to_string_lossy()).await {
+                Ok(true) => mcp_data(id, "Repo deleted.".to_string(), json!({ "deleted": true })),
+                Ok(false) => rpc_err(id, -32602, "Repo not found or not allowed."),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
         "licenses_buy" => {
             // Mock/instant checkout (tests, demos). Real money goes through
             // licenses_checkout + HitPay + licenses_activate.
@@ -464,7 +476,7 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
 /// Create a HitPay payment request for a template license. Returns checkout
 /// details; the license is only minted after payment (see activate_paid).
 async fn checkout_start(
-    state: &AppState,
+    _state: &AppState,
     db: &crate::db::Db,
     user_id: &str,
     team_id: &str,

@@ -23,18 +23,22 @@ const SEEDS: &[(&str, &str)] = &[
 
 pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, seeds_dir: &str) {
     eprintln!("seed: checking templates (dir={seeds_dir})");
-    let existing: i64 = match db
-        .prepare("SELECT COUNT(*) AS n FROM repos WHERE template = 1")
+    // Seed per template name so new templates still land on old databases.
+    let existing: Vec<String> = match db
+        .prepare("SELECT name FROM repos WHERE template = 1")
         .bind(&[])
     {
-        Ok(q) => match q.first::<CountRow>(None).await {
-            Ok(Some(r)) => r.n,
-            Ok(None) => {
-                eprintln!("seed: count returned no rows");
-                return;
-            }
+        Ok(q) => match q.all().await {
+            Ok(rows) => rows
+                .results::<serde_json::Value>()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|v: serde_json::Value| {
+                    v.get("name").and_then(|x| x.as_str()).map(|s| s.to_string())
+                })
+                .collect(),
             Err(e) => {
-                eprintln!("seed: count query failed: {e}");
+                eprintln!("seed: list query failed: {e}");
                 return;
             }
         },
@@ -43,9 +47,6 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, seeds_dir: &str
             return;
         }
     };
-    if existing > 0 {
-        return;
-    }
     // Templates live under a real system team so foreign keys hold in every
     // environment (this SQLite build enforces them).
     async fn exec(db: &crate::db::Db, sql: &str) -> Result<(), String> {
@@ -83,6 +84,9 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, seeds_dir: &str
             "resto-ops" => "Resto Ops",
             other => other,
         };
+        if existing.iter().any(|n| n == name) {
+            continue;
+        }
         let id = new_id();
         let ins: anyhow::Result<()> = async {
             db.prepare("INSERT INTO repos (id, team_id, name, description, template) VALUES (?, 'system-templates', ?, ?, 1)")
@@ -138,7 +142,3 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, seeds_dir: &str
     }
 }
 
-#[derive(serde::Deserialize)]
-struct CountRow {
-    n: i64,
-}
