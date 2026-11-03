@@ -198,7 +198,7 @@ function TypingDots() {
 }
 
 function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
-  const [mode, setMode] = useState<"login" | "register">("register");
+  const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
@@ -225,45 +225,71 @@ function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
   const inputCls =
     "mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none";
 
+  function fillDemo() {
+    setMode("login");
+    setError("");
+    setEmail("demo@slaver.app");
+    setPassword("demo1234");
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-6">
-      <div className="w-full max-w-sm rounded-xl border border-zinc-800 bg-zinc-900 p-8">
-        <h1 className="text-2xl font-bold text-zinc-100">Slaver</h1>
-        <p className="mb-5 mt-1 text-sm text-zinc-400">Sign up or log in to meet your slaveBots.</p>
-        <div className="mb-4 flex gap-2">
-          {(["register", "login"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMode(m)}
-              className={`flex-1 rounded-md px-3 py-2 text-sm font-medium ${
-                mode === m ? "bg-zinc-100 text-zinc-900" : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              {m === "register" ? "Sign up" : "Log in"}
-            </button>
-          ))}
+    <div className="flex min-h-screen bg-zinc-950">
+      <div className="hidden flex-1 flex-col justify-center bg-gradient-to-br from-zinc-950 via-zinc-900 to-emerald-950 p-12 lg:flex">
+        <div className="text-3xl font-black tracking-tight text-zinc-100">
+          Slaver<span className="text-emerald-400">.</span>
         </div>
-        <form onSubmit={submit} className="flex flex-col gap-3">
-          {mode === "register" && (
-            <label className="text-sm font-semibold text-zinc-300">
-              Name
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" autoComplete="name" className={inputCls} />
-            </label>
-          )}
-          <label className="text-sm font-semibold text-zinc-300">
-            Email
-            <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" className={inputCls} />
-          </label>
-          <label className="text-sm font-semibold text-zinc-300">
-            Password
-            <input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" autoComplete={mode === "register" ? "new-password" : "current-password"} className={inputCls} />
-          </label>
-          {error && <p className="text-sm text-red-400">{error}</p>}
-          <button type="submit" disabled={busy} className="rounded-md bg-emerald-600 px-3 py-2.5 font-semibold text-white hover:bg-emerald-500 disabled:opacity-50">
-            {busy ? "Please wait..." : mode === "register" ? "Create account" : "Log in"}
+        <h1 className="mt-6 max-w-md text-4xl font-bold leading-tight text-zinc-100">
+          Don&apos;t just connect software. <span className="text-emerald-400">Own it.</span>
+        </h1>
+        <ul className="mt-8 flex flex-col gap-4 text-[15px] text-zinc-300">
+          <li className="flex gap-3"><span className="text-emerald-400">◈</span><span><b>Marketplace</b> — beli aplikasi sekali, jadi milikmu selamanya.</span></li>
+          <li className="flex gap-3"><span className="text-emerald-400">▤</span><span><b>AI team</b> — agen yang customize, review, dan deploy untukmu.</span></li>
+          <li className="flex gap-3"><span className="text-emerald-400">⌁</span><span><b>Your VPS</b> — jalan di servermu sendiri, bukan sewa SaaS.</span></li>
+        </ul>
+      </div>
+      <div className="flex flex-1 items-center justify-center p-6">
+        <div className="w-full max-w-sm rounded-xl border border-zinc-800 bg-zinc-900 p-8">
+          <div className="text-2xl font-bold text-zinc-100 lg:hidden">Slaver<span className="text-emerald-400">.</span></div>
+          <p className="mb-5 mt-1 text-sm text-zinc-400">Log in to your workspace.</p>
+          <button type="button" onClick={fillDemo} className="mb-4 w-full rounded-md border border-dashed border-zinc-700 px-3 py-2 text-left text-xs text-zinc-400 hover:border-emerald-600 hover:text-zinc-200">
+            <span className="font-bold text-emerald-400">Try the restaurant demo →</span><br />
+            <span className="font-mono">demo@slaver.app / demo1234</span>
           </button>
-        </form>
+          <div className="mb-4 flex gap-2">
+            {(["login", "register"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                className={`flex-1 rounded-md px-3 py-2 text-sm font-medium ${
+                  mode === m ? "bg-zinc-100 text-zinc-900" : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                {m === "register" ? "Sign up" : "Log in"}
+              </button>
+            ))}
+          </div>
+          <form onSubmit={submit} className="flex flex-col gap-3">
+            {mode === "register" && (
+              <label className="text-sm font-semibold text-zinc-300">
+                Name
+                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" autoComplete="name" className={inputCls} />
+              </label>
+            )}
+            <label className="text-sm font-semibold text-zinc-300">
+              Email
+              <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" className={inputCls} />
+            </label>
+            <label className="text-sm font-semibold text-zinc-300">
+              Password
+              <input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" autoComplete={mode === "register" ? "new-password" : "current-password"} className={inputCls} />
+            </label>
+            {error && <p className="text-sm text-red-400">{error}</p>}
+            <button type="submit" disabled={busy} className="rounded-md bg-emerald-600 px-3 py-2.5 font-semibold text-white hover:bg-emerald-500 disabled:opacity-50">
+              {busy ? "Please wait..." : mode === "register" ? "Create account" : "Log in"}
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );

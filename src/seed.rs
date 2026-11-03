@@ -16,8 +16,9 @@ fn new_id() -> String {
 }
 
 const SEEDS: &[(&str, &str)] = &[
-    ("grocery-pos", "Grocery POS Lite — kasir + inventori warung, siap docker compose"),
-    ("fb-ordering", "F&B Ordering Lite — pesan meja + tiket dapur, siap docker compose"),
+    ("grocery-pos", "Grocery POS Lite — kasir + inventori warung, siap docker"),
+    ("fb-ordering", "F&B Ordering Lite — pesan meja + tiket dapur, siap docker"),
+    ("resto-ops", "Resto Ops — kasir + peta meja + booking DP + stok + HitPay, siap docker"),
 ];
 
 pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, seeds_dir: &str) {
@@ -79,6 +80,7 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, seeds_dir: &str
         let name = match *dir_name {
             "grocery-pos" => "Grocery POS Lite",
             "fb-ordering" => "F&B Ordering Lite",
+            "resto-ops" => "Resto Ops",
             other => other,
         };
         let id = new_id();

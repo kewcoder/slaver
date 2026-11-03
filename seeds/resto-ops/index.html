@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Resto Ops — Kasir, Meja & Stok</title>
+<style>
+  :root { color-scheme: light; }
+  body { font-family: system-ui, sans-serif; margin: 0; background: #faf7f2; color: #1c1917; }
+  header { background: #7c2d12; color: #fff; padding: 12px 16px; font-weight: 800; display: flex; gap: 8px; align-items: center; position: sticky; top: 0; }
+  header nav { display: flex; gap: 4px; margin-left: auto; }
+  header button { background: rgba(255,255,255,.15); color: #fff; border: 0; border-radius: 8px; padding: 7px 10px; cursor: pointer; font-size: 13px; }
+  header button.on { background: #fff; color: #7c2d12; font-weight: 700; }
+  main { max-width: 1000px; margin: 0 auto; padding: 12px; }
+  section { display: none; } section.on { display: block; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .card { background: #fff; border: 1px solid #e7e5e4; border-radius: 10px; padding: 10px; }
+  button.card { cursor: pointer; text-align: left; }
+  button.card:hover { border-color: #7c2d12; }
+  .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed #eee; font-size: 14px; }
+  .big { width: 100%; background: #7c2d12; color: #fff; border: 0; border-radius: 10px; padding: 13px; font-size: 15px; font-weight: 700; cursor: pointer; margin-top: 8px; }
+  .big:disabled { background: #a8a29e; }
+  input, select { padding: 10px; border: 1px solid #d6d3d1; border-radius: 8px; font-size: 14px; }
+  .tables { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
+  .table { border-radius: 10px; padding: 14px 8px; text-align: center; font-weight: 700; cursor: pointer; border: 2px solid transparent; }
+  .table.free { background: #dcfce7; color: #166534; }
+  .table.busy { background: #fee2e2; color: #991b1b; }
+  .table.booked { background: #fef3c7; color: #92400e; }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 99px; background: #eee; }
+  .low { color: #b91c1c; font-weight: 700; }
+  #paystatus { margin-top: 8px; font-size: 14px; }
+</style>
+</head>
+<body>
+<header>🍽️ Resto Ops <nav>
+  <button id="t-pos" class="on" onclick="tab('pos')">Kasir</button>
+  <button id="t-tables" onclick="tab('tables')">Meja</button>
+  <button id="t-book" onclick="tab('book')">Booking</button>
+  <button id="t-stock" onclick="tab('stock')">Stok</button>
+</nav></header>
+<main>
+  <section id="v-pos" class="on">
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <select id="tableSel" style="flex:1"></select>
+      <input id="q" placeholder="Cari menu…" style="flex:2" />
+    </div>
+    <div class="grid" id="menu"></div>
+    <h3>Order berjalan</h3>
+    <div class="card"><div id="cart"></div>
+      <div class="row" style="font-weight:800;font-size:16px"><span>Total</span><span id="total">Rp 0</span></div>
+      <button class="big" onclick="checkout('kasir')">Bayar via HitPay (QRIS / VA / E-wallet)</button>
+      <div id="paystatus"></div>
+    </div>
+  </section>
+  <section id="v-tables">
+    <h3>Peta Meja <small id="freecount" style="color:#666"></small></h3>
+    <div class="tables" id="tables"></div>
+    <p style="font-size:13px;color:#666">Klik meja untuk toggle Kosong ↔ Terisi. Meja kosong = kandidat promo happy-hour oleh AI Floor.</p>
+  </section>
+  <section id="v-book">
+    <h3>Booking Meja (DP minimal Rp 50.000)</h3>
+    <div class="card">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input id="bname" placeholder="Nama" />
+        <input id="bphone" placeholder="No. WA (62…)" />
+        <input id="bdate" type="date" />
+        <input id="btime" type="time" value="19:00" />
+        <select id="btable"></select>
+      </div>
+      <button class="big" onclick="bookTable()">Kirim DP via HitPay</button>
+      <div id="bookstatus"></div>
+    </div>
+    <h3>Daftar Booking</h3>
+    <div id="bookings"></div>
+  </section>
+  <section id="v-stock">
+    <h3>Stok Bahan <button onclick="adjMode=!adjMode;render()" style="float:right">Stok opname</button></h3>
+    <div id="stock"></div>
+  </section>
+</main>
+<script>
+const fmt = (n) => "Rp " + Number(n || 0).toLocaleString("id-ID");
+const store = {
+  get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } },
+  set(k, v) { localStorage.setItem(k, JSON.stringify(v)); },
+};
+const MENU = [
+  { id: "N01", name: "Nasi Goreng Spesial", price: 28000, stock: "beras" },
+  { id: "M02", name: "Mie Goreng Jawa", price: 25000, stock: "mie" },
+  { id: "A03", name: "Ayam Bakar", price: 22000, stock: "ayam" },
+  { id: "E04", name: "Es Teh Manis", price: 6000, stock: "teh" },
+  { id: "J05", name: "Jus Alpukat", price: 15000, stock: "alpukat" },
+];
+let TABLES = store.get("ro_tables", [{ id: "A1", st: "free" }, { id: "A2", st: "free" }, { id: "A3", st: "free" }, { id: "B1", st: "free" }, { id: "B2", st: "free" }, { id: "C1", st: "free" }]);
+let STOCK = store.get("ro_stock", { beras: 50, mie: 60, ayam: 40, teh: 100, alpukat: 25, unit: "porsi" });
+let cart = {};
+let adjMode = false;
+function save() { store.set("ro_tables", TABLES); store.set("ro_stock", STOCK); }
+function tab(v) {
+  for (const t of ["pos", "tables", "book", "stock"]) {
+    document.getElementById("v-" + t).className = t === v ? "on" : "";
+    document.getElementById("t-" + t).className = t === v ? "on" : "";
+  }
+  render();
+}
+function render() {
+  const q = (document.getElementById("q").value || "").toLowerCase();
+  document.getElementById("menu").innerHTML = MENU.filter((m) => m.name.toLowerCase().includes(q)).map((m, i) => {
+    const s = STOCK[m.stock] ?? 0;
+    return `<button class="card" onclick="add(${MENU.indexOf(m)})" ${s <= 0 ? "disabled style='opacity:.4'" : ""}><b>${m.name}</b><br>${fmt(m.price)}<br><small class="${s <= 5 ? "low" : ""}">stok: ${s}</small></button>`;
+  }).join("");
+  const keys = Object.keys(cart);
+  document.getElementById("cart").innerHTML = keys.length ? keys.map((k) => { const m = MENU.find((x) => x.id === k); return `<div class="row"><span>${m.name} × ${cart[k]}</span><span>${fmt(m.price * cart[k])} <a href="#" onclick="dec('${k}');return false">−</a></span></div>`; }).join("") : "<i>Belum ada item</i>";
+  const total = keys.reduce((s, k) => s + MENU.find((x) => x.id === k).price * cart[k], 0);
+  document.getElementById("total").textContent = fmt(total);
+  document.getElementById("tableSel").innerHTML = TABLES.map((t) => `<option>${t.id} (${t.st})</option>`).join("");
+  document.getElementById("tables").innerHTML = TABLES.map((t, i) => `<div class="table ${t.st}" onclick="toggleTable(${i})">${t.id}<br><small>${t.st === "free" ? "KOSONG" : t.st === "busy" ? "TERISI" : "BOOKED"}</small></div>`).join("");
+  const free = TABLES.filter((t) => t.st === "free").length;
+  document.getElementById("freecount").textContent = free + " kosong — " + (free >= 3 ? "layak promo happy-hour!" : "restoran ramai");
+  document.getElementById("stock").innerHTML = Object.entries(STOCK).filter(([k]) => k !== "unit").map(([k, v]) => `<div class="row"><span>${k}</span><span class="${v <= 5 ? "low" : ""}">${v} porsi ${adjMode ? `<button onclick="adj('${k}',1)">+</button> <button onclick="adj('${k}',-1)">−</button>` : (v <= 5 ? " — STOK MENIPIS, restock!" : "")}</span></div>`).join("");
+  document.getElementById("btable").innerHTML = TABLES.filter((t) => t.st !== "busy").map((t) => `<option>${t.id}</option>`).join("");
+  const bs = store.get("ro_bookings", []);
+  document.getElementById("bookings").innerHTML = bs.length ? bs.map((b) => `<div class="card" style="margin-bottom:8px"><b>${b.name}</b> · Meja ${b.table} · ${b.date} ${b.time}<br><span class="pill">${b.status}</span> <small>DP ${fmt(b.dp)}</small></div>`).reverse().join("") : "<i>Belum ada booking.</i>";
+}
+function add(i) { const m = MENU[i]; if ((STOCK[m.stock] ?? 0) <= 0) return alert("Stok habis: " + m.name); cart[m.id] = (cart[m.id] || 0) + 1; render(); }
+function dec(k) { cart[k]--; if (cart[k] <= 0) delete cart[k]; render(); }
+function toggleTable(i) {
+  TABLES[i].st = TABLES[i].st === "free" ? "busy" : TABLES[i].st === "busy" ? "booked" : "free";
+  save(); render();
+}
+function adj(k, d) { STOCK[k] = Math.max(0, (STOCK[k] || 0) + d); save(); render(); }
+async function payApi(path, payload) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload || {}) });
+  if (!r.ok) throw new Error("Pay server tidak tersedia (" + r.status + ")");
+  return r.json();
+}
+async function checkout(kind) {
+  const keys = Object.keys(cart);
+  if (!keys.length) return alert("Keranjang kosong");
+  const total = keys.reduce((s, k) => s + MENU.find((x) => x.id === k).price * cart[k], 0);
+  const table = document.getElementById("tableSel").value.split(" ")[0];
+  document.getElementById("paystatus").textContent = "Membuat link bayar…";
+  try {
+    const r = await payApi("/api/pay", { amount: total, name: "Meja " + table, purpose: "Resto dine-in " + table, reference: "dinein-" + Date.now() });
+    // kurangi stok
+    for (const k of keys) { const m = MENU.find((x) => x.id === k); STOCK[m.stock] = Math.max(0, (STOCK[m.stock] || 0) - cart[k]); }
+    const ti = TABLES.findIndex((t) => t.id === table); if (ti >= 0) TABLES[ti].st = "busy";
+    save(); cart = {}; render();
+    document.getElementById("paystatus").innerHTML = `Bayar di sini: <a href="${r.checkout_url}" target="_blank" rel="noopener"><b>Buka halaman bayar (${fmt(total)})</b></a><br><small>Ref: ${r.reference} — status: ${r.status}. Webhook/cek status otomatis menandai lunas.</small>`;
+    pollStatus(r.reference, "paystatus");
+  } catch (e) { document.getElementById("paystatus").textContent = "Gagal: " + e.message + " (pastikan HITPAY_API_KEY terisi di pay-server)"; }
+}
+async function bookTable() {
+  const name = document.getElementById("bname").value.trim(), phone = document.getElementById("bphone").value.trim();
+  const date = document.getElementById("bdate").value, time = document.getElementById("btime").value, table = document.getElementById("btable").value;
+  if (!name || !date) return alert("Isi nama dan tanggal");
+  const dp = 50000;
+  document.getElementById("bookstatus").textContent = "Membuat link DP…";
+  try {
+    const r = await payApi("/api/pay", { amount: dp, name, phone, purpose: "DP booking meja " + table + " " + date + " " + time, reference: "booking-" + Date.now() });
+    const bs = store.get("ro_bookings", []);
+    bs.push({ name, phone, date, time, table, dp, status: "DP pending", ref: r.reference });
+    store.set("ro_bookings", bs);
+    const ti = TABLES.findIndex((t) => t.id === table); if (ti >= 0) { TABLES[ti].st = "booked"; save(); }
+    render();
+    document.getElementById("bookstatus").innerHTML = `DP Rp 50.000: <a href="${r.checkout_url}" target="_blank" rel="noopener"><b>Bayar DP</b></a><br><small>Ref: ${r.reference}</small>`;
+    pollStatus(r.reference, "bookstatus");
+  } catch (e) { document.getElementById("bookstatus").textContent = "Gagal: " + e.message; }
+}
+async function pollStatus(ref, el) {
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 5000));
+    try {
+      const s = await (await fetch("/api/status?reference=" + encodeURIComponent(ref))).json();
+      if (s.status === "paid" || s.status === "completed" || s.status === "succeeded") {
+        document.getElementById(el).innerHTML += "<br><b style='color:green'>✓ LUNAS — terima kasih!</b>";
+        if (el === "bookstatus") { const bs = store.get("ro_bookings", []); const b = bs.find((x) => x.ref === ref); if (b) b.status = "DP lunas"; store.set("ro_bookings", bs); render(); }
+        return;
+      }
+    } catch {}
+  }
+}
+document.getElementById("q").addEventListener("input", render);
+render();
+</script>
+</body>
+</html>

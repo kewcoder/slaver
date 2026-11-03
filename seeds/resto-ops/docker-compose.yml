@@ -1,0 +1,22 @@
+services:
+  web:
+    image: caddy:2-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./index.html:/srv/index.html:ro
+    restart: unless-restart
+  pay:
+    image: node:22-slim
+    working_dir: /app
+    volumes:
+      - ./server.js:/app/server.js:ro
+    environment:
+      - PORT=3000
+      - HITPAY_API_KEY=${HITPAY_API_KEY:-}
+      - HITPAY_BASE_URL=${HITPAY_BASE_URL:-https://api.sandbox.hit-pay.com}
+    command: ["node", "server.js"]
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
