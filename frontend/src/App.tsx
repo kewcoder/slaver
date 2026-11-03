@@ -75,6 +75,7 @@ import {
   warmUpVoices,
   type Recorder,
 } from "./voice";
+import HarnessView from "./HarnessView";
 
 const AURA_VOICES = ["luna", "athena", "orion", "zeus", "hera", "perseus", "angus", "stella"];
 
@@ -1912,7 +1913,7 @@ export default function App() {
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
-  const [view, setView] = useState<"chat" | "group" | "huddle" | "bot" | "logs" | "teams">("chat");
+  const [view, setView] = useState<"chat" | "group" | "huddle" | "bot" | "logs" | "teams" | "harness">("chat");
   const [bots, setBots] = useState<SlaveBot[]>([]);
   const [botId, setBotId] = useState<string | null>(null);
   const [bot, setBot] = useState<SlaveBot | null>(null);
@@ -2426,6 +2427,7 @@ export default function App() {
       <nav className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-zinc-800 bg-zinc-950 py-3">
         <button type="button" onClick={() => setView("chat")} title="Home" className={railBtn(view === "chat" || view === "group" || view === "bot")}>⌂</button>
         <button type="button" onClick={() => openHuddle(null)} title="New huddle" className={railBtn(false)}>◉</button>
+        <button type="button" onClick={() => setView("harness")} title="Harness (agent runs)" className={railBtn(view === "harness")}>⌁</button>
         <button type="button" onClick={() => setView("teams")} title="Teams" className={railBtn(view === "teams")}>▦</button>
         <button type="button" onClick={() => { setView("logs"); fetchUsage().then(setUsage).catch(() => {}); }} title="Usage & logs" className={railBtn(view === "logs")}>≡</button>
         <div className="mt-auto flex flex-col items-center gap-2">
@@ -2601,6 +2603,8 @@ export default function App() {
               <span className="truncate px-1 font-semibold"><span className="mr-1 text-zinc-300">◉</span>{huddles.find((h) => h.id === huddleId)?.topic.slice(0, 40) ?? "huddle"}</span>
             ) : view === "teams" ? (
               <span className="px-1 font-semibold">Teams</span>
+            ) : view === "harness" ? (
+              <span className="px-1 font-semibold">Harness</span>
             ) : view === "logs" ? (
               <span className="px-1 font-semibold">Usage &amp; logs</span>
             ) : (
@@ -2621,6 +2625,8 @@ export default function App() {
 
         {view === "logs" ? (
           <main className="flex-1 overflow-y-auto"><LogsView summary={usage} /></main>
+        ) : view === "harness" ? (
+          <main className="flex min-h-0 flex-1 flex-col overflow-hidden"><HarnessView teamId={teamId} /></main>
         ) : view === "teams" ? (
           <main className="flex-1 overflow-y-auto">
             <TeamsView

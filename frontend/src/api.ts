@@ -677,3 +677,128 @@ export async function speakVoice(text: string, voice: string): Promise<SpeakResu
 export function formatUsd(n: number): string {
   return `$${n.toFixed(n < 0.01 && n > 0 ? 6 : 4)}`;
 }
+
+// ---------- harness (Codex-like agent runs in Sandbox containers) ----------
+
+export interface HarnessRun {
+  id: string;
+  team_id: string;
+  model: string;
+  prompt: string;
+  status: string;
+  created_at: string;
+}
+
+export interface HarnessStep {
+  kind: string;
+  name: string;
+  output: string;
+  created_at: string;
+}
+
+let harnessBaseCache: string | null = null;
+
+/** Base URL of the harness worker (from the Rust worker's HARNESS_URL var). */
+export async function fetchHarnessBase(): Promise<string> {
+  if (harnessBaseCache !== null) return harnessBaseCache;
+  try {
+    const data = await callTool<{ url: string }>("harness_config");
+    harnessBaseCache = (data.url || "").trim().replace(/\/+$/, "");
+  } catch {
+    harnessBaseCache = "";
+  }
+  return harnessBaseCache;
+}
+
+async function harnessFetch(path: string, init?: RequestInit): Promise<Response> {
+  const base = await fetchHarnessBase();
+  if (!base) throw new Error("Harness worker is not configured yet (HARNESS_URL is empty).");
+  const token = getToken();
+  const res = await fetch(`${base}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    try {
+      const v = JSON.parse(text) as { error?: string };
+      if (v.error) throw new Error(v.error);
+    } catch (e) {
+      if (e instanceof Error && (e.message.includes("Harness") || !text)) throw e;
+    }
+    throw new Error(text.slice(0, 300) || `Harness request failed (${res.status}).`);
+  }
+  return res;
+}
+
+/** Start an agent run. Returns the raw SSE response — read events with readHarnessEvents. */
+export async function harnessStartRun(teamId: string, model: string, prompt: string, signal?: AbortSignal): Promise<Response> {
+  return harnessFetch("/api/runs", {
+    method: "POST",
+    signal,
+    body: JSON.stringify({ team_id: teamId, model, prompt }),
+  });
+}
+
+export interface HarnessEvent {
+  type: string;
+  data: Record<string, unknown>;
+}
+
+/** Parse an SSE stream into events. Calls onEvent per event; resolves on done/error. */
+export async function readHarnessEvents(res: Response, onEvent: (e: HarnessEvent) => void, signal?: AbortSignal): Promise<void> {
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error("No response body.");
+  const decoder = new TextDecoder();
+  let buf = "";
+  let evType = "";
+  const flush = (chunk: string) => {
+    buf += chunk;
+    for (;;) {
+      const idx = buf.indexOf("\n\n");
+      if (idx < 0) break;
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      let data = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) evType = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).trim();
+      }
+      if (evType && data) {
+        try {
+          onEvent({ type: evType, data: JSON.parse(data) as Record<string, unknown> });
+        } catch {
+          /* ignore malformed */
+        }
+      }
+      evType = "";
+    }
+  };
+  for (;;) {
+    if (signal?.aborted) {
+      await reader.cancel().catch(() => {});
+      return;
+    }
+    const { done, value } = await reader.read();
+    if (done) {
+      if (buf.trim()) flush("\n\n");
+      return;
+    }
+    flush(decoder.decode(value, { stream: true }));
+  }
+}
+
+export async function harnessListRuns(teamId?: string): Promise<HarnessRun[]> {
+  const res = await harnessFetch(teamId ? `/api/runs?team_id=${encodeURIComponent(teamId)}` : "/api/runs");
+  const data = (await res.json()) as { runs?: HarnessRun[] };
+  return data.runs || [];
+}
+
+export async function harnessRunDetail(runId: string): Promise<{ run: HarnessRun; steps: HarnessStep[] }> {
+  const res = await harnessFetch(`/api/runs/${encodeURIComponent(runId)}`);
+  return (await res.json()) as { run: HarnessRun; steps: HarnessStep[] };
+}

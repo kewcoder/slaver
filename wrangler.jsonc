@@ -20,6 +20,9 @@
   "ai": {
     "binding": "AI"
   },
+  "vars": {
+    "HARNESS_URL": "https://slaver-harness.hiaribahtiar.workers.dev"
+  },
   "d1_databases": [
     {
       "binding": "DB",

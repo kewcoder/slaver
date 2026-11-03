@@ -265,7 +265,7 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
             Ok(Response::empty()?.with_status(202))
         }
         "ping" => rpc_ok(id, json!({})),
-        "tools/list" => rpc_ok(id, json!({ "tools": [auth_register_tool_def(), auth_login_tool_def(), auth_me_tool_def(), models_tool_def(), chat_tool_def(), chat_send_tool_def(), bots_list_tool_def(), bots_create_tool_def(), bots_get_tool_def(), bots_update_tool_def(), bots_children_tool_def(), bots_transfer_tool_def(), bots_append_memory_tool_def(), bots_set_avatar_tool_def(), bots_get_avatar_tool_def(), bot_archive_tool_def(), bot_pin_tool_def(), bot_set_role_tool_def(), bot_spawn_tool_def(), bot_send_tool_def(), groups_list_tool_def(), groups_create_tool_def(), groups_get_tool_def(), groups_rename_tool_def(), groups_delete_tool_def(), groups_add_member_tool_def(), groups_remove_member_tool_def(), groups_chat_tool_def(), groups_broadcast_tool_def(), huddle_list_tool_def(), huddle_get_tool_def(), huddle_start_tool_def(), huddle_chat_tool_def(), huddle_delete_tool_def(), schedules_update_tool_def(), schedule_create_tool_def(), schedule_list_tool_def(), schedule_delete_tool_def(), summaries_get_tool_def(), summaries_run_tool_def(), team_create_tool_def(), team_list_tool_def(), teams_get_tool_def(), teams_delete_tool_def(), team_invite_tool_def(), teams_set_member_tool_def(), teams_remove_member_tool_def(), teams_set_provider_tool_def(), teams_test_provider_tool_def(), teams_clear_provider_tool_def(), teams_activity_tool_def(), usage_get_tool_def(), voice_transcribe_tool_def(), voice_speak_tool_def()] })),
+        "tools/list" => rpc_ok(id, json!({ "tools": [auth_register_tool_def(), auth_login_tool_def(), auth_me_tool_def(), models_tool_def(), chat_tool_def(), chat_send_tool_def(), bots_list_tool_def(), bots_create_tool_def(), bots_get_tool_def(), bots_update_tool_def(), bots_children_tool_def(), bots_transfer_tool_def(), bots_append_memory_tool_def(), bots_set_avatar_tool_def(), bots_get_avatar_tool_def(), bot_archive_tool_def(), bot_pin_tool_def(), bot_set_role_tool_def(), bot_spawn_tool_def(), bot_send_tool_def(), groups_list_tool_def(), groups_create_tool_def(), groups_get_tool_def(), groups_rename_tool_def(), groups_delete_tool_def(), groups_add_member_tool_def(), groups_remove_member_tool_def(), groups_chat_tool_def(), groups_broadcast_tool_def(), huddle_list_tool_def(), huddle_get_tool_def(), huddle_start_tool_def(), huddle_chat_tool_def(), huddle_delete_tool_def(), schedules_update_tool_def(), schedule_create_tool_def(), schedule_list_tool_def(), schedule_delete_tool_def(), summaries_get_tool_def(), summaries_run_tool_def(), team_create_tool_def(), team_list_tool_def(), teams_get_tool_def(), teams_delete_tool_def(), team_invite_tool_def(), teams_set_member_tool_def(), teams_remove_member_tool_def(), teams_set_provider_tool_def(), teams_test_provider_tool_def(), teams_clear_provider_tool_def(), teams_activity_tool_def(), usage_get_tool_def(), harness_config_tool_def(), voice_transcribe_tool_def(), voice_speak_tool_def()] })),
         "tools/call" => {
             let params = body.get("params").cloned().unwrap_or(Value::Null);
             let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -348,6 +348,7 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
                 "teams_clear_provider" => call_teams_clear_provider(id, &ctx.env, &user_id, &args).await,
                 "teams_activity" => call_teams_activity(id, &ctx.env, &user_id, &args).await,
                 "usage_get" => call_usage_get(id, &ctx.env, &user_id).await,
+                "harness_config" => call_harness_config(id, &ctx.env),
                 "voice_transcribe" => call_voice_transcribe(id, &ctx.env, &user_id, &args).await,
                 "voice_speak" => call_voice_speak(id, &ctx.env, &user_id, &args).await,
                 _ => rpc_err(id, -32602, "Unknown tool. Run tools/list for the current catalogue."),
@@ -860,6 +861,10 @@ fn teams_activity_tool_def() -> Value {
 
 fn usage_get_tool_def() -> Value {
     json!({ "name": "usage_get", "description": "Demo credit balance, total spent, and the usage log.", "inputSchema": { "type": "object", "properties": {} } })
+}
+
+fn harness_config_tool_def() -> Value {
+    json!({ "name": "harness_config", "description": "Base URL of the Slaver harness worker (Codex-like agent runs in Sandbox containers). The app calls its /api/runs endpoints there.", "inputSchema": { "type": "object", "properties": {} } })
 }
 
 fn voice_transcribe_tool_def() -> Value {
@@ -1744,6 +1749,11 @@ async fn call_usage_get(id: Value, env: &Env, user_id: &str) -> Result<Response>
         Ok((logs, spent)) => mcp_data(id, format!("Spent ${spent:.4}."), json!({ "credit_usd": credit, "spent_usd": spent, "logs": logs })),
         Err(e) => rpc_err(id, -32000, &format!("Usage failed: {e}")),
     }
+}
+
+fn call_harness_config(id: Value, env: &Env) -> Result<Response> {
+    let url = env.var("HARNESS_URL").map(|v| v.to_string()).unwrap_or_default();
+    mcp_data(id, if url.trim().is_empty() { "Harness worker not configured yet.".to_string() } else { format!("Harness at {url}.") }, json!({ "url": url }))
 }
 
 async fn call_voice_transcribe(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
