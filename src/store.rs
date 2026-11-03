@@ -758,6 +758,43 @@ pub async fn all_bot_scopes(db: &Db) -> Result<Vec<BotScope>> {
         .results()
 }
 
+/// Group-channel activity involving one bot since a UTC timestamp (ISO-8601),
+/// oldest first, capped for prompts. Covers both the bot's own replies and
+/// the human tasks posted in its groups — this is how group work lands in
+/// the bot's automatic recaps without any manual "+memory" step.
+pub async fn group_messages_for_bot_since(
+    db: &Db,
+    slavebot_id: &str,
+    since_iso: &str,
+    limit: i32,
+) -> Result<Vec<GroupMemoryRow>> {
+    db.prepare(
+        "SELECT gr.name AS group_name, \
+                COALESCE(s.name, u.name, u.email, 'user') AS author, \
+                g.role AS role, g.content AS content, g.created_at AS created_at \
+         FROM group_messages g \
+         JOIN groups gr ON gr.id = g.group_id \
+         LEFT JOIN slavebots s ON s.id = g.slavebot_id \
+         LEFT JOIN users u ON u.id = g.user_id \
+         WHERE g.created_at >= ? \
+           AND EXISTS (SELECT 1 FROM group_members m WHERE m.group_id = g.group_id AND m.slavebot_id = ?) \
+         ORDER BY g.created_at ASC LIMIT ?",
+    )
+    .bind(&[v_text(since_iso), v_text(slavebot_id), v_real(limit as f64)])?
+    .all()
+    .await?
+    .results()
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct GroupMemoryRow {
+    pub group_name: String,
+    pub author: String,
+    pub role: String,
+    pub content: String,
+    pub created_at: String,
+}
+
 /// Messages since a UTC timestamp (ISO-8601), oldest first, capped for prompts.
 pub async fn messages_since(
     db: &Db,
@@ -1847,4 +1884,48 @@ pub async fn bot_access(db: &Db, user_id: &str, bot_id: &str) -> Result<Option<(
 
 fn new_id() -> String {
     crate::util::new_id()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn scratch_db() -> Db {
+        let dir = std::env::temp_dir().join(format!("slaver-test-{}", crate::db::now_millis()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Db::open(dir.join("t.db").to_str().unwrap()).unwrap();
+        db.run_migrations("migrations").unwrap();
+        db
+    }
+
+    async fn exec(db: &Db, sql: &str) {
+        db.prepare(sql).bind(&[]).unwrap().run().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn group_messages_for_bot_since_sees_group_work() {
+        let db = scratch_db().await;
+        exec(&db, "INSERT INTO users (id, email, name, password_salt, password_hash) VALUES ('u1', 'a@x.id', 'A', 's', 'h')").await;
+        exec(&db, "INSERT INTO teams (id, name, owner_user_id, personal) VALUES ('t1', 'T', 'u1', 0)").await;
+        exec(&db, "INSERT INTO team_members (team_id, user_id, role) VALUES ('t1', 'u1', 'owner')").await;
+        exec(&db, "INSERT INTO slavebots (id, user_id, team_id, name) VALUES ('b1', 'u1', 't1', 'Kasir')").await;
+        exec(&db, "INSERT INTO groups (id, user_id, team_id, name) VALUES ('g1', 'u1', 't1', 'Warung')").await;
+        exec(&db, "INSERT INTO group_members (group_id, slavebot_id) VALUES ('g1', 'b1')").await;
+        // Human task + bot reply, stamped now (after the cutoff below).
+        exec(&db, "INSERT INTO group_messages (group_id, user_id, role, content) VALUES ('g1', 'u1', 'user', 'tambah 2 es teh')").await;
+        exec(&db, "INSERT INTO group_messages (group_id, slavebot_id, role, content) VALUES ('g1', 'b1', 'assistant', 'Siap, dicatat 2 es teh')").await;
+        // Old DM noise must not leak in.
+        exec(&db, "INSERT INTO messages (slavebot_id, role, content, created_at) VALUES ('b1', 'user', 'halo', '2000-01-01T00:00:00.000Z')").await;
+
+        let rows = group_messages_for_bot_since(&db, "b1", "2020-01-01T00:00:00.000Z", 50).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].group_name, "Warung");
+        assert_eq!(rows[0].author, "A");
+        assert_eq!(rows[1].author, "Kasir");
+
+        // A bot that is not a member sees nothing.
+        exec(&db, "INSERT INTO slavebots (id, user_id, team_id, name) VALUES ('b2', 'u1', 't1', 'Luar')").await;
+        let rows = group_messages_for_bot_since(&db, "b2", "2020-01-01T00:00:00.000Z", 50).await.unwrap();
+        assert!(rows.is_empty());
+    }
 }

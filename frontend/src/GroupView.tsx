@@ -33,7 +33,6 @@ export function GroupView({
 }) {
   const [detail, setDetail] = useState<GroupDetail | null>(null);
   const [task, setTask] = useState("");
-  const [saveMemory, setSaveMemory] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -82,15 +81,8 @@ export function GroupView({
     setTask("");
     setBusy(true);
     try {
-      const res = await groupChat(groupId, text, undefined, saveMemory);
+      await groupChat(groupId, text);
       await refresh();
-      if (saveMemory) {
-        setSavedNote(
-          res.saved_to_memory.length > 0
-            ? `Tersimpan di ingatan: ${res.saved_to_memory.join(", ")}`
-            : "Terkirim. (Tidak ada ingatan yang diubah — butuh pemilik/admin.)",
-        );
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Group chat failed.");
     } finally {
@@ -247,16 +239,12 @@ export function GroupView({
                 sendTask();
               }
             }}
-            placeholder="Tulis pesan untuk grup… (semua asisten menjawab)"
+            placeholder="Tulis pesan untuk grup… (otomatis diingat semua asisten)"
             rows={1}
             disabled={busy}
             className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
           />
-          <label className="flex shrink-0 cursor-pointer items-center gap-1 px-1 text-xs text-zinc-400" title="Also append this message to every member's memory">
-            <input type="checkbox" checked={saveMemory} onChange={(e) => setSaveMemory(e.target.checked)} className="accent-emerald-500" />
-            +memory
-          </label>
-          <button type="submit" disabled={!task.trim() || busy} title="Send" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500">
+          <button type="submit" disabled={!task.trim() || busy} title="Kirim" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500">
             {busy ? <Spinner /> : <ArrowUpIcon />}
           </button>
         </form>

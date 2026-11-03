@@ -728,12 +728,6 @@ export default function App() {
         <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setSideOpen(false)} />
       )}
       <aside className={`${sideOpen ? "fixed inset-y-0 left-0 z-40 flex w-72" : "hidden"} shrink-0 flex-col border-r border-zinc-800 bg-zinc-950 md:static md:flex md:w-60`}>
-        <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-3" title={teams.find((t) => t.id === teamId)?.name ?? user.email}>
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-900 text-xs font-black text-emerald-300">
-            {(teams.find((t) => t.id === teamId)?.name || "S").slice(0, 1).toUpperCase()}
-          </span>
-          <span className="truncate text-sm font-bold text-zinc-100">{teams.find((t) => t.id === teamId)?.name ?? "SlaveBots"}</span>
-        </div>
         <div className="flex items-center justify-between px-4 pb-1 pt-3">
           <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Chat</div>
           <button type="button" onClick={() => { setView("settings"); setSideOpen(false); }} title="Tambah asisten baru di Pengaturan" className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">

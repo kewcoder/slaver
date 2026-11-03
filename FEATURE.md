@@ -116,9 +116,9 @@ Sidebar memilih target; main view menampilkan thread. Sub-view: DM, channel, mee
 - **Mode Full** (⛶): board fullscreen, chat mengecil jadi composer saja di bawah. Toggle ⇲ kembali ke Side.
 - Isi board = `KanbanBoard` penuh: progress done/total, repo tertaut (select ganti), 5 kolom drag-drop (Backlog/Todo/In Progress/In Review/Done), kartu (judul + priority + assignee), form New issue (title + acceptance criteria + assignee bot), panel Issue detail (assign, pindah kolom). Pengerjaan issue dilakukan di Code (git: clone → branch → commit → push), lalu kartu dipindah manual ke In Review/Done.
 - Buka board dari luar channel: tombol **Board ▤** di Apps dan **Open board ▤** di Marketplace → buka channel pemilik project (bila belum ada channel, dibuatkan otomatis bernama sama + ditempel) langsung di tab Board.
-- Checkbox `+memory`: tiap pesan juga disimpan ke memory semua member.
+- Tanpa checkbox +memory: tiap pesan grup **otomatis** masuk ingatan lewat rekap harian (lihat §4.6). Tombol "Simpan ke ingatan" per balasan tetap ada untuk menandai fakta penting saat itu juga.
 - **Support channel**: user dari team manapun bisa baca + posting; semua member bot membalas (dibiayai key team pemilik). Pesan customer tidak pernah hilang walau provider error.
-- Pesan bot bisa "Save to memory".
+- Pesan bot bisa "Simpan ke ingatan".
 
 ### 4.4 Meeting
 - Tanpa ID: form "Start a meeting" (topik + checklist bot yang di-notify; tiap bot memutuskan join/decline dari role-nya).
@@ -130,6 +130,13 @@ Sidebar memilih target; main view menampilkan thread. Sub-view: DM, channel, mee
 - Form Identity: Name, Role, Avatar upload, Model (bebas isi; warning kuning bila kosong + contoh ID sesuai provider), Voice, relay toggle, active days/window, Memory.
 - Tombol: Save / Pin-Unpin / Archive-Restore.
 - Kartu Schedules, Team (sub-bot: parent + children + spawn), Conversation recaps + Summarize now.
+
+### 4.6 Cara kerja ingatan (otomatis, tanpa checkbox)
+
+1. **Ingatan (memory)**: teks pendek per agen, selalu dibaca sebagai konteks di setiap chat. Diisi manual di pengaturan asisten, atau sekali sentuh via tombol "Simpan ke ingatan" di tiap balasan.
+2. **Otomatis dari grup**: tiap pesan di channel (tugas user + jawaban bot) **otomatis** masuk bahan rekap harian bot itu. Tidak ada yang perlu dicentang.
+3. **Rekap harian/mingguan/bulanan**: cron meringkas kemarin → 12 baris fakta awet (keputusan, preferensi, item terbuka) → dibaca lagi sebagai "obrolan lama" di semua chat berikutnya (DM, grup, meeting).
+4. Kenapa tidak langsung tempel tiap pesan ke ingatan? Satu obrolan grup bisa puluhan pesan — ingatan cuma muat 4000 karakter dan yang lama otomatis terpotong. Rekap harian menyaring dulu: fakta penting lolos, basa-basi dibuang.
 
 ---
 

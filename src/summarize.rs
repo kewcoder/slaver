@@ -80,7 +80,8 @@ pub async fn run_daily(db: &Db, bot: &store::BotRow, owner_id: &str) -> Result<O
     let day = yesterday_utc();
     let key = day.format("%Y-%m-%d").to_string();
     let messages = store::messages_since(db, &bot.id, &day_start_iso(&day), 200).await?;
-    if messages.is_empty() {
+    let group_messages = store::group_messages_for_bot_since(db, &bot.id, &day_start_iso(&day), 200).await?;
+    if messages.is_empty() && group_messages.is_empty() {
         return Ok(None);
     }
     let mut transcript = String::new();
@@ -93,8 +94,23 @@ pub async fn run_daily(db: &Db, bot: &store::BotRow, owner_id: &str) -> Result<O
             break;
         }
     }
+    if !group_messages.is_empty() {
+        transcript.push_str("--- group channels this bot is in ---\n");
+        for m in &group_messages {
+            transcript.push_str(&format!(
+                "[#{}] {}: {}\n",
+                m.group_name,
+                m.author,
+                truncate_chars(&m.content, 600)
+            ));
+            if transcript.len() > 20_000 {
+                break;
+            }
+        }
+    }
     let prompt = format!(
-        "Summarize this chat conversation for long-term memory in at most 12 lines. \
+        "Summarize this bot's conversations for long-term memory in at most 12 lines. \
+         This covers direct chats plus group-channel activity (lines tagged [#channel] author: message). \
          Capture: key facts about the user, decisions made, preferences stated, and open items. \
          Plain text, no flattery, no preamble.\n\n{transcript}"
     );
