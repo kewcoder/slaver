@@ -297,7 +297,9 @@ function GroupView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [savedNote, setSavedNote] = useState("");
-  const [addId, setAddId] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [pickFilter, setPickFilter] = useState("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const refresh = useCallback(async () => {
@@ -357,15 +359,26 @@ function GroupView({
   }
 
   async function doAdd() {
-    if (!addId) return;
+    if (picked.length === 0 || busy) return;
     setError("");
+    setBusy(true);
     try {
-      await addGroupMember(groupId, addId);
-      setAddId("");
+      for (const id of picked) {
+        await addGroupMember(groupId, id);
+      }
+      setPicked([]);
+      setPickFilter("");
+      setAddOpen(false);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not add member.");
+    } finally {
+      setBusy(false);
     }
+  }
+
+  function togglePick(id: string) {
+    setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
   async function doRemove(botId: string) {
@@ -439,21 +452,73 @@ function GroupView({
             </span>
           ))}
           {outsiders.length > 0 && (
-            <span className="flex items-center gap-1">
-              <select value={addId} onChange={(e) => setAddId(e.target.value)} aria-label="Add slaveBot" className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-zinc-200">
-                <option value="">+ Add</option>
-                {outsiders.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-              {addId && (
-                <button type="button" onClick={doAdd} className="rounded-md bg-emerald-600 px-2 py-1 text-sm font-bold text-white hover:bg-emerald-500">
-                  Add
-                </button>
-              )}
-            </span>
+            <button
+              type="button"
+              onClick={() => { setPicked([]); setPickFilter(""); setAddOpen(true); }}
+              className="rounded-full border border-dashed border-zinc-700 px-3 py-1 text-sm text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+            >
+              + Add members
+            </button>
+          )}
+          {addOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Add members">
+              <div className="absolute inset-0 bg-black/60" onClick={() => { if (!busy) setAddOpen(false); }} />
+              <div className="relative flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-zinc-700 bg-zinc-900 shadow-xl">
+                <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+                  <h3 className="font-bold text-zinc-100">Add members to {detail.group.name}</h3>
+                  <button type="button" onClick={() => setAddOpen(false)} disabled={busy} title="Close" className="rounded px-2 py-1 text-lg leading-none text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40">
+                    ×
+                  </button>
+                </div>
+                <div className="border-b border-zinc-800 px-4 py-2">
+                  <input
+                    value={pickFilter}
+                    onChange={(e) => setPickFilter(e.target.value)}
+                    placeholder="Search slaveBots..."
+                    autoFocus
+                    className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
+                  />
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                  {outsiders
+                    .filter((b) => !pickFilter.trim() || `${b.name} ${b.role} ${b.title}`.toLowerCase().includes(pickFilter.trim().toLowerCase()))
+                    .map((b) => {
+                      const on = picked.includes(b.id);
+                      return (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() => togglePick(b.id)}
+                          aria-pressed={on}
+                          className={`flex w-full items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-zinc-800 ${on ? "bg-zinc-800" : ""}`}
+                        >
+                          <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs font-bold ${on ? "border-emerald-500 bg-emerald-600 text-white" : "border-zinc-600 text-transparent"}`}>
+                            ✓
+                          </span>
+                          <BotAvatar bot={b} size="sm" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-semibold text-zinc-100">{b.name}</span>
+                            {(b.role || b.title) && <span className="block truncate text-xs text-zinc-500">{b.role || b.title}</span>}
+                          </span>
+                        </button>
+                      );
+                    })}
+                </div>
+                <div className="flex items-center justify-between gap-2 border-t border-zinc-800 px-4 py-3">
+                  <span className="text-xs text-zinc-500">
+                    {picked.length === 0 ? "Select slaveBots to add" : `${picked.length} selected`}
+                  </span>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setAddOpen(false)} disabled={busy} className="rounded-md px-3 py-1.5 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40">
+                      Cancel
+                    </button>
+                    <button type="button" onClick={doAdd} disabled={picked.length === 0 || busy} className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
+                      {busy ? "Adding..." : `Add${picked.length > 0 ? ` (${picked.length})` : ""}`}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </div>
