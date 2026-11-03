@@ -4,15 +4,7 @@
 use std::path::{Path, PathBuf};
 
 fn new_id() -> String {
-    let mut b = [0u8; 16];
-    if getrandom::getrandom(&mut b).is_err() {
-        let t = crate::db::now_millis();
-        b[..8].copy_from_slice(&t.to_be_bytes());
-    }
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    let h = hex::encode(b);
-    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+    crate::util::new_id()
 }
 
 const SEEDS: &[(&str, &str)] = &[
@@ -141,6 +133,57 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, seeds_dir: &str
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
     ensure_demo(db).await;
+    ensure_skills(db).await;
+}
+
+/// Built-in skill templates (public, owned by the system-templates team).
+/// Installed onto a bot with one click: role becomes the bot role, memory
+/// is appended to the bot memory.
+async fn ensure_skills(db: &crate::db::Db) {
+    const SKILLS: &[(&str, &str, &str, &str, &str)] = &[
+        ("Kasir Cepat", "Kasir", "Hitung belanja, total, dan kembalian dengan cepat dan teliti.",
+            "Kamu kasir yang cepat dan teliti. Ulangi rincian belanja sebelum menyebut total. Tanya: tunai, QRIS, atau transfer.",
+            "Kembalian dihitung per lembar bila tunai. QRIS di atas Rp 5 juta wajib konfirmasi ulang. Selalu ucapkan terima kasih dan ajak kembali."),
+        ("Pelayan Sigap", "Pelayan", "Catat pesanan via chat, cek stok, konfirmasi ulang.",
+            "Kamu pelayan yang sigap. Catat: menu x jumlah x nomor meja. Cek stok dulu; bila habis, tawarkan pengganti terdekat.",
+            "Selalu konfirmasi ulang pesanan. Ingatkan bila ada menu yang lama disiapkan (±15 menit)."),
+        ("Admin Booking", "Booking", "Terima reservasi meja + DP, ingatkan H-1.",
+            "Kamu admin booking. Minta: nama, no WA, tanggal, jam, jumlah orang. Ingatkan DP Rp 50.000; tanpa DP meja tidak dipegang.",
+            "Kapasitas umum: catat 12 meja. No-show = DP hangus. Kirim pengingat H-1 jam 10 pagi."),
+        ("CS Online Shop", "Layanan Pelanggan", "Balas chat pembeli dengan ramah, tanya kebutuhan, tawarkan produk.",
+            "Kamu CS online shop yang ramah. Sapa, tanyakan kebutuhan, jawab singkat. Maksimal 2 pertanyaan lanjutan per pesan.",
+            "Jam balas: 08.00-21.00. Di luar jam itu, catat pesan dan janji dibalas pagi hari."),
+        ("Tukang Stok Opname", "Stok", "Catat barang masuk/keluar, ingatkan stok menipis.",
+            "Kamu pencatat stok. Catat tiap barang masuk/keluar: nama, jumlah, tanggal. Laporkan yang di bawah minimum tiap sore.",
+            "Batas minimum umum: bahan cepat habis = stok 2 hari. Selisih opname dicatat, bukan dihapus."),
+    ];
+    for (name, category, desc, role, memory) in SKILLS {
+        let row: Option<serde_json::Value> = match db
+            .prepare("SELECT id FROM skills WHERE name = ? AND template = 1")
+            .bind(&[crate::db::v_text(name)])
+        {
+            Ok(q) => q.first(None).await.unwrap_or(None),
+            Err(_) => None,
+        };
+        if row.is_some() {
+            continue;
+        }
+        let id = new_id();
+        if let Err(e) = async {
+            db.prepare("INSERT INTO skills (id, team_id, name, category, description, role, memory, template) VALUES (?, 'system-templates', ?, ?, ?, ?, ?, 1)")
+                .bind(&[crate::db::v_text(&id), crate::db::v_text(name), crate::db::v_text(category), crate::db::v_text(desc), crate::db::v_text(role), crate::db::v_text(memory)])
+                .map_err(|e| e.to_string())?
+                .run()
+                .await
+                .map_err(|e| e.to_string())
+        }
+        .await
+        {
+            eprintln!("seed: skill '{name}' failed: {e}");
+            continue;
+        }
+        eprintln!("seed: skill '{name}' ready");
+    }
 }
 
 /// Demo F&B account (used by the login-page demo button): resto@slaver.app

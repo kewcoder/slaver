@@ -85,6 +85,10 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "oauth_clients_revoke", "description": "Delete an OAuth client and all its tokens. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "client_id"], "properties": { "team_id": { "type": "string" }, "client_id": { "type": "string" } } } }),
         json!({ "name": "templates_list", "description": "List business team templates for onboarding (preset AI agent teams, e.g. Saung Rangon F&B).", "inputSchema": { "type": "object", "properties": {} } }),
         json!({ "name": "templates_apply", "description": "Create a team from a business template, pre-staffed with preset AI agents. Returns the team and bots.", "inputSchema": { "type": "object", "required": ["template_key"], "properties": { "template_key": { "type": "string" }, "team_name": { "type": "string" } } } }),
+        json!({ "name": "skills_list", "description": "List AI skills: public template skills plus this team's own skills. Install one onto a bot with skills_apply.", "inputSchema": { "type": "object", "properties": { "team_id": { "type": "string" } } } }),
+        json!({ "name": "skills_create", "description": "Create a team skill (role+memory pack). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "name"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "category": { "type": "string" }, "description": { "type": "string" }, "role": { "type": "string" }, "memory": { "type": "string" } } } }),
+        json!({ "name": "skills_delete", "description": "Delete a team skill (templates cannot be deleted). Owner/admin only.", "inputSchema": { "type": "object", "required": ["skill_id"], "properties": { "skill_id": { "type": "string" } } } }),
+        json!({ "name": "skills_apply", "description": "Install a skill onto a slaveBot: role becomes the bot role, memory is appended. Returns the updated bot.", "inputSchema": { "type": "object", "required": ["skill_id", "slavebot_id"], "properties": { "skill_id": { "type": "string" }, "slavebot_id": { "type": "string" } } } }),
     ]
 }
 
@@ -495,6 +499,44 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             }
             match crate::team_templates::apply(db, user_id, &key, &arg_str(args, "team_name")).await {
                 Ok((team, bots)) => mcp_data(id, format!("Team {} ready with {} agent(s).", team.name, bots.len()), json!({ "team": team, "bots": bots })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "skills_list" => {
+            let tid = arg_str(args, "team_id");
+            match crate::skills::list(db, user_id, &tid).await {
+                Ok(rows) => mcp_data(id, format!("{} skill(s).", rows.len()), json!({ "skills": rows })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "skills_create" => {
+            let (tid, name) = (arg_str(args, "team_id"), arg_str(args, "name"));
+            if tid.is_empty() || name.trim().is_empty() {
+                return Some(rpc_err(id, -32602, "team_id and name are required."));
+            }
+            match crate::skills::create(db, user_id, &tid, &name, &arg_str(args, "category"), &arg_str(args, "description"), &arg_str(args, "role"), &arg_str(args, "memory")).await {
+                Ok(s) => mcp_data(id, format!("Skill {} created.", s.name), json!({ "skill": s })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "skills_delete" => {
+            let sid = arg_str(args, "skill_id");
+            if sid.is_empty() {
+                return Some(rpc_err(id, -32602, "skill_id is required."));
+            }
+            match crate::skills::delete(db, user_id, &sid).await {
+                Ok(true) => mcp_data(id, "Skill deleted.".to_string(), json!({ "deleted": true })),
+                Ok(false) => rpc_err(id, -32602, "Skill not found."),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "skills_apply" => {
+            let (sid, bid) = (arg_str(args, "skill_id"), arg_str(args, "slavebot_id"));
+            if sid.is_empty() || bid.is_empty() {
+                return Some(rpc_err(id, -32602, "skill_id and slavebot_id are required."));
+            }
+            match crate::skills::apply_to_bot(db, user_id, &sid, &bid).await {
+                Ok(bot) => mcp_data(id, format!("Skill installed on {}.", bot.name), json!({ "slavebot": bot })),
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }

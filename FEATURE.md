@@ -160,6 +160,13 @@ Sidebar memilih target; main view menampilkan thread. Sub-view: DM, channel, mee
 - **My licenses**: list lisensi (repo short-id, kind, status, support-until, provider).
 - Flow beli: klik → checkout HitPay (atau mock instan bila tanpa API key) → bayar di tab HitPay → webhook + polling verifikasi status server-side → license perpetual + support 12 bulan + fork repo + project "X (custom)" → lompat ke Apps. Kembali dari HitPay (`?payment=`): aktivasi otomatis bila sudah lunas. Webhook tanpa HMAC valid / payment gagal tidak pernah membuat lisensi.
 
+### 8b. Keahlian AI (skill marketplace)
+
+- Paket peran + ingatan siap pasang (contoh bawaan: Kasir Cepat, Pelayan Sigap, Admin Booking, CS Online Shop, Tukang Stok Opname).
+- Alur: Toko → Keahlian AI → pilih kartu → pilih asisten → **Pasang ke asisten** (peran jadi peran asisten, ingatan ditambahkan dengan label `[Keahlian: nama]`). Hanya pemilik/admin atau pengelola asisten itu yang bisa pasang.
+- Tim bisa **buat keahlian sendiri** (nama + kategori + deskripsi + peran + ingatan) dan hapus miliknya; template bawaan tidak bisa dihapus/diubah.
+- Tools MCP: `skills_list` (template publik + milik tim), `skills_create`, `skills_delete`, `skills_apply`.
+
 ---
 
 ## 9. Settings (⚙ — semua konfigurasi)
@@ -243,7 +250,7 @@ Home = Apps: grid kartu + preview iframe (PROD/DEV) + Set URL + Open full + Boar
 Chat: DM empty ×2, thread, composer pill, GroupView (tab Chat|Board + public badge + mode side/full), MeetingView (+form), BotView (identity/schedules/team/recaps).
 Board (di channel): attach/select/create project, 5 kolom drag-drop, kartu, form issue, issue detail (assign + pindah kolom).
 Code: list + detail (branches/log/diff/clone info) + deploy VPS.
-Marketplace: katalog + licenses + support button + HitPay flow + Open board ▤.
+Marketplace: katalog + licenses + support button + HitPay flow + Open board ▤ + Keahlian AI (pasang ke asisten + buat sendiri).
 OAuth: consent screen + login-then-consent (2 layar).
 Dialog/confirm: delete group/meeting/team/schedule/machine, board detach, remove key, archive bot.
 States wajib per layar: loading skeleton, empty + CTA, error + retry.

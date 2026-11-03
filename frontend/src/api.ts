@@ -977,3 +977,36 @@ export async function addDomain(teamId: string, v: { project_id?: string; subdom
 export async function removeDomain(teamId: string, domainId: string): Promise<void> {
   await callTool("domains_remove", { team_id: teamId, domain_id: domainId });
 }
+
+export interface Skill {
+  id: string;
+  team_id: string;
+  name: string;
+  category: string;
+  description: string;
+  role: string;
+  memory: string;
+  price_cents: number;
+  template: number;
+  fork_of: string;
+  created_at: string;
+}
+
+export async function fetchSkills(teamId?: string): Promise<Skill[]> {
+  const data = await callTool<{ skills: Skill[] }>("skills_list", teamId ? { team_id: teamId } : {});
+  return data.skills;
+}
+
+export async function createSkill(teamId: string, s: { name: string; category?: string; description?: string; role?: string; memory?: string }): Promise<Skill> {
+  const data = await callTool<{ skill: Skill }>("skills_create", { team_id: teamId, ...s });
+  return data.skill;
+}
+
+export async function deleteSkill(skillId: string): Promise<void> {
+  await callTool("skills_delete", { skill_id: skillId });
+}
+
+export async function applySkill(skillId: string, botId: string): Promise<SlaveBot> {
+  const data = await callTool<{ slavebot: SlaveBot }>("skills_apply", { skill_id: skillId, slavebot_id: botId });
+  return data.slavebot;
+}

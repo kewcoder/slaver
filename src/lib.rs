@@ -19,6 +19,7 @@ pub mod pricing;
 pub mod provider;
 pub mod schedule;
 pub mod seed;
+pub mod skills;
 pub mod store;
 pub mod summarize;
 pub mod team_templates;
