@@ -1,5 +1,6 @@
 /// Single-endpoint MCP client: every app action is a JSON-RPC `tools/call`
-/// against POST /mcp. No other API endpoints exist.
+/// against POST /mcp. The only other endpoint is the live inbox stream
+/// (GET /api/inbox/stream, SSE) for realtime chat + notifications.
 
 export interface User {
   id: string;
@@ -96,7 +97,7 @@ export interface BotSchedule {
 
 export interface BotDetail {
   slavebot: SlaveBot;
-  messages: { role: string; content: string; created_at: string }[];
+  messages: { id: number; role: string; content: string; created_at: string }[];
 }
 
 export interface SummaryRow {
@@ -173,6 +174,8 @@ export interface GroupMessage {
   id: number;
   slavebot_id: string | null;
   bot_name: string | null;
+  user_id?: string | null;
+  user_name?: string | null;
   role: string;
   content: string;
   created_at: string;
@@ -579,6 +582,103 @@ export async function broadcast(
   saveToMemory: boolean,
 ): Promise<{ posted: boolean; saved_to_memory: string[] }> {
   return callTool("groups_broadcast", { group_id: groupId, text, save_to_memory: saveToMemory });
+}
+
+// ---------- direct messages (user-to-user) ----------
+
+export interface DirectMessage {
+  id: number;
+  team_id: string;
+  from_user_id: string;
+  from_name: string | null;
+  to_user_id: string;
+  content: string;
+  created_at: string;
+}
+
+export async function fetchDmHistory(teamId: string, peerId: string): Promise<DirectMessage[]> {
+  const data = await callTool<{ messages: DirectMessage[] }>("dm_history", { team_id: teamId, user_id: peerId });
+  return data.messages;
+}
+
+export async function sendDm(teamId: string, toUserId: string, message: string): Promise<DirectMessage> {
+  const data = await callTool<{ message: DirectMessage }>("dm_send", { team_id: teamId, to_user_id: toUserId, message });
+  return data.message;
+}
+
+// ---------- live inbox (SSE) + unread ----------
+
+export interface InboxEvent {
+  kind: "dm" | "group" | "meeting" | "bot";
+  id: number;
+  team_id: string;
+  content: string;
+  created_at: string;
+  from_user_id?: string | null;
+  to_user_id?: string | null;
+  from_name?: string | null;
+  user_id?: string | null;
+  user_name?: string | null;
+  group_id?: string;
+  group_name?: string;
+  slavebot_id?: string | null;
+  bot_id?: string;
+  bot_name?: string | null;
+  meeting_id?: string;
+  topic?: string;
+  role?: string;
+}
+
+export interface UnreadItem {
+  kind: "dm" | "group" | "meeting" | "bot";
+  team_id: string;
+  ref_id: string;
+  name: string;
+  unread: number;
+  preview: string;
+  at: string;
+}
+
+export async function fetchUnread(): Promise<UnreadItem[]> {
+  const data = await callTool<{ unread: UnreadItem[] }>("unread_list", {});
+  return data.unread;
+}
+
+export async function markRead(kind: string, teamId: string, refId: string, lastId: number): Promise<void> {
+  await callTool("read_mark", { kind, team_id: teamId, ref_id: refId, last_id: Math.max(0, Math.floor(lastId)) });
+}
+
+/** Open the live inbox SSE stream. `since` = ISO timestamp cursor. */
+export function openInboxStream(since: string, onEvent: (e: InboxEvent) => void, onError?: () => void): EventSource {
+  const token = getToken();
+  const es = new EventSource(`/api/inbox/stream?since=${encodeURIComponent(since)}&token=${encodeURIComponent(token || "")}`);
+  es.addEventListener("dm", (ev) => onEvent(JSON.parse((ev as MessageEvent).data) as InboxEvent));
+  es.addEventListener("group", (ev) => onEvent(JSON.parse((ev as MessageEvent).data) as InboxEvent));
+  es.addEventListener("meeting", (ev) => onEvent(JSON.parse((ev as MessageEvent).data) as InboxEvent));
+  es.addEventListener("bot", (ev) => onEvent(JSON.parse((ev as MessageEvent).data) as InboxEvent));
+  es.addEventListener("ready", (ev) => {
+    try {
+      const d = JSON.parse((ev as MessageEvent).data) as { now?: string };
+      if (d.now) lastInboxNow = d.now;
+    } catch { /* ignore */ }
+  });
+  es.addEventListener("ping", (ev) => {
+    try {
+      const d = JSON.parse((ev as MessageEvent).data) as { now?: string };
+      if (d.now) lastInboxNow = d.now;
+    } catch { /* ignore */ }
+  });
+  es.onerror = () => {
+    // Let the caller reconnect with a fresh cursor.
+    try { es.close(); } catch { /* ignore */ }
+    if (onError) onError();
+  };
+  return es;
+}
+
+let lastInboxNow = "";
+export function inboxNow(): string {
+  return lastInboxNow;
 }
 
 // ---------- meetings ----------

@@ -174,6 +174,22 @@ Sidebar memilih target; main view menampilkan thread. Sub-view: DM, channel, mee
 - Tim bisa **buat keahlian sendiri** (nama + kategori + deskripsi + peran + ingatan) dan hapus miliknya; template bawaan tidak bisa dihapus/diubah.
 - Tools MCP: `skills_list` (template publik + milik tim), `skills_create`, `skills_delete`, `skills_apply`.
 
+### 8c. Konektor aplikasi (AI pakai aplikasi, tanpa software luar)
+
+- Aturan keras: **tidak ada konektor keluar / integrasi third-party**. Satu-satunya jalan AI menyentuh software adalah lewat aplikasi yang tim install.
+- Setiap aplikasi Slaver **wajib** expose MCP sendiri:
+  `POST {base_url}/mcp` dengan JSON-RPC `tools/list` + `tools/call`
+  (contoh: Resto Ops → `tables_list`, `table_book`, `booking_list`, `menu_list`).
+- Daftarkan tiap instalasi yang di-deploy: MCP `connectors_add {team_id, name, base_url, [api_key], [project_id]}` → hub `connectors_list` → panggil via `connectors_call {team_id, connector_id, tool, arguments}`.
+- Agen (kasir, booking, floor) memakai konektor ini untuk baca/tulis state asli aplikasi — bukan mock, bukan file lokal.
+- Template tanpa `/mcp` = tidak lolos jadi template resmi.
+
+### 8d. Template: 1 super-app per kategori (contoh: Resto Ops)
+
+- Tidak ada template per fitur (kasir *terpisah* dari booking *terpisah* dilarang): tiap kategori bisnis = **satu super-app** yang mencakup alur ujung-ke-ujungnya.
+- **Resto Ops** (restoran dine-in): kasir + peta 2 area makan (Dalam/indoor + Saung/teras) + booking online ber-DP + stok. **Sengaja tanpa order online/delivery** — order hanya dicatat kasir di tempat agar dapur tidak kebanjiran order tak terduga. Fokus online-nya cuma **booking meja** (tamu pesan dari rumah → datang langsung duduk).
+- Booking bisa masuk dari 3 pintu (satu sumber data server): form web pembeli, tombol kasir, dan **agen AI via MCP** (`table_book`: nama + tanggal/jam + jumlah + area).
+
 ---
 
 ## 9. Settings (⚙ — semua konfigurasi)

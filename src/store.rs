@@ -15,6 +15,7 @@ pub struct UserRecord {
 
 #[derive(Deserialize, Serialize)]
 pub struct MessageRow {
+    pub id: i64,
     pub role: String,
     pub content: String,
     pub created_at: String,
@@ -286,7 +287,7 @@ pub async fn insert_message(db: &Db, slavebot_id: &str, role: &str, content: &st
 
 pub async fn recent_messages(db: &Db, slavebot_id: &str, limit: i32) -> Result<Vec<ChatMessage>> {
     let rows: Vec<MessageRow> = db
-        .prepare("SELECT role, content, created_at FROM messages WHERE slavebot_id = ? ORDER BY id DESC LIMIT ?")
+        .prepare("SELECT id, role, content, created_at FROM messages WHERE slavebot_id = ? ORDER BY id DESC LIMIT ?")
         .bind(&[v_text(slavebot_id), v_real(limit as f64)])?
         .all()
         .await?
@@ -424,7 +425,7 @@ pub async fn bot_messages(db: &Db, user_id: &str, slavebot_id: &str) -> Result<O
         None => return Ok(None),
     };
     let messages: Vec<MessageRow> = db
-        .prepare("SELECT role, content, created_at FROM messages WHERE slavebot_id = ? ORDER BY id ASC LIMIT 500")
+        .prepare("SELECT id, role, content, created_at FROM messages WHERE slavebot_id = ? ORDER BY id ASC LIMIT 500")
         .bind(&[v_text(slavebot_id)])?
         .all()
         .await?
@@ -1298,6 +1299,213 @@ pub async fn dm_send(
     rows.into_iter().next().ok_or_else(|| anyhow!("message insert failed"))
 }
 
+// ---------- live read state (unread badges + notifications) ----------
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct UnreadRow {
+    pub kind: String,
+    pub team_id: String,
+    pub ref_id: String,
+    pub name: String,
+    pub unread: i64,
+    pub preview: String,
+    pub at: String,
+}
+
+pub async fn get_read_last(db: &Db, user_id: &str, kind: &str, team_id: &str, ref_id: &str) -> Result<i64> {
+    #[derive(Deserialize)]
+    struct R {
+        last_id: i64,
+    }
+    let row: Option<R> = db
+        .prepare("SELECT last_id FROM read_state WHERE user_id = ? AND kind = ? AND team_id = ? AND ref_id = ?")
+        .bind(&[v_text(user_id), v_text(kind), v_text(team_id), v_text(ref_id)])?
+        .first(None)
+        .await?;
+    Ok(row.map(|r| r.last_id).unwrap_or(0))
+}
+
+pub async fn set_read(db: &Db, user_id: &str, kind: &str, team_id: &str, ref_id: &str, last_id: i64) -> Result<()> {
+    db.prepare(
+        "INSERT INTO read_state (user_id, kind, team_id, ref_id, last_id, updated_at) VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now')) \
+         ON CONFLICT(user_id, kind, team_id, ref_id) DO UPDATE SET last_id = max(last_id, excluded.last_id), updated_at = excluded.updated_at",
+    )
+    .bind(&[v_text(user_id), v_text(kind), v_text(team_id), v_text(ref_id), v_int(last_id.max(0))])?
+    .run()
+    .await?;
+    Ok(())
+}
+
+fn recent_enough(created_at: &str) -> bool {
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(7);
+    created_at >= cutoff.format("%Y-%m-%dT%H:%M:%fZ").to_string().as_str()
+}
+
+/// Unread conversations for the sidebar badges. Only conversations with
+/// activity in the last 7 days are included, so ancient history never
+/// lights up badges on first login.
+pub async fn unread_list(db: &Db, user_id: &str) -> Result<Vec<UnreadRow>> {
+    #[derive(Deserialize)]
+    struct C {
+        n: i64,
+    }
+    #[derive(Deserialize)]
+    struct L {
+        content: String,
+        created_at: String,
+    }
+    let mut out = Vec::new();
+    // DMs: every peer pair the user has ever messaged; count only inbound.
+    #[derive(Deserialize)]
+    struct Peer {
+        team_id: String,
+        peer_id: String,
+        peer_name: String,
+    }
+    let peers: Vec<Peer> = db
+        .prepare(
+            "SELECT DISTINCT d.team_id AS team_id, \
+                    CASE WHEN d.from_user_id = ? THEN d.to_user_id ELSE d.from_user_id END AS peer_id, \
+                    COALESCE(u.name, u.email, '') AS peer_name \
+             FROM direct_messages d LEFT JOIN users u ON u.id = CASE WHEN d.from_user_id = ? THEN d.to_user_id ELSE d.from_user_id END \
+             WHERE d.from_user_id = ? OR d.to_user_id = ?",
+        )
+        .bind(&[v_text(user_id), v_text(user_id), v_text(user_id), v_text(user_id)])?
+        .all()
+        .await?
+        .results()?;
+    for p in peers {
+        let last = get_read_last(db, user_id, "dm", &p.team_id, &p.peer_id).await?;
+        let c: Option<C> = db
+            .prepare("SELECT COUNT(*) AS n FROM direct_messages WHERE team_id = ? AND from_user_id = ? AND to_user_id = ? AND id > ?")
+            .bind(&[v_text(&p.team_id), v_text(&p.peer_id), v_text(user_id), v_int(last)])?
+            .first(None)
+            .await?;
+        let n = c.map(|x| x.n).unwrap_or(0);
+        if n <= 0 {
+            continue;
+        }
+        if let Some(latest) = db
+            .prepare(
+                "SELECT content, created_at FROM direct_messages WHERE team_id = ? AND ((from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?)) ORDER BY id DESC LIMIT 1",
+            )
+            .bind(&[v_text(&p.team_id), v_text(&p.peer_id), v_text(user_id), v_text(user_id), v_text(&p.peer_id)])?
+            .first::<L>(None)
+            .await?
+        {
+            if recent_enough(&latest.created_at) {
+                out.push(UnreadRow {
+                    kind: "dm".to_string(),
+                    team_id: p.team_id,
+                    ref_id: p.peer_id,
+                    name: p.peer_name,
+                    unread: n,
+                    preview: latest.content.chars().take(120).collect(),
+                    at: latest.created_at,
+                });
+            }
+        }
+    }
+    // Groups the user can see (member or public): count others' messages
+    // (bot replies store NULL user_id; humans store their id).
+    let groups: Vec<GroupRow> = list_groups(db, user_id).await?;
+    for g in groups {
+        let last = get_read_last(db, user_id, "group", &g.team_id, &g.id).await?;
+        let c: Option<C> = db
+            .prepare("SELECT COUNT(*) AS n FROM group_messages WHERE group_id = ? AND (user_id IS NULL OR user_id <> ?) AND id > ?")
+            .bind(&[v_text(&g.id), v_text(user_id), v_int(last)])?
+            .first(None)
+            .await?;
+        let n = c.map(|x| x.n).unwrap_or(0);
+        if n <= 0 {
+            continue;
+        }
+        if let Some(latest) = db
+            .prepare("SELECT content, created_at FROM group_messages WHERE group_id = ? ORDER BY id DESC LIMIT 1")
+            .bind(&[v_text(&g.id)])?
+            .first::<L>(None)
+            .await?
+        {
+            if recent_enough(&latest.created_at) {
+                out.push(UnreadRow {
+                    kind: "group".to_string(),
+                    team_id: g.team_id,
+                    ref_id: g.id,
+                    name: g.name,
+                    unread: n,
+                    preview: latest.content.chars().take(120).collect(),
+                    at: latest.created_at,
+                });
+            }
+        }
+    }
+    // Meetings on the user's teams: count bot replies.
+    let meetings: Vec<MeetingRow> = list_meetings(db, user_id).await?;
+    for m in meetings {
+        let last = get_read_last(db, user_id, "meeting", &m.team_id, &m.id).await?;
+        let c: Option<C> = db
+            .prepare("SELECT COUNT(*) AS n FROM meeting_messages WHERE meeting_id = ? AND slavebot_id IS NOT NULL AND id > ?")
+            .bind(&[v_text(&m.id), v_int(last)])?
+            .first(None)
+            .await?;
+        let n = c.map(|x| x.n).unwrap_or(0);
+        if n <= 0 {
+            continue;
+        }
+        if let Some(latest) = db
+            .prepare("SELECT content, created_at FROM meeting_messages WHERE meeting_id = ? ORDER BY id DESC LIMIT 1")
+            .bind(&[v_text(&m.id)])?
+            .first::<L>(None)
+            .await?
+        {
+            if recent_enough(&latest.created_at) {
+                out.push(UnreadRow {
+                    kind: "meeting".to_string(),
+                    team_id: m.team_id,
+                    ref_id: m.id,
+                    name: m.topic,
+                    unread: n,
+                    preview: latest.content.chars().take(120).collect(),
+                    at: latest.created_at,
+                });
+            }
+        }
+    }
+    // Bot DMs with new assistant replies (own echoes don't count).
+    let bots_list = list_bots(db, user_id, false).await?;
+    for b in bots_list {
+        let last = get_read_last(db, user_id, "bot", &b.team_id, &b.id).await?;
+        let c: Option<C> = db
+            .prepare("SELECT COUNT(*) AS n FROM messages WHERE slavebot_id = ? AND role = 'assistant' AND id > ?")
+            .bind(&[v_text(&b.id), v_int(last)])?
+            .first(None)
+            .await?;
+        let n = c.map(|x| x.n).unwrap_or(0);
+        if n <= 0 {
+            continue;
+        }
+        if let Some(latest) = db
+            .prepare("SELECT content, created_at FROM messages WHERE slavebot_id = ? ORDER BY id DESC LIMIT 1")
+            .bind(&[v_text(&b.id)])?
+            .first::<L>(None)
+            .await?
+        {
+            if recent_enough(&latest.created_at) {
+                out.push(UnreadRow {
+                    kind: "bot".to_string(),
+                    team_id: b.team_id,
+                    ref_id: b.id,
+                    name: b.name,
+                    unread: n,
+                    preview: latest.content.chars().take(120).collect(),
+                    at: latest.created_at,
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| b.at.cmp(&a.at));
+    Ok(out)
+}
 
 
 pub async fn create_meeting(db: &Db, user_id: &str, team_id: &str, topic: &str) -> Result<MeetingRow> {

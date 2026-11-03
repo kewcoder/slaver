@@ -58,6 +58,8 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "payments_status", "description": "Live status of a checkout payment (refreshes from HitPay when pending).", "inputSchema": { "type": "object", "required": ["payment_id"], "properties": { "payment_id": { "type": "string" } } } }),
         json!({ "name": "licenses_activate", "description": "Verify a paid checkout and mint the license + fork + project. Idempotent.", "inputSchema": { "type": "object", "required": ["payment_id"], "properties": { "payment_id": { "type": "string" } } } }),
         json!({ "name": "dm_history", "description": "Direct messages with a teammate (same team).", "inputSchema": { "type": "object", "required": ["team_id", "user_id"], "properties": { "team_id": { "type": "string" }, "user_id": { "type": "string" } } } }),
+        json!({ "name": "unread_list", "description": "Conversations with unread messages (sidebar badges): DMs, channels, meetings, bots. Only activity from the last 7 days.", "inputSchema": { "type": "object", "properties": {} } }),
+        json!({ "name": "read_mark", "description": "Mark a conversation read up to a message id (clears its badge). kind: dm|group|meeting|bot.", "inputSchema": { "type": "object", "required": ["kind", "ref_id", "last_id"], "properties": { "kind": { "type": "string" }, "team_id": { "type": "string" }, "ref_id": { "type": "string" }, "last_id": { "type": "integer" } } } }),
         json!({ "name": "dm_send", "description": "Send a direct message to a teammate.", "inputSchema": { "type": "object", "required": ["team_id", "to_user_id", "message"], "properties": { "team_id": { "type": "string" }, "to_user_id": { "type": "string" }, "message": { "type": "string" } } } }),
         json!({ "name": "groups_add_user", "description": "Add a teammate to a channel (mixed human + AI channels).", "inputSchema": { "type": "object", "required": ["group_id", "user_id"], "properties": { "group_id": { "type": "string" }, "user_id": { "type": "string" } } } }),
         json!({ "name": "groups_remove_user", "description": "Remove a teammate from a channel.", "inputSchema": { "type": "object", "required": ["group_id", "user_id"], "properties": { "group_id": { "type": "string" }, "user_id": { "type": "string" } } } }),
@@ -85,6 +87,10 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "oauth_clients_revoke", "description": "Delete an OAuth client and all its tokens. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "client_id"], "properties": { "team_id": { "type": "string" }, "client_id": { "type": "string" } } } }),
         json!({ "name": "templates_list", "description": "List business team templates for onboarding (preset AI agent teams, e.g. Saung Rangon F&B).", "inputSchema": { "type": "object", "properties": {} } }),
         json!({ "name": "templates_apply", "description": "Create a team from a business template, pre-staffed with preset AI agents. Returns the team and bots.", "inputSchema": { "type": "object", "required": ["template_key"], "properties": { "template_key": { "type": "string" }, "team_name": { "type": "string" } } } }),
+        json!({ "name": "connectors_add", "description": "Register a deployed app as an AI-accessible connector (the app must expose POST /mcp with tools/list + tools/call). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "name", "base_url"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "base_url": { "type": "string" }, "api_key": { "type": "string" }, "project_id": { "type": "string" } } } }),
+        json!({ "name": "connectors_list", "description": "List a team's registered app connectors.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
+        json!({ "name": "connectors_remove", "description": "Remove an app connector. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "connector_id"], "properties": { "team_id": { "type": "string" }, "connector_id": { "type": "string" } } } }),
+        json!({ "name": "connectors_call", "description": "Call a tool on an installed app through its own MCP surface. This is how agents use app features (tables, booking, stock).", "inputSchema": { "type": "object", "required": ["team_id", "connector_id", "tool"], "properties": { "team_id": { "type": "string" }, "connector_id": { "type": "string" }, "tool": { "type": "string" }, "arguments": { "type": "object" } } } }),
         json!({ "name": "skills_list", "description": "List AI skills: public template skills plus this team's own skills. Install one onto a bot with skills_apply.", "inputSchema": { "type": "object", "properties": { "team_id": { "type": "string" } } } }),
         json!({ "name": "skills_create", "description": "Create a team skill (role+memory pack). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "name"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "category": { "type": "string" }, "description": { "type": "string" }, "role": { "type": "string" }, "memory": { "type": "string" } } } }),
         json!({ "name": "skills_delete", "description": "Delete a team skill (templates cannot be deleted). Owner/admin only.", "inputSchema": { "type": "object", "required": ["skill_id"], "properties": { "skill_id": { "type": "string" } } } }),
@@ -502,6 +508,47 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }
+        "connectors_add" => {
+            let (tid, name, base) = (arg_str(args, "team_id"), arg_str(args, "name"), arg_str(args, "base_url"));
+            if tid.is_empty() || name.trim().is_empty() || base.trim().is_empty() {
+                return Some(rpc_err(id, -32602, "team_id, name and base_url are required."));
+            }
+            match crate::connectors::add(db, &tid, user_id, &arg_str(args, "project_id"), &name, &base, &arg_str(args, "api_key")).await {
+                Ok(c) => mcp_data(id, format!("Connector {} registered at {}.", c.name, c.base_url), json!({ "connector": c })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "connectors_list" => {
+            let tid = arg_str(args, "team_id");
+            if tid.is_empty() {
+                return Some(rpc_err(id, -32602, "team_id is required."));
+            }
+            match crate::connectors::list(db, &tid, user_id).await {
+                Ok(rows) => mcp_data(id, format!("{} connector(s).", rows.len()), json!({ "connectors": rows })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "connectors_remove" => {
+            let (tid, cid) = (arg_str(args, "team_id"), arg_str(args, "connector_id"));
+            if tid.is_empty() || cid.is_empty() {
+                return Some(rpc_err(id, -32602, "team_id and connector_id are required."));
+            }
+            match crate::connectors::remove(db, &tid, user_id, &cid).await {
+                Ok(()) => mcp_data(id, "Connector removed.".to_string(), json!({ "removed": true })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "connectors_call" => {
+            let (tid, cid, tool) = (arg_str(args, "team_id"), arg_str(args, "connector_id"), arg_str(args, "tool"));
+            if tid.is_empty() || cid.is_empty() || tool.trim().is_empty() {
+                return Some(rpc_err(id, -32602, "team_id, connector_id and tool are required."));
+            }
+            let args_v = args.get("arguments").cloned().unwrap_or(serde_json::Value::Null);
+            match crate::connectors::call_tool(db, &tid, user_id, &cid, &tool, &args_v).await {
+                Ok(v) => mcp_data(id, "App answered.".to_string(), v),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
         "skills_list" => {
             let tid = arg_str(args, "team_id");
             match crate::skills::list(db, user_id, &tid).await {
@@ -558,6 +605,24 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             match platform::dm_send_checked(db, &tid, user_id, &to, &msg).await {
                 Ok(row) => mcp_data(id, "Sent.".to_string(), json!({ "message": row })),
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "unread_list" => match store::unread_list(db, user_id).await {
+            Ok(rows) => {
+                let total: i64 = rows.iter().map(|r| r.unread).sum();
+                mcp_data(id, format!("{} unread in {} conversation(s).", total, rows.len()), json!({ "unread": rows }))
+            }
+            Err(e) => rpc_err(id, -32000, &e.to_string()),
+        },
+        "read_mark" => {
+            let (kind, rid) = (arg_str(args, "kind"), arg_str(args, "ref_id"));
+            let last = args.get("last_id").and_then(|v| v.as_i64()).unwrap_or(0);
+            if !["dm", "group", "meeting", "bot"].contains(&kind.as_str()) || rid.is_empty() {
+                return Some(rpc_err(id, -32602, "kind must be dm|group|meeting|bot, ref_id and last_id are required."));
+            }
+            match store::set_read(db, user_id, &kind, &arg_str(args, "team_id"), &rid, last).await {
+                Ok(()) => mcp_data(id, "Marked read.".to_string(), json!({ "marked": true })),
+                Err(e) => rpc_err(id, -32000, &e.to_string()),
             }
         }
         "groups_add_user" => {

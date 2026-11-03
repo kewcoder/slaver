@@ -6,17 +6,25 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./index.html:/srv/index.html:ro
-    restart: unless-restart
-  pay:
+      - ./oauth-callback.html:/srv/oauth-callback.html:ro
+    restart: unless-stopped
+  api:
     image: node:22-slim
     working_dir: /app
     volumes:
-      - ./server.js:/app/server.js:ro
+      - ./server.cjs:/app/server.cjs:ro
+      - ./data:/app/data
     environment:
       - PORT=3000
+      - APP_PASSWORD=${APP_PASSWORD:-}
+      - RESTO_NAME=${RESTO_NAME:-Saung Rangon}
+      - DATA_FILE=/app/data/resto.json
       - HITPAY_API_KEY=${HITPAY_API_KEY:-}
       - HITPAY_BASE_URL=${HITPAY_BASE_URL:-https://api.sandbox.hit-pay.com}
-    command: ["node", "server.js"]
+      - OAUTH_CLIENT_ID=${OAUTH_CLIENT_ID:-}
+      - OAUTH_CLIENT_SECRET=${OAUTH_CLIENT_SECRET:-}
+      - SLAVER_URL=${SLAVER_URL:-https://www.slaver.app}
+    command: ["node", "server.cjs"]
     ports:
       - "3000:3000"
     restart: unless-stopped

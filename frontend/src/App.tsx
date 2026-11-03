@@ -1,6 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  addDomain,
   addGroupMembers,
   appendMemory,
   connectFly,
@@ -8,6 +7,10 @@ import {
   disconnectFly,
   fetchAvatar,
   fetchDomains,
+  fetchUnread,
+  inboxNow,
+  markRead,
+  openInboxStream,
   fetchFlyAccounts,
   fetchFlyMachines,
   fetchTeamTemplates,
@@ -75,9 +78,10 @@ import {
   type FlyAccount,
   type FlyMachine,
   type Group,
-  type GroupDetail,
-  type Meeting,
-  type MeetingDetail,
+    type GroupDetail,
+    type InboxEvent,
+    type Meeting,
+    type MeetingDetail,
   type ActivityItem,
   type OAuthClient,
   type ProviderInfo,
@@ -105,6 +109,7 @@ import {
   type Recorder,
 } from "./voice";
 import AppsView from "./AppsView";
+import { DmView } from "./DmView";
 import CodeView from "./CodeView";
 import MarketView from "./MarketView";
 
@@ -113,6 +118,7 @@ import MarketView from "./MarketView";
 
 interface UiMessage {
   key: number;
+  id?: number;
   role: string;
   content: string;
   created_at?: string;
@@ -132,7 +138,7 @@ export default function App() {
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
-  const [view, setView] = useState<"apps" | "chat" | "group" | "meeting" | "bot" | "settings" | "code" | "market">("apps");
+  const [view, setView] = useState<"apps" | "chat" | "group" | "meeting" | "bot" | "dm" | "settings" | "code" | "market">("apps");
   const [bots, setBots] = useState<SlaveBot[]>([]);
   const [botId, setBotId] = useState<string | null>(null);
   const [bot, setBot] = useState<SlaveBot | null>(null);
@@ -154,6 +160,25 @@ export default function App() {
   const [showArchived, setShowArchived] = useState(false);
   const [sideOpen, setSideOpen] = useState(false);
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
+  const [dmPeer, setDmPeer] = useState<{ id: string; name: string } | null>(null);
+  const [unread, setUnread] = useState<Record<string, number>>({});
+  const [teammates, setTeammates] = useState<{ id: string; name: string }[]>([]);
+  const [feed, setFeed] = useState<InboxEvent | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+  const reconnectRef = useRef<number | null>(null);
+  const seenRef = useRef<Set<string>>(new Set());
+  const convRef = useRef({ view: "apps" as string, dmPeerId: "", groupId: "", meetingId: "", botId: "", teamId: "" });
+
+  const refreshUnread = useCallback(async () => {
+    try {
+      const list = await fetchUnread();
+      const map: Record<string, number> = {};
+      for (const u of list) map[`${u.kind}:${u.team_id}:${u.ref_id}`] = u.unread;
+      setUnread(map);
+    } catch {
+      /* keep old badges on transient failure */
+    }
+  }, []);
 
   function pickTeam(id: string | null) {
     setTeamId(id);
@@ -161,12 +186,15 @@ export default function App() {
     setBot(null);
     setGroupId(null);
     setMeetingId(null);
+    setDmPeer(null);
     setMessages([]);
     setTeamMenuOpen(false);
   }
   const [plusOpen, setPlusOpen] = useState(false);
   const [memberNames, setMemberNames] = useState<Record<string, string>>({});
   const keyRef = useRef(0);
+  const pendingEcho = useRef<string[]>([]);
+  const lastFeed = useRef<InboxEvent | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const recTimer = useRef<number | null>(null);
   const converseRef = useRef(false);
@@ -274,6 +302,159 @@ export default function App() {
     }
   }, [user]);
 
+  // Teammates for user-to-user DMs (excluding self).
+  useEffect(() => {
+    if (!user || !teamId) {
+      setTeammates([]);
+      return;
+    }
+    fetchTeam(teamId)
+      .then((d) =>
+        setTeammates(
+          d.members
+            .filter((m) => m.user_id !== user.id)
+            .map((m) => ({ id: m.user_id, name: m.name || m.email || m.user_id })),
+        ),
+      )
+      .catch(() => {});
+  }, [user, teamId]);
+
+  // Keep a ref mirror so the inbox handler never goes stale.
+  useEffect(() => {
+    convRef.current = {
+      view,
+      dmPeerId: dmPeer?.id ?? "",
+      groupId: groupId ?? "",
+      meetingId: meetingId ?? "",
+      botId: botId ?? "",
+      teamId: teamId ?? "",
+    };
+  });
+
+  // Live inbox: one SSE stream for DMs, groups, meetings and bot replies.
+  useEffect(() => {
+    if (!user) return;
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+    void refreshUnread();
+    let stopped = false;
+    let es: EventSource | null = null;
+    const myName = (user.name || user.email.split("@")[0] || "").toLowerCase();
+    const myFirst = myName.split(/\s+/)[0];
+    const mentionsMe = (text: string) => {
+      const t = text.toLowerCase();
+      return (myName && t.includes("@" + myName)) || (myFirst && t.includes("@" + myFirst));
+    };
+    const notify = (title: string, body: string) => {
+      try {
+        if ("Notification" in window && Notification.permission === "granted") {
+          new Notification(title, { body: body.slice(0, 140) });
+        }
+      } catch {
+        /* notifications optional */
+      }
+    };
+    let debounce: number | null = null;
+    const pokeUnread = () => {
+      if (debounce !== null) window.clearTimeout(debounce);
+      debounce = window.setTimeout(() => void refreshUnread(), 1500);
+    };
+    const connect = () => {
+      if (stopped) return;
+      if (es) {
+        try {
+          es.close();
+        } catch {
+          /* ignore */
+        }
+      }
+      const since = inboxNow() || new Date().toISOString();
+      es = openInboxStream(since, (ev) => {
+        if (stopped) return;
+        const key = `${ev.kind}:${ev.id}`;
+        if (seenRef.current.has(key)) return;
+        seenRef.current.add(key);
+        if (seenRef.current.size > 3000) {
+          seenRef.current = new Set(Array.from(seenRef.current).slice(-2000));
+        }
+        const c = convRef.current;
+        const isOpenDm =
+          c.view === "dm" && ev.kind === "dm" && ev.team_id === c.teamId && (ev.from_user_id === c.dmPeerId || ev.to_user_id === c.dmPeerId);
+        const isOpenGroup = c.view === "group" && ev.kind === "group" && ev.group_id === c.groupId;
+        const isOpenMeeting = c.view === "meeting" && ev.kind === "meeting" && ev.meeting_id === c.meetingId;
+        const isOpenBot = (c.view === "chat" || c.view === "bot") && ev.kind === "bot" && ev.bot_id === c.botId;
+        const isSelf = "from_user_id" in ev && ev.from_user_id === user.id;
+        if (isOpenDm || isOpenGroup || isOpenMeeting) {
+          setFeed(ev);
+          return;
+        }
+        if (isOpenBot && !isSelf) {
+          setMessages((prev) => {
+            if (ev.id != null && prev.some((m) => m.id === ev.id)) return prev;
+            if (ev.content && prev.length > 0) {
+              const lastMsg = prev[prev.length - 1];
+              if (lastMsg.role === "assistant" && lastMsg.content === ev.content) return prev;
+            }
+            return [...prev, { key: ++keyRef.current, id: ev.id, role: "assistant", content: ev.content, created_at: ev.created_at }];
+          });
+          void markRead("bot", ev.team_id, ev.bot_id || "", ev.id).catch(() => {});
+          void refreshUnread();
+          return;
+        }
+        if (isSelf) return;
+        pokeUnread();
+        const title =
+          ev.kind === "dm"
+            ? (ev.from_name as string) || "Pesan baru"
+            : ev.kind === "group"
+              ? `#${(ev as { group_name?: string }).group_name || "Grup"}`
+              : ev.kind === "meeting"
+                ? `Rapat: ${(ev as { topic?: string }).topic || "Rapat"}`
+                : (ev as { bot_name?: string }).bot_name || "Asisten";
+        if (ev.kind === "dm" || mentionsMe(ev.content)) {
+          notify(title, ev.content);
+        }
+      }, () => {
+        if (stopped) return;
+        reconnectRef.current = window.setTimeout(connect, 5000);
+      });
+      esRef.current = es;
+    };
+    connect();
+    return () => {
+      stopped = true;
+      if (reconnectRef.current !== null) window.clearTimeout(reconnectRef.current);
+      if (es) {
+        try {
+          es.close();
+        } catch {
+          /* ignore */
+        }
+      }
+      esRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  // Live bot replies landing in the open bot chat (deduped against echoes).
+  useEffect(() => {
+    if (!feed || feed.kind !== "bot" || feed === lastFeed.current) return;
+    lastFeed.current = feed;
+    if (!bot || feed.bot_id !== bot.id || view === "dm") return;
+    const idx = pendingEcho.current.indexOf(feed.content);
+    if (idx >= 0) {
+      pendingEcho.current.splice(idx, 1);
+    } else {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === feed.id)) return prev;
+        return [...prev, { key: ++keyRef.current, id: feed.id, role: "assistant", content: feed.content, created_at: feed.created_at }];
+      });
+    }
+    void markRead("bot", feed.team_id, feed.bot_id || "", feed.id).catch(() => {});
+    void refreshUnread();
+  }, [feed, bot, view, refreshUnread]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
   }, [messages]);
@@ -336,6 +517,7 @@ export default function App() {
     setMeetingId(null);
     setBotId(null);
     setBot(null);
+    setDmPeer(null);
     setMessages([]);
     setView("group");
   }
@@ -350,6 +532,10 @@ export default function App() {
     }
     setMeetingId(id);
     setGroupId(null);
+    setDmPeer(null);
+    setBotId(null);
+    setBot(null);
+    setMessages([]);
     setView("meeting");
   }
 
@@ -384,6 +570,19 @@ export default function App() {
     }
   }
 
+  async function openDm(peerId: string, peerName: string) {
+    setSideOpen(false);
+    setError("");
+    stopConverse();
+    setBotId(null);
+    setBot(null);
+    setGroupId(null);
+    setMeetingId(null);
+    setMessages([]);
+    setDmPeer({ id: peerId, name: peerName });
+    setView("dm");
+  }
+
   async function openBot(id: string | null) {
     setSideOpen(false);
     setError("");
@@ -393,6 +592,7 @@ export default function App() {
       stopRecordingUi();
     }
     setBotId(id);
+    setDmPeer(null);
     setGroupId(null);
     setMeetingId(null);
     setView("chat");
@@ -405,8 +605,13 @@ export default function App() {
       const detail = await fetchBotDetail(id);
       setBot(detail.slavebot);
       setMessages(
-        detail.messages.map((m) => ({ key: ++keyRef.current, role: m.role, content: m.content, created_at: m.created_at })),
+        detail.messages.map((m) => ({ key: ++keyRef.current, id: m.id, role: m.role, content: m.content, created_at: m.created_at })),
       );
+      const maxId = detail.messages.reduce((a, m) => Math.max(a, m.id), 0);
+      if (maxId > 0) {
+        await markRead("bot", detail.slavebot.team_id, detail.slavebot.id, maxId).catch(() => {});
+        void refreshUnread();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not open slaveBot.");
     }
@@ -485,6 +690,7 @@ export default function App() {
     try {
       const res = await sendChat(bot.id, text, bot.model);
       const reply = res.reply ?? "";
+      if (reply) pendingEcho.current.push(reply);
       setMessages((prev) => prev.map((m) => (m.key === assistantKey ? { ...m, content: reply } : m)));
       if (text.startsWith("/archive")) {
         await refreshBots();
@@ -516,6 +722,7 @@ export default function App() {
     try {
       const res = await sendChat(bot.id, text, bot.model);
       const content = res.reply ?? "";
+      if (content) pendingEcho.current.push(content);
       setMessages((prev) => prev.map((m) => (m.key === assistantKey ? { ...m, content } : m)));
       await refreshBots();
       const detail = await fetchBotDetail(bot.id);
@@ -653,6 +860,12 @@ export default function App() {
             {[b.role || b.title, partner ? `◈ ${partner}` : ""].filter(Boolean).join("  ")}
           </span>
         </span>
+        {(() => {
+          const n = unread[`bot:${b.team_id}:${b.id}`] || 0;
+          return n > 0 ? (
+            <span className="shrink-0 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{n > 99 ? "99+" : n}</span>
+          ) : null;
+        })()}
         {b.pinned ? (
           <span title="Pinned — opens automatically on visit" className="shrink-0 rounded border border-emerald-700 px-1 text-[10px] font-bold text-emerald-400">PIN</span>
         ) : null}
@@ -711,7 +924,7 @@ export default function App() {
         </div>
         <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
           <button type="button" onClick={() => setView("apps")} className={topBtn(view === "apps")}><span aria-hidden="true">⌂</span> Aplikasi</button>
-          <button type="button" onClick={() => setView("chat")} className={topBtn(view === "chat" || view === "group" || view === "bot" || view === "meeting")}><span aria-hidden="true">💬</span> Chat</button>
+          <button type="button" onClick={() => setView("chat")} className={topBtn(view === "chat" || view === "group" || view === "bot" || view === "meeting" || view === "dm")}><span aria-hidden="true">💬</span> Chat</button>
           <button type="button" onClick={() => setView("code")} className={topBtn(view === "code")}><span aria-hidden="true">{"</>"}</span> File</button>
           <button type="button" onClick={() => setView("market")} className={topBtn(view === "market")}><span aria-hidden="true">◈</span> Toko</button>
           <button type="button" onClick={() => setView("settings")} className={topBtn(view === "settings")}><span aria-hidden="true">⚙</span> Pengaturan</button>
@@ -765,23 +978,53 @@ export default function App() {
             ))}
         </nav>
         <div className="flex items-center justify-between border-t border-zinc-800 px-4 pb-1 pt-3">
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Rekan tim</div>
+        </div>
+        <nav className="flex max-h-40 flex-col gap-1 overflow-y-auto p-2 pt-1">
+          {teammates.map((t) => {
+            const n = unread[`dm:${teamId ?? ""}:${t.id}`] || 0;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => openDm(t.id, t.name)}
+                title={`Chat dengan ${t.name}`}
+                className={`flex items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-zinc-800 ${t.id === dmPeer?.id && view === "dm" ? "bg-zinc-800" : ""}`}
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-800 text-sm font-bold text-teal-200">
+                  {t.name.slice(0, 1).toUpperCase()}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold">{t.name}</span>
+                {n > 0 && (
+                  <span className="shrink-0 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{n > 99 ? "99+" : n}</span>
+                )}
+              </button>
+            );
+          })}
+          {teammates.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">Belum ada rekan tim.</p>}
+        </nav>
+        <div className="flex items-center justify-between border-t border-zinc-800 px-4 pb-1 pt-3">
           <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Grup</div>
           <button type="button" onClick={newGroup} title="Buat grup baru" className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
             + Baru
           </button>
         </div>
         <nav className="flex max-h-40 flex-col gap-1 overflow-y-auto p-2 pt-1">
-          {teamGroups.map((g) => (
-            <button
-              key={g.id}
-              type="button"
-              onClick={() => openGroup(g.id)}
-              title={g.name}
-              className={`truncate rounded-md px-2 py-2 text-left text-sm hover:bg-zinc-800 ${g.id === groupId ? "bg-zinc-800 font-semibold" : "text-zinc-300"}`}
-            >
-              <span className="mr-1 text-zinc-500">##</span>{g.name}
-            </button>
-          ))}
+          {teamGroups.map((g) => {
+            const n = unread[`group:${g.team_id}:${g.id}`] || 0;
+            return (
+              <button
+                key={g.id}
+                type="button"
+                onClick={() => openGroup(g.id)}
+                title={g.name}
+                className={`flex items-center gap-1 truncate rounded-md px-2 py-2 text-left text-sm hover:bg-zinc-800 ${g.id === groupId ? "bg-zinc-800 font-semibold" : "text-zinc-300"}`}
+              >
+                <span className="text-zinc-500">##</span><span className="min-w-0 flex-1 truncate">{g.name}</span>
+                {n > 0 && <span className="shrink-0 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{n > 99 ? "99+" : n}</span>}
+              </button>
+            );
+          })}
           {teamGroups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">Belum ada grup.</p>}
         </nav>
         <div className="flex items-center justify-between border-t border-zinc-800 px-4 pb-1 pt-3">
@@ -791,17 +1034,21 @@ export default function App() {
           </button>
         </div>
         <nav className="flex max-h-40 flex-col gap-1 overflow-y-auto p-2 pt-1">
-          {teamMeetings.map((h) => (
-            <button
-              key={h.id}
-              type="button"
-              onClick={() => openMeeting(h.id)}
-              title={h.topic}
-              className={`truncate rounded-md px-2 py-2 text-left text-sm hover:bg-zinc-800 ${h.id === meetingId ? "bg-zinc-800 font-semibold" : "text-zinc-300"}`}
-            >
-              <span className="mr-1 text-zinc-500">◉</span>{h.topic.length > 40 ? `${h.topic.slice(0, 40)}…` : h.topic}
-            </button>
-          ))}
+          {teamMeetings.map((h) => {
+            const n = unread[`meeting:${h.team_id}:${h.id}`] || 0;
+            return (
+              <button
+                key={h.id}
+                type="button"
+                onClick={() => openMeeting(h.id)}
+                title={h.topic}
+                className={`flex items-center gap-1 truncate rounded-md px-2 py-2 text-left text-sm hover:bg-zinc-800 ${h.id === meetingId ? "bg-zinc-800 font-semibold" : "text-zinc-300"}`}
+              >
+                <span className="text-zinc-500">◉</span><span className="min-w-0 flex-1 truncate">{h.topic.length > 40 ? `${h.topic.slice(0, 40)}…` : h.topic}</span>
+                {n > 0 && <span className="shrink-0 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{n > 99 ? "99+" : n}</span>}
+              </button>
+            );
+          })}
           {teamMeetings.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">Belum ada rapat.</p>}
         </nav>
         <div className="border-t border-zinc-800 px-4 pb-1 pt-3">
@@ -835,6 +1082,8 @@ export default function App() {
               </button>
             ) : view === "group" ? (
               <span className="truncate px-1 font-semibold"><span className="mr-1 font-bold text-zinc-300">#</span>{groups.find((g) => g.id === groupId)?.name ?? "group"}</span>
+            ) : view === "dm" && dmPeer ? (
+              <span className="truncate px-1 font-semibold"><span className="mr-1 text-teal-300">✉</span>{dmPeer.name}</span>
             ) : view === "meeting" ? (
               <span className="truncate px-1 font-semibold"><span className="mr-1 text-zinc-300">◉</span>{meetings.find((h) => h.id === meetingId)?.topic.slice(0, 40) ?? "meeting"}</span>
             ) : view === "settings" ? (
@@ -908,6 +1157,9 @@ export default function App() {
               groupId={groupId}
               bots={bots}
               teamId={teamId}
+              meId={user.id}
+              feed={feed}
+              onMarked={refreshUnread}
               onDeleted={async () => {
                 setGroupId(null);
                 await refreshGroups();
@@ -919,12 +1171,23 @@ export default function App() {
               }}
             />
           </main>
+        ) : view === "dm" && dmPeer ? (
+          <main className="flex-1 overflow-y-auto">
+            <DmView
+              teamId={teamId ?? ""}
+              meId={user.id}
+              peer={dmPeer}
+              feed={feed}
+              onMarked={refreshUnread}
+            />
+          </main>
         ) : view === "meeting" ? (
           <main className="flex-1 overflow-y-auto">
             <MeetingView
               meetingId={meetingId}
               bots={bots}
               teamId={teamId}
+              feed={feed}
               onCreated={async (id) => {
                 await refreshMeetings();
                 openMeeting(id);
@@ -936,6 +1199,7 @@ export default function App() {
                 setView("chat");
               }}
               onOpenBot={openBot}
+              onMarked={refreshUnread}
             />
           </main>
         ) : view === "bot" && bot ? (

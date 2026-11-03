@@ -9,11 +9,14 @@ import {
   fetchGroupDetail,
   fetchProjects,
   groupChat,
+  markRead,
   removeGroupMember,
   renameGroup,
   setGroupProject,
   setGroupVisibility,
   type GroupDetail,
+  type GroupMessage,
+  type InboxEvent,
   type Project,
   type SlaveBot,
 } from "./api";
@@ -22,14 +25,20 @@ export function GroupView({
   groupId,
   bots,
   teamId,
+  meId,
+  feed,
   onDeleted,
   onVisibilityChanged,
+  onMarked,
 }: {
   groupId: string;
   bots: SlaveBot[];
   teamId: string | null;
+  meId: string;
+  feed: InboxEvent | null;
   onDeleted: () => void;
   onVisibilityChanged: () => void;
+  onMarked: () => void;
 }) {
   const [detail, setDetail] = useState<GroupDetail | null>(null);
   const [task, setTask] = useState("");
@@ -47,26 +56,65 @@ export function GroupView({
   const [newProjName, setNewProjName] = useState("");
   const [attachBusy, setAttachBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const seenRef = useRef<Set<number>>(new Set());
+  const markedRef = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
-      setDetail(await fetchGroupDetail(groupId));
+      const d = await fetchGroupDetail(groupId);
+      for (const m of d.messages) seenRef.current.add(m.id);
+      setDetail(d);
+      const maxId = d.messages.reduce((a, m) => Math.max(a, m.id), 0);
+      if (maxId > markedRef.current) {
+        markedRef.current = maxId;
+        await markRead("group", d.group.team_id, d.group.id, maxId).catch(() => {});
+        onMarked();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load group.");
     }
-  }, [groupId]);
+  }, [groupId, onMarked]);
 
   useEffect(() => {
     setDetail(null);
     setError("");
     setTab("chat");
     setBoardFull(false);
+    seenRef.current = new Set();
+    markedRef.current = 0;
     if (localStorage.getItem("group_open_board") === groupId) {
       localStorage.removeItem("group_open_board");
       setTab("board");
     }
     refresh();
   }, [groupId, refresh]);
+
+  // Live append from inbox stream + auto-mark read while open.
+  useEffect(() => {
+    if (!feed || feed.kind !== "group" || feed.group_id !== groupId) return;
+    if (seenRef.current.has(feed.id)) return;
+    seenRef.current.add(feed.id);
+    const row: GroupMessage = {
+      id: feed.id,
+      slavebot_id: feed.slavebot_id ?? null,
+      bot_name: feed.bot_name ?? null,
+      user_id: feed.user_id ?? null,
+      user_name: feed.user_name ?? null,
+      role: feed.role || "assistant",
+      content: feed.content,
+      created_at: feed.created_at,
+    };
+    setDetail((prev) => {
+      if (!prev || prev.messages.some((m) => m.id === row.id)) return prev;
+      return { ...prev, messages: [...prev.messages, row] };
+    });
+    if (feed.id > markedRef.current && detail) {
+      markedRef.current = feed.id;
+      void markRead("group", detail.group.team_id, detail.group.id, feed.id)
+        .catch(() => {})
+        .then(() => onMarked());
+    }
+  }, [feed, groupId, detail, onMarked]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
@@ -203,11 +251,13 @@ export function GroupView({
                 {m.slavebot_id ? (
                   <BotAvatar bot={({ id: m.slavebot_id, name: m.bot_name ?? "?", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", relay: 1, user_id: "u", team_id: "", avatar_key: bots.find((b) => b.id === m.slavebot_id)?.avatar_key ?? "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" }) as SlaveBot} size="sm" />
                 ) : (
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-600 text-sm font-bold text-white">Y</div>
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-600 text-sm font-bold text-white">
+                    {((m.user_id && m.user_id !== meId ? m.user_name : "Anda") || "?").slice(0, 1).toUpperCase()}
+                  </div>
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">
-                    <span className="text-sm font-bold">{m.slavebot_id ? (m.bot_name ?? "Asisten") : "Anda"}</span>
+                    <span className="text-sm font-bold">{m.slavebot_id ? (m.bot_name ?? "Asisten") : m.user_id && m.user_id !== meId ? (m.user_name || "Rekan") : "Anda"}</span>
                     <span className="text-xs text-zinc-500">{new Date(m.created_at).toLocaleString()}</span>
                     {m.slavebot_id && (
                       <button

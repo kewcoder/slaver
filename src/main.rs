@@ -1,6 +1,6 @@
 use axum::{middleware::{self, Next}, http::Request, response::Response, routing::{get, post}, Router};
 use chrono::Datelike;
-use slaver::{db::Db, git_http, mcp, oauth_http, platform_api, schedule, store, summarize, AppState};
+use slaver::{db::Db, git_http, inbox, mcp, oauth_http, platform_api, schedule, store, summarize, AppState};
 use std::{collections::HashMap, time::Duration};
 use tower_http::{cors::CorsLayer, services::{ServeDir, ServeFile}};
 
@@ -174,6 +174,7 @@ async fn main() {
     let app = Router::new()
         .route("/mcp", post(mcp::rpc))
         .route("/ping", get(|| async { "ok" }))
+        .route("/api/inbox/stream", get(inbox::inbox_stream))
         .route(
             "/git/:repo/info/refs",
             get(git_info_refs).post(git_info_refs),

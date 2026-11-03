@@ -5,8 +5,11 @@ import {
   deleteMeeting,
   fetchMeetingDetail,
   formatUsd,
+  markRead,
   meetingChat,
+  type InboxEvent,
   type MeetingDetail,
+  type MeetingMessage,
   type SlaveBot,
 } from "./api";
 
@@ -14,18 +17,22 @@ export function MeetingView({
   meetingId,
   bots,
   teamId,
+  feed,
   onCreated,
   onChanged,
   onDeleted,
   onOpenBot,
+  onMarked,
 }: {
   meetingId: string | null;
   bots: SlaveBot[];
   teamId: string | null;
+  feed: InboxEvent | null;
   onCreated: (id: string) => Promise<void>;
   onChanged: () => Promise<void>;
   onDeleted: () => Promise<void>;
   onOpenBot: (id: string) => void;
+  onMarked: () => void;
 }) {
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [topic, setTopic] = useState("");
@@ -35,6 +42,8 @@ export function MeetingView({
   const [error, setError] = useState("");
   const [savedNote, setSavedNote] = useState("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const seenRef = useRef<Set<number>>(new Set());
+  const markedRef = useRef(0);
 
   const activeBots = bots.filter((b) => !b.archived);
   const selected = picked ?? activeBots.map((b) => b.id);
@@ -45,18 +54,54 @@ export function MeetingView({
       return;
     }
     try {
-      setDetail(await fetchMeetingDetail(meetingId));
+      const d = await fetchMeetingDetail(meetingId);
+      for (const m of d.messages) seenRef.current.add(m.id);
+      setDetail(d);
+      const maxId = d.messages.reduce((a, m) => Math.max(a, m.id), 0);
+      if (maxId > markedRef.current) {
+        markedRef.current = maxId;
+        await markRead("meeting", d.meeting.team_id, d.meeting.id, maxId).catch(() => {});
+        onMarked();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load meeting.");
     }
-  }, [meetingId]);
+  }, [meetingId, onMarked]);
 
   useEffect(() => {
     setError("");
     setSavedNote("");
     setPicked(null);
+    seenRef.current = new Set();
+    markedRef.current = 0;
     void load();
   }, [meetingId, load]);
+
+  // Live append from inbox stream + auto-mark read while open.
+  useEffect(() => {
+    if (!feed || feed.kind !== "meeting" || feed.meeting_id !== meetingId) return;
+    if (seenRef.current.has(feed.id)) return;
+    seenRef.current.add(feed.id);
+    const row: MeetingMessage = {
+      id: feed.id,
+      meeting_id: feed.meeting_id || "",
+      slavebot_id: feed.slavebot_id ?? null,
+      bot_name: feed.bot_name ?? null,
+      role: feed.role || "assistant",
+      content: feed.content,
+      created_at: feed.created_at,
+    };
+    setDetail((prev) => {
+      if (!prev || prev.messages.some((m) => m.id === row.id)) return prev;
+      return { ...prev, messages: [...prev.messages, row] };
+    });
+    if (feed.id > markedRef.current && detail) {
+      markedRef.current = feed.id;
+      void markRead("meeting", detail.meeting.team_id, detail.meeting.id, feed.id)
+        .catch(() => {})
+        .then(() => onMarked());
+    }
+  }, [feed, meetingId, detail, onMarked]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
