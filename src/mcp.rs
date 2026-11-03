@@ -85,15 +85,16 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
         "ping" => rpc_ok(id, json!({})),
         "tools/list" => rpc_ok(id, json!({ "tools": [chat_tool_def(), models_tool_def()] })),
         "tools/call" => {
-            if auth::bearer_sub(&req, &ctx.env)?.is_none() {
-                return rpc_err(id, -32000, "Unauthorized: send an Authorization: Bearer <jwt> header from /api/auth/login.");
-            }
+            let user_id = match auth::bearer_sub(&req, &ctx.env)? {
+                Some(uid) => uid,
+                None => return rpc_err(id, -32000, "Unauthorized: send an Authorization: Bearer <jwt> header from /api/auth/login."),
+            };
             let params = body.get("params").cloned().unwrap_or(Value::Null);
             let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(Value::Null);
             match name {
                 "models" => rpc_ok(id, json!({ "content": [{ "type": "text", "text": meta::model_list(&ctx.env).to_string() }] })),
-                "chat" => call_chat(id, &ctx.env, &args).await,
+                "chat" => call_chat(id, &ctx.env, &user_id, &args).await,
                 _ => rpc_err(id, -32602, "Unknown tool. Available: chat, models."),
             }
         }
@@ -102,7 +103,7 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     }
 }
 
-async fn call_chat(id: Value, env: &Env, args: &Value) -> Result<Response> {
+async fn call_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
     let model = args
         .get("model")
         .and_then(|m| m.as_str())
@@ -119,8 +120,38 @@ async fn call_chat(id: Value, env: &Env, args: &Value) -> Result<Response> {
     if messages.is_empty() || messages.len() > 30 {
         return rpc_err(id, -32602, "messages must have 1..30 items.");
     }
-    match chat::complete_text(env, &model, &messages).await {
-        Ok(text) => rpc_ok(id, json!({ "content": [{ "type": "text", "text": text }] })),
+    let db = env.d1("DB")?;
+    let credit = crate::store::get_user(&db, user_id)
+        .await
+        .map(|u| u.map(|u| u.credit_usd).unwrap_or(0.0))
+        .unwrap_or(0.0);
+    if credit <= 0.0 {
+        return rpc_err(id, -32000, "Out of credit (balance $0.00). Demo credit is $10 per user.");
+    }
+    match chat::complete_with_usage(env, &model, &messages).await {
+        Ok(done) => {
+            let (cost, _) = crate::store::record_usage(
+                &db,
+                user_id,
+                None,
+                &crate::store::UsageInput {
+                    model: model.clone(),
+                    prompt_tokens: done.prompt_tokens,
+                    cached_tokens: done.cached_tokens,
+                    completion_tokens: done.completion_tokens,
+                    estimated: done.estimated,
+                },
+            )
+            .await
+            .unwrap_or((0.0, credit));
+            rpc_ok(
+                id,
+                json!({ "content": [
+                    { "type": "text", "text": done.text },
+                    { "type": "text", "text": format!("(tokens: {} in / {} out · cost ${:.6} · demo credit)", done.prompt_tokens, done.completion_tokens, cost) },
+                ] }),
+            )
+        }
         Err(e) => rpc_err(id, -32000, &format!("Meta API error: {e}")),
     }
 }

@@ -2,6 +2,8 @@ mod auth;
 mod chat;
 mod mcp;
 mod meta;
+mod pricing;
+mod store;
 mod util;
 
 use worker::*;
@@ -28,6 +30,10 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .post_async("/api/auth/login", auth::login)
         .get_async("/api/me", auth::me)
         .post_async("/api/chat", chat::chat)
+        .post_async("/api/chat/finish", chat::finish)
+        .get_async("/api/chats", chat::list_chats)
+        .get_async("/api/chats/:id", chat::chat_detail)
+        .get_async("/api/usage", chat::usage)
         .get("/mcp", |_, _| mcp::info())
         .post_async("/mcp", mcp::rpc)
         .run(req, env)

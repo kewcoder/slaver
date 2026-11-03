@@ -197,13 +197,16 @@ pub async fn me(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         None => return util::err(401, "Unauthorized."),
     };
     let db = ctx.env.d1("DB")?;
-    let row: Option<serde_json::Value> = db
-        .prepare("SELECT id, email, name, created_at FROM users WHERE id = ?")
+    let row: Option<crate::store::UserRecord> = db
+        .prepare("SELECT id, email, name, credit_usd FROM users WHERE id = ?")
         .bind(&[JsValue::from_str(&user_id)])?
         .first(None)
         .await?;
     match row {
-        Some(v) => util::json(200, &serde_json::json!({ "user": v })),
+        Some(v) => util::json(
+            200,
+            &serde_json::json!({ "user": { "id": v.id, "email": v.email, "name": v.name, "credit_usd": v.credit_usd } }),
+        ),
         None => util::err(404, "User not found."),
     }
 }

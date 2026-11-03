@@ -3,7 +3,10 @@
 Full-stack on Cloudflare: **API + MCP in Rust** (Workers via `workers-rs`), **React SPA** (Vite) served as Workers Static Assets. One Worker, one deploy.
 
 - `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/me` — JWT (HS256) + D1.
-- `POST /api/chat` — streaming proxy (SSE) to the Meta Model API (`https://api.meta.ai/v1`, OpenAI-compatible). Upstream bytes are forwarded without buffering.
+- `POST /api/chat` — persisted chat (`{chat_id?, message, model?, stream?}`). Non-streaming returns reply + cost + credit inline; streaming returns SSE with an `X-Chat-Id` header, then the client calls `POST /api/chat/finish` with the final text so usage is logged and credit deducted.
+- `GET /api/chats`, `GET /api/chats/:id` — saved chat history (never deleted).
+- `GET /api/usage` — token/cost ledger + remaining credit. Every account starts with **$10 demo credit**; costs are estimated from provider token usage (Spark contributor tier).
+- `POST /api/chat` and the MCP `chat` tool return 402 when credit runs out.
 - `POST /mcp` — MCP Streamable HTTP (JSON-RPC): `initialize`, `tools/list`, `tools/call` (`chat`, `models`).
 
 ## Prerequisites
