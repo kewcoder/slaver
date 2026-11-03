@@ -138,6 +138,43 @@ function Spinner() {
   );
 }
 
+/** ChatGPT-style composer glyphs. */
+function PlusIcon() {
+  return (
+    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function MicIcon() {
+  return (
+    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+    </svg>
+  );
+}
+
+function ArrowUpIcon() {
+  return (
+    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 19V5M5 12l7-7 7 7" />
+    </svg>
+  );
+}
+
+function WaveIcon() {
+  return (
+    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <rect x="4" y="10" width="2.4" height="4" rx="1.2" />
+      <rect x="8.2" y="7" width="2.4" height="10" rx="1.2" />
+      <rect x="12.4" y="4" width="2.4" height="16" rx="1.2" />
+      <rect x="16.6" y="8" width="2.4" height="8" rx="1.2" />
+    </svg>
+  );
+}
+
 /** Three bouncing dots for "bot is typing". Motion is disabled when the OS asks for reduced motion. */
 function TypingDots() {
   return (
@@ -580,7 +617,7 @@ function GroupView({
       {error && <p className="py-1 text-sm text-red-400">{error}</p>}
       {savedNote && <p className="py-1 text-sm text-emerald-400">{savedNote}</p>}
 
-      <form onSubmit={sendTask} className="mt-2 flex items-end gap-2 rounded-xl border border-zinc-700 bg-zinc-900 p-2 shadow-lg">
+      <form onSubmit={sendTask} className="mt-2 flex items-end gap-1 rounded-[28px] border border-zinc-700 bg-[#2b2d31] p-2 pl-4 shadow-lg focus-within:border-zinc-500">
         <textarea
           value={task}
           onChange={(e) => setTask(e.target.value)}
@@ -593,14 +630,14 @@ function GroupView({
           placeholder="Message the group... (every bot replies, each billed)"
           rows={1}
           disabled={busy}
-          className="max-h-40 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
+          className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
         />
         <label className="flex shrink-0 cursor-pointer items-center gap-1 px-1 text-xs text-zinc-400" title="Also append this message to every member's memory">
           <input type="checkbox" checked={saveMemory} onChange={(e) => setSaveMemory(e.target.checked)} className="accent-emerald-500" />
           +memory
         </label>
-        <button type="submit" disabled={!task.trim() || busy} className="shrink-0 rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
-          {busy ? <Spinner /> : "Send"}
+        <button type="submit" disabled={!task.trim() || busy} title="Send" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500">
+          {busy ? <Spinner /> : <ArrowUpIcon />}
         </button>
       </form>
     </div>
@@ -847,7 +884,7 @@ function HuddleView({
       {error && <p className="py-1 text-sm text-red-400">{error}</p>}
       {savedNote && <p className="py-1 text-sm text-emerald-400">{savedNote}</p>}
 
-      <form onSubmit={sendTask} className="mt-2 flex items-end gap-2 rounded-lg bg-zinc-800 p-2">
+      <form onSubmit={sendTask} className="mt-2 flex items-end gap-1 rounded-[28px] border border-zinc-700 bg-[#2b2d31] p-2 pl-4 shadow-lg focus-within:border-zinc-500">
         <textarea
           value={task}
           onChange={(e) => setTask(e.target.value)}
@@ -860,10 +897,10 @@ function HuddleView({
           placeholder={joined.length === 0 ? "Nobody joined — nothing to discuss" : "Talk to the bots that joined..."}
           rows={1}
           disabled={busy || joined.length === 0}
-          className="max-h-40 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
+          className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
         />
-        <button type="submit" disabled={!task.trim() || busy} className="shrink-0 rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
-          {busy ? <Spinner /> : "Send"}
+        <button type="submit" disabled={!task.trim() || busy} title="Send" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500">
+          {busy ? <Spinner /> : <ArrowUpIcon />}
         </button>
       </form>
     </div>
@@ -1935,6 +1972,7 @@ export default function App() {
   const [speakingKey, setSpeakingKey] = useState<number | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [sideOpen, setSideOpen] = useState(false);
+  const [plusOpen, setPlusOpen] = useState(false);
   const [botFilter, setBotFilter] = useState("");
   const [memberNames, setMemberNames] = useState<Record<string, string>>({});
   const keyRef = useRef(0);
@@ -2756,30 +2794,33 @@ export default function App() {
             {error && <p className="mx-auto w-full max-w-3xl px-4 text-sm text-red-400">{error}</p>}
 
             <div className="px-4 pb-4">
-              <form onSubmit={send} className="mx-auto flex max-w-3xl items-end gap-2 rounded-xl border border-zinc-700 bg-zinc-900 p-2 shadow-lg">
-                <button
-                  type="button"
-                  onClick={toggleMic}
-                  disabled={streaming || transcribing || conversing || !bot}
-                  title={recorder ? `Stop recording (${recSecs.toFixed(0)}s)` : "Dictate with microphone (push to talk)"}
-                  className={`shrink-0 rounded-md px-3 py-2 text-sm font-bold ${recorder ? "text-red-400" : "text-zinc-300 hover:bg-zinc-700"} disabled:opacity-40`}
-                >
-                  {recorder ? `● ${recSecs.toFixed(0)}s` : transcribing ? "…" : "Mic"}
-                </button>
-                <button
-                  type="button"
-                  onClick={toggleConverse}
-                  disabled={!bot || streaming || transcribing || !!recorder}
-                  title="Hands-free conversation: auto-send when you pause, auto-play the reply"
-                  className={`shrink-0 rounded-md px-3 py-2 text-sm font-bold ${conversing ? "bg-emerald-700 text-white hover:bg-emerald-600" : "text-zinc-300 hover:bg-zinc-700"} disabled:opacity-40`}
-                >
-                  {conversing ? "Stop chat" : "Converse"}
-                </button>
-                {conversing && (
-                  <span title="Mic level" className="flex h-2 w-16 shrink-0 self-center overflow-hidden rounded-full bg-zinc-700">
-                    <span className="bg-emerald-500" style={{ width: `${Math.round(micLevel * 100)}%` }} />
-                  </span>
-                )}
+              <form onSubmit={send} className="mx-auto flex max-w-3xl items-end gap-1 rounded-[28px] border border-zinc-700 bg-[#2b2d31] p-2 pl-2 shadow-lg focus-within:border-zinc-500">
+                <div className="relative shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setPlusOpen((v) => !v)}
+                    title="More actions"
+                    className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100"
+                  >
+                    <PlusIcon />
+                  </button>
+                  {plusOpen && (
+                    <>
+                      <div className="fixed inset-0 z-30" onClick={() => setPlusOpen(false)} />
+                      <div className="absolute bottom-11 left-0 z-40 w-52 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 py-1 shadow-xl">
+                        <button type="button" onClick={() => { setPlusOpen(false); setCreating(true); setCreateOwner(user.id); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">
+                          New slaveBot
+                        </button>
+                        <button type="button" onClick={() => { setPlusOpen(false); newGroup(); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">
+                          New channel
+                        </button>
+                        <button type="button" onClick={() => { setPlusOpen(false); openHuddle(null); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">
+                          New huddle
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
                 <textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
@@ -2792,12 +2833,42 @@ export default function App() {
                   placeholder={bot ? `Message ${bot.name}...` : "Select a slaveBot first"}
                   rows={1}
                   disabled={!bot}
-                  className="max-h-40 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
+                  className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
                 />
-                <button type="submit" disabled={!input.trim() || !bot || streaming} className="flex shrink-0 items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
-                    {streaming ? <Spinner /> : null}
-                    {streaming ? "Sending" : "Send"}
+                {conversing && (
+                  <span title="Mic level" className="mx-1 flex h-8 w-1.5 shrink-0 self-center overflow-hidden rounded-full bg-zinc-700">
+                    <span className="mt-auto w-full bg-emerald-500" style={{ height: `${Math.round(micLevel * 100)}%` }} />
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={toggleMic}
+                  disabled={streaming || transcribing || conversing || !bot}
+                  title={recorder ? `Stop recording (${recSecs.toFixed(0)}s)` : "Dictate with microphone"}
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full hover:bg-zinc-700 disabled:opacity-40 ${recorder ? "text-red-400" : "text-zinc-300"}`}
+                >
+                  {recorder ? <span className="flex items-center gap-1 text-xs font-bold tabular-nums"><span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />{recSecs.toFixed(0)}</span> : transcribing ? <Spinner /> : <MicIcon />}
+                </button>
+                {input.trim() || streaming ? (
+                  <button
+                    type="submit"
+                    disabled={!input.trim() || !bot || streaming}
+                    title="Send"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500"
+                  >
+                    {streaming ? <Spinner /> : <ArrowUpIcon />}
                   </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={toggleConverse}
+                    disabled={!bot || streaming || transcribing || !!recorder}
+                    title={conversing ? "Stop hands-free chat" : "Hands-free voice chat"}
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white disabled:opacity-40 ${conversing ? "bg-red-500 hover:bg-red-400" : "bg-blue-500 hover:bg-blue-400"}`}
+                  >
+                    <WaveIcon />
+                  </button>
+                )}
               </form>
             </div>
           </>
