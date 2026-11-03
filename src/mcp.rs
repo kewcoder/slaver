@@ -975,7 +975,7 @@ async fn call_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<
     if !prov.own && credit <= 0.0 {
         return rpc_err(id, -32000, "Out of credit (balance $0.00). Demo credit is $10 per user.");
     }
-    match chat::complete_with_usage(&prov, &model, &messages).await {
+    match chat::complete_with_usage(&prov, &model, &messages, Some(user_id)).await {
         Ok(done) => {
             let (cost, _) = crate::store::record_usage(
                 &db,

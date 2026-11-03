@@ -49,7 +49,7 @@ async fn summarize_text(
         .await
         .map_err(|e| Error::RustError(e.to_string()))?;
     let summary_model = crate::provider::effective_model(&prov.preset, "");
-    match chat::complete_with_usage(&prov, &summary_model, &messages).await {
+    match chat::complete_with_usage(&prov, &summary_model, &messages, Some(bot_id)).await {
         Ok(done) => {
             let text = done.text.trim().to_string();
             if text.is_empty() {

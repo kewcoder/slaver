@@ -40,7 +40,7 @@ async fn ask_to_join(
         },
     ];
     let model = provider::effective_model(&prov.preset, &bot.model);
-    let done = match chat::complete_with_usage(prov, &model, &messages).await {
+    let done = match chat::complete_with_usage(prov, &model, &messages, Some(&bot.id)).await {
         Ok(d) => d,
         Err(e) => {
             console_error!("huddle ask {} failed: {e}", bot.id);
@@ -256,7 +256,7 @@ pub async fn post_message(
         }
         with_context.extend(history);
 
-        let done = match chat::complete_with_usage(&prov, &model, &with_context).await {
+        let done = match chat::complete_with_usage(&prov, &model, &with_context, Some(huddle_id)).await {
             Ok(d) => d,
             Err(e) => {
                 console_error!("huddle chat bot {} failed: {e}", bot.id);

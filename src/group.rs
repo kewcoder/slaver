@@ -82,7 +82,7 @@ pub(crate) async fn post_chat(
             with_context.push(chat::ChatMessage { role: "system".to_string(), content: recaps });
         }
         with_context.extend(history);
-        let done = match chat::complete_with_usage(&prov, &model, &with_context).await {
+        let done = match chat::complete_with_usage(&prov, &model, &with_context, Some(group_id)).await {
             Ok(d) => d,
             Err(e) => {
                 // Friendly validation errors (missing model/key) are shown as-is;

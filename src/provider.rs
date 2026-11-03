@@ -255,6 +255,7 @@ pub async fn post_chat_completions(
     model: &str,
     messages: &[ChatMessage],
     stream: bool,
+    session: Option<&str>,
 ) -> Result<Response, Error> {
     if !prov.api_key.trim().is_empty() {
         // ok
@@ -283,6 +284,13 @@ pub async fn post_chat_completions(
     }
     headers.set("HTTP-Referer", "https://slaver.app")?;
     headers.set("X-Title", "Slaver")?;
+    // OpenCode Go routes on a stable per-conversation session id; without it
+    // the gateway rejects the request (400). Only OpenCode reads this header.
+    if normalize_base_url(&prov.base_url).contains("opencode.ai") {
+        if let Some(s) = session.map(str::trim).filter(|s| !s.is_empty()) {
+            headers.set("x-opencode-session", &s.chars().take(128).collect::<String>())?;
+        }
+    }
 
     let mut init = RequestInit::new();
     init.with_method(Method::Post);
@@ -312,6 +320,12 @@ pub async fn test_provider(prov: &Provider, model: &str) -> serde_json::Value {
             && h.set("Authorization", &format!("Bearer {}", prov.api_key.trim())).is_err()
         {
             return None;
+        }
+        if base.contains("opencode.ai") {
+            // The connection test is its own stable session.
+            if h.set("x-opencode-session", "slaver-connection-test").is_err() {
+                return None;
+            }
         }
         Some(h)
     };

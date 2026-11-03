@@ -123,7 +123,7 @@ async fn fire_one(_env: &Env, db: &D1Database, sched: &store::ScheduleRow) -> Re
     }
     history.push(chat::ChatMessage { role: "user".to_string(), content: task.clone() });
     let model = provider::effective_model(&prov.preset, &bot.model);
-    let done = chat::complete_with_usage(&prov, &model, &history)
+    let done = chat::complete_with_usage(&prov, &model, &history, Some(&bot.id))
         .await
         .map_err(|e| format!("model error: {e}"))?;
     store::insert_message(db, &bot.id, "user", &format!("⏰ {}", sched.prompt))

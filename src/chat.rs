@@ -75,7 +75,7 @@ pub async fn deliver_as(
         .map_err(|e| e.to_string())?;
     let recaps = crate::summarize::context_block(db, &to.id).await.unwrap_or_default();
     let history = with_memory(&to.memory, &recaps, store::recent_messages(db, &to.id, 20).await.map_err(|e| e.to_string())?);
-    let done = complete_with_usage(&prov, &model, &history).await?;
+    let done = complete_with_usage(&prov, &model, &history, Some(&to.id)).await?;
     store::insert_message(db, &to.id, "assistant", &done.text).await.map_err(|e| e.to_string())?;
     store::touch_bot(db, &to.id).await.map_err(|e| e.to_string())?;
     let (cost, _) = store::record_usage(
@@ -191,6 +191,7 @@ async fn consult_peers(
         prov,
         model,
         &[ChatMessage { role: "user".to_string(), content: prompt }],
+        Some(&bot.id),
     )
     .await
     {
@@ -283,7 +284,7 @@ pub(crate) async fn send_message(
     let recaps = crate::summarize::context_block(db, bot_id).await.unwrap_or_default();
     let mut history = with_memory(&bot.memory, &recaps, store::recent_messages(db, bot_id, 20).await.map_err(|e| e.to_string())?);
     history.extend(relay_notes);
-    let done = complete_with_usage(&prov, &model, &history)
+    let done = complete_with_usage(&prov, &model, &history, Some(bot_id))
         .await
         .map_err(|e| e.to_string())?;
     store::insert_message(db, bot_id, "assistant", &done.text)
@@ -451,15 +452,18 @@ pub struct Completion {
 
 /// Shared helper used by the MCP `chat` tool (and reuse-safe elsewhere):
 /// non-streaming completion with usage attached. `prov` is the resolved
-/// provider (personal settings or shared server key).
+/// provider (personal settings or shared server key). `session` is a stable
+/// per-conversation id, forwarded as `x-opencode-session` on OpenCode
+/// endpoints (the Go gateway rejects requests without it).
 pub async fn complete_with_usage(
     prov: &provider::Provider,
     model: &str,
     messages: &[ChatMessage],
+    session: Option<&str>,
 ) -> Result<Completion, String> {
     provider::require_model(&prov.preset, model)?;
     let mut upstream =
-        provider::post_chat_completions(prov, model.trim(), messages, false)
+        provider::post_chat_completions(prov, model.trim(), messages, false, session)
             .await
             .map_err(|e| format!("fetch failed: {e}"))?;
     if upstream.status_code() != 200 {
@@ -512,6 +516,11 @@ fn upstream_message(text: &str) -> Option<String> {
 }
 
 pub(crate) fn describe_upstream_error(status: u16, text: &str) -> String {
+    // OpenCode Go rejects requests without a routing session id — Slaver sends
+    // one automatically, so seeing this means the header was dropped upstream.
+    if text.contains("x-opencode-session") {
+        return format!("Model API error ({status}): OpenCode Go needs an x-opencode-session header — Slaver sends one automatically, so please retry. If it persists, report it. Body: {}.", text.trim().chars().take(200).collect::<String>());
+    }
     let hint = match status {
         400 => " The request was rejected — often a bad model id or bad `max_tokens`/params for this server.",
         401 => " Check that the team API key is valid (Teams settings). For keyless local servers (Ollama / OpenCode gateway), leave the key empty.",
