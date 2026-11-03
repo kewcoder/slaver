@@ -7,13 +7,12 @@
 
 ## 1. Ringkasan Eksekutif
 
-Slaver berevolusi dari chatbot multi-bot menjadi **AI-native Software Development Platform** dengan 4 aplikasi yang saling terintegrasi:
+Slaver berevolusi dari chatbot multi-bot menjadi **AI-native Software Development Platform** dengan 3 aplikasi yang saling terintegrasi — plus Workspace sebagai **menu di dalam Team**, bukan domain sendiri (workspace dan team terlalu mirip untuk dipisah):
 
 | Aplikasi | Domain | Pertanyaan yang dijawab |
 |---|---|---|
-| `team.slaver.app` | Orchestration (aplikasi utama) | Siapa yang mengerjakan dan bagaimana caranya? |
+| `team.slaver.app` | Orchestration + Workspace (aplikasi utama) | Siapa yang mengerjakan, bagaimana caranya, dan di mana kode dijalankan? |
 | `git.slaver.app` | Agent Git Service | Di mana source code dan riwayatnya? |
-| `workspace.slaver.app` | AI Coding Environment | Di mana kode dijalankan dan diedit? |
 | `marketplace.slaver.app` | App Marketplace | Apa yang ingin saya bangun? |
 
 Ditopang **Slaver Core Services** (satu backend bersama, bukan aplikasi kelima): Identity, Permissions, Billing, Agent API, MCP gateway, Event bus, Audit logs.
@@ -48,16 +47,19 @@ Ditopang **Slaver Core Services** (satu backend bersama, bukan aplikasi kelima):
 
 ## 3. Arsitektur Sistem
 
-### 3.1 Peta 4 aplikasi + Core
+### 3.1 Peta 3 aplikasi + Core
 
 ```
-                        team.slaver.app  (pusat UX: chat + kanban Projects)
-                        /        |        \
-        git.slaver.app     workspace.slaver.app     marketplace.slaver.app
-        (repos, forks,      (build env, preview,      (katalog, lisensi,
-         commits, diffs)     exec, deploy)             support)
-                        \        |        /
-                      Slaver Core Services (1 backend)
+              team.slaver.app  (pusat UX: chat + kanban Projects + menu Workspace)
+              /                  \
+   git.slaver.app          marketplace.slaver.app
+   (repos, forks,           (katalog, lisensi,
+    commits, diffs)          support)
+              \                  /
+              Slaver Core Services (1 backend)
+
+  Workspace = menu di Team (agent terminals, isolated env, preview, deploy).
+  Harness view yang sudah ada adalah wujud awal menu ini.
 ```
 
 ### 3.2 Slaver Core Services (satu backend, modular monolith → split belakangan)
@@ -70,7 +72,7 @@ Ditopang **Slaver Core Services** (satu backend bersama, bukan aplikasi kelima):
 - **MCP gateway:** `POST /mcp` yang sudah ada diperluas (repos, runs, issues, licenses).
 - **Audit logs:** siapa/apa/kapan (penting untuk trust + support dispute).
 
-**Keputusan arsitektur:** mulai sebagai **modular monolith Rust** (satu binary, modul `team/git/workspace/marketplace/core`, satu DB SQLite/Postgres) di satu VPS. Alasan: solo dev, 4 app butuh iterasi cepat, kontrak antar-app belum stabil. Split ke service/deploy independen hanya setelah kontrak API + event stabil. Subdomain (`team./git./workspace./marketplace.`) di-routing oleh reverse proxy (Caddy) ke binary yang sama dulu, bisa dipecah belakangan tanpa ubah URL.
+**Keputusan arsitektur:** mulai sebagai **modular monolith Rust** (satu binary, modul `team(+workspace)/git/marketplace/core`, satu DB SQLite/Postgres) di satu VPS. Alasan: solo dev, butuh iterasi cepat, kontrak antar-app belum stabil. Split ke service/deploy independen hanya setelah kontrak API + event stabil. Subdomain (`team./git./marketplace.`) di-routing oleh reverse proxy (Caddy) ke binary yang sama dulu, bisa dipecah belakangan tanpa ubah URL.
 
 ### 3.3 Data model baru (tambahan dari skema yang ada)
 - `organizations` (id, name, owner) — tim bisnis; 1 org ↔ 1+ projects.
@@ -93,10 +95,10 @@ Contoh: owner F&B ingin SaaS CRM untuk bisnisnya.
 1. **Marketplace** — menemukan template "CRM Retail", klik **Buy once** (HitPay/Stripe) → dapat lisensi perpetual + 12 bulan support/update.
 2. **Git Service** — Slaver membuat **fork repo pribadi** milik org user (full history template).
 3. **Team** — user prompt (bahasa sehari-hari): *"Ubah CRM ini jadi multi-tenant SaaS dengan subscription billing, team management, dan analytics."* Orchestrator memecah jadi issues di kanban → assign ke agent (Architect, Backend, Frontend, QA).
-4. **Workspace** — tiap agent dapat isolated env + repo checkout di branch-nya → coding → push commits.
+4. **Workspace (menu di Team)** — tiap agent dapat isolated env + repo checkout di branch-nya → coding → push commits.
 5. **Git Service** — perubahan tersimpan sebagai commits + diff + branch; agent reviewer membuka "review run".
 6. **Team** — QA agent testing di preview; issue pindah `in_review → done` otomatis bila checks hijau; user approve di kanban.
-7. **Workspace** — preview URL dibagikan; tombol **Deploy to my VPS** → agent generate `docker-compose.yml` → deploy via SSH ke VPS user → health check hijau.
+7. **Workspace (menu di Team)** — preview URL dibagikan; tombol **Deploy to my VPS** → agent generate `docker-compose.yml` → deploy via SSH ke VPS user → health check hijau.
 
 **Alur support:** app rusak → user buka issue "support" di Team (tertagih ke entitlement lisensi) → agent reproduce di workspace clone → fix → PR ke repo user → deploy ulang. Publisher bisa ambil alih manual bila perlu (audit log mencatat semua).
 
@@ -106,7 +108,7 @@ Contoh: owner F&B ingin SaaS CRM untuk bisnisnya.
 
 ## 5. Team App — Pusat Pengalaman (aplikasi yang ada, dikembangkan)
 
-Team adalah aplikasi utama. Dua permukaan: **Chat tim** (sudah ada: slaveBots) + **Projects kanban** (baru).
+Team adalah aplikasi utama. Tiga permukaan: **Chat tim** (sudah ada: slaveBots) + **Projects kanban** (baru) + **menu Workspace** (Harness view yang sudah ada: agent terminals, isolated env, preview, deploy).
 
 ### 5.1 Struktur agent ( peran, bukan persona )
 | Agent | Tanggung jawab | Tools utama |
@@ -154,12 +156,14 @@ Git-native (bukan tiruan): bare repos di disk server (`/data/git/<id>.git`), pro
 
 ---
 
-## 7. Workspace (`workspace.slaver.app`)
+## 7. Workspace — menu di Team (bukan domain sendiri)
 
-- **Isolated env per run/project:** workdir terisolasi per run (mulai dari sandbox proses seperti harness hari ini; naik ke container/microVM per project saat multi-tenant publik).
-- **Agent terminals:** exec + file tools (sudah ada di harness) + perintah domain (install deps, migrate, seed).
+Workspace dan Team terlalu mirip untuk dipisah: user memberi perintah di Team, agent bekerja di Workspace, hasilnya kembali ke Team. Satu aplikasi, satu konteks.
+
+- **Isolated env per run/project:** workdir terisolasi per run (mulai dari eksekusi proses lokal seperti harness hari ini; naik ke container/microVM per project saat multi-tenant publik).
+- **Agent terminals:** exec + file tools (sudah ada di Harness view) + perintah domain (install deps, migrate, seed). Terminal tampil inline di menu Workspace + tertaut ke issue yang sedang dikerjakan.
 - **Preview:** tiap project dapat URL preview (`https://<project>-<run>.preview.slaver.app`) via reverse proxy + port mapping; auto-sleep saat idle (hemat biaya).
-- **Deploy ke VPS user:** generate `docker-compose.yml` + Caddyfile dari repo → SSH deploy → health check → catat di `deployments`. Target: satu perintah ("Deploy") dari Team/kanban.
+- **Deploy ke VPS user:** generate `docker-compose.yml` + Caddyfile dari repo → SSH deploy → health check → catat di `deployments`. Target: satu tombol "Deploy" dari kanban/preview.
 - **Web testing (fase 2):** e2e di preview pakai headless Chromium (dipakai QA agent); ditagih per menit browser.
 - **Batasan sadar:** workspace cloud untuk *build & preview*; runtime produksi = VPS user. Tidak ada lock-in hosting.
 
@@ -206,9 +210,9 @@ Setiap seed wajib: bisa jalan via 1 perintah compose, ada demo preview, ada test
 
 ## 11. Strategi Pembangunan (urutan sesuai keputusan)
 
-1. **Fase 0 — Core keras (fondasi, 1–2 minggu):** orgs, repo permissions, metering/billing hook, event bus in-process, MCP gateway diperluas, audit logs. Tanpa ini 4 app rapuh.
+1. **Fase 0 — Core keras (fondasi, 1–2 minggu):** orgs, repo permissions, metering/billing hook, event bus in-process, MCP gateway diperluas, audit logs. Tanpa ini 3 app rapuh.
 2. **Fase 1 — Git Service (paralel: Marketplace sederhana):** bare repos + HTTPS clone/push + UI log/diff/branch + forks + lisensi buy-once minimal (katalog statis + tombol beli + fork). Marketplace "sederhana" = halaman katalog + checkout + fork; discovery/search penuh belakangan.
-3. **Fase 2 — Workspace:** workdir per project + preview URL + deploy-ke-VPS via SSH + compose generator. (Harness yang ada = fondasi tool exec-nya.)
+3. **Fase 2 — Workspace (menu di Team):** workdir per project + preview URL + deploy-ke-VPS via SSH + compose generator. (Harness view yang ada = fondasi tool exec-nya; tinggal tambah tab terminal + link ke issue.)
 4. **Fase 3 — Team (puncak):** Projects kanban + orchestrator (dekomposisi, DAG paralel, shared repo context, review gate) + role agents + tracking. Ini yang didemo-kan.
 5. **Fase 4 — Marketplace penuh:** search/discovery, rating, publisher dashboard, support queue + entitlement, update runs, payout.
 
@@ -237,7 +241,7 @@ Marketplace (1 template seed: Grocery POS) → Buy (mock) → Fork (git service)
 | Secret bocor (SSH VPS, API keys) | Secret hanya di server + keychain desktop; tidak pernah ke log/LLM prompt (redaksi otomatis); akses repo per-org |
 | Billing dispute (support vs bug) | Audit log lengkap + definisi "bug garansi 30 hari" di lisensi; support queue terukur |
 | Kualitas template jelek | Kurasi manual + QA agent wajib hijau + syarat VPS 1GB sebelum publish |
-| Scope creep 4 app sekaligus | Modular monolith + slice demo per fase; marketplace penuh terakhir |
+| Scope creep 3 app sekaligus | Modular monolith + slice demo per fase; marketplace penuh terakhir |
 | Ketergantungan model/provider | BYOK + multi-provider sudah ada; orchestrator tidak hardcode 1 model |
 
 ---
