@@ -58,7 +58,7 @@ export default function MarketView({
         if (hitpay_status === "failed" || payment.status === "failed") {
           if (pollRef.current !== null) window.clearInterval(pollRef.current);
           setPending(null);
-          setError("Payment failed or expired. Please try again.");
+          setError("Pembayaran gagal atau kedaluwarsa. Coba lagi.");
           return;
         }
         setPending({ payment, checkoutUrl, sandbox, repoName });
@@ -81,7 +81,7 @@ export default function MarketView({
     if (!pid) return;
     window.history.replaceState({}, "", window.location.pathname);
     if (!teamId) {
-      setError("Payment detected — pick your team, then open Marketplace again to finish activation.");
+      setError("Pembayaran terdeteksi — pilih tim dulu, lalu buka Toko lagi untuk selesaikan aktivasi.");
       return;
     }
     (async () => {
@@ -92,7 +92,7 @@ export default function MarketView({
         setPending({ payment, checkoutUrl: "", sandbox: false, repoName: "" });
         await pollPayment(pid, "", "", false);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Could not verify payment.");
+        setError(err instanceof Error ? err.message : "Tidak bisa verifikasi pembayaran.");
       } finally {
         setBusyId(null);
       }
@@ -106,7 +106,7 @@ export default function MarketView({
     try {
       await onOpenSupport(repoId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No support channel yet — ask the owning team to open one.");
+      setError(err instanceof Error ? err.message : "Belum ada channel bantuan — minta tim pemilik membukanya.");
     } finally {
       setSupportBusy(null);
     }
@@ -124,7 +124,7 @@ export default function MarketView({
         setProjects([]);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load marketplace.");
+      setError(err instanceof Error ? err.message : "Tidak bisa memuat toko.");
     }
   }, [teamId]);
 
@@ -150,7 +150,7 @@ export default function MarketView({
       setPending({ payment: { id: res.payment_id, team_id: teamId, repo_id: repo.id, hitpay_request_id: res.hitpay_request_id, amount_cents: res.amount_cents, currency: res.currency, status: "pending", license_id: "", created_at: "", paid_at: "" }, checkoutUrl: res.checkout_url, sandbox: res.sandbox, repoName: repo.name });
       await pollPayment(res.payment_id, repo.name, res.checkout_url, res.sandbox);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Checkout failed.");
+      setError(err instanceof Error ? err.message : "Checkout gagal.");
     } finally {
       setBusyId(null);
     }
@@ -158,34 +158,34 @@ export default function MarketView({
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-4">
-      <h2 className="font-bold text-zinc-100">Marketplace</h2>
+      <h2 className="font-bold text-zinc-100">Toko</h2>
       <p className="mt-1 text-sm text-zinc-400">
-        Buy once, customize forever. Every purchase includes a private fork, a ready project, and 12 months of updates + support.
+        Beli sekali, milik selamanya. Setiap pembelian dapat salinan khusus, aplikasi siap pakai, dan 12 bulan update + bantuan.
       </p>
       {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
 
       {pending && (
         <div className="mt-3 rounded-lg border border-amber-700 bg-amber-950/40 p-3 text-sm">
-          <div className="font-bold text-amber-200">Waiting for HitPay payment… {pending.sandbox && <span className="rounded bg-zinc-800 px-1 text-[11px] text-zinc-300">SANDBOX TEST MODE</span>}</div>
+          <div className="font-bold text-amber-200">Menunggu pembayaran… {pending.sandbox && <span className="rounded bg-zinc-800 px-1 text-[11px] text-zinc-300">MODE UJI COBA</span>}</div>
           <div className="mt-1 text-xs text-amber-200/80">
-            {pending.repoName ? `“${pending.repoName}” · ` : ""}A payment tab was opened — complete it there, then come back here. We detect payment automatically.
+            {pending.repoName ? `“${pending.repoName}” · ` : ""}Tab pembayaran sudah dibuka — selesaikan di sana, lalu kembali ke sini. Pembayaran terdeteksi otomatis.
           </div>
           <div className="mt-2 flex gap-2">
             {pending.checkoutUrl && (
               <a href={pending.checkoutUrl} target="_blank" rel="noreferrer" className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500">
-                Re-open payment page
+                Buka halaman bayar lagi
               </a>
             )}
             <button type="button" onClick={() => { if (pollRef.current !== null) window.clearInterval(pollRef.current); setPending(null); }} className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800">
-              Cancel
+              Batal
             </button>
           </div>
         </div>
       )}
 
-      <h3 className="mb-2 mt-5 text-sm font-bold uppercase tracking-wide text-zinc-500">Templates</h3>
+      <h3 className="mb-2 mt-5 text-sm font-bold uppercase tracking-wide text-zinc-500">Pilihan aplikasi</h3>
       {templates.length === 0 ? (
-        <p className="text-sm text-zinc-500">No templates published yet — check back soon.</p>
+        <p className="text-sm text-zinc-500">Belum ada aplikasi — cek lagi nanti.</p>
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {templates.map((t) => {
@@ -199,44 +199,44 @@ export default function MarketView({
                 </div>
                 <div className="mt-0.5">
                   {owned ? (
-                    <span className="rounded bg-emerald-950 px-2 py-0.5 text-[11px] font-bold text-emerald-300">OWNED</span>
+                    <span className="rounded bg-emerald-950 px-2 py-0.5 text-[11px] font-bold text-emerald-300">SUDAH PUNYA</span>
                   ) : (
-                    <span className="rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-bold text-zinc-300">BUY ONCE</span>
+                    <span className="rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-bold text-zinc-300">BELI SEKALI</span>
                   )}
                 </div>
                 {t.description && <p className="mt-1 flex-1 text-sm text-zinc-400">{t.description}</p>}
                 <div className="mt-3 flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openSupport(t.id)}
-                    disabled={supportBusy === t.id}
-                    title="Ask in the seller's public support channel (their AI bots reply)"
-                    className="rounded-md border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
-                  >
-                    {supportBusy === t.id ? "Opening…" : "💬 Support"}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => openSupport(t.id)}
+                      disabled={supportBusy === t.id}
+                      title="Tanya di channel bantuan penjual (AI mereka yang menjawab)"
+                      className="rounded-md border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
+                    >
+                      {supportBusy === t.id ? "Membuka…" : "💬 Bantuan"}
+                    </button>
                   {owned ? (
                     <button
                       type="button"
                       onClick={() => project && onOpenProject(project.project.id)}
                       disabled={!project}
-                      title="Open the channel board for this app"
+                      title="Buka papan tugas aplikasi ini di channel"
                       className="rounded-md bg-zinc-700 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-600 disabled:opacity-40"
                     >
-                      {project ? "Open board ▤" : "Licensed"}
+                      {project ? "Lihat tugas ▤" : "Sudah dibeli"}
                     </button>
                   ) : (
                     <button
                       type="button"
                       onClick={() => buy(t)}
                       disabled={!teamId || busyId === t.id}
-                      title={!teamId ? "Pick a team first" : "Pay with HitPay — includes fork + project + 12mo support"}
+                      title={!teamId ? "Pilih tim dulu" : "Bayar dengan HitPay — dapat salinan + aplikasi + dukungan 12 bulan"}
                       className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40"
                     >
-                      {busyId === t.id ? "Processing…" : `Buy & fork · ${formatPrice(t.price_cents)}`}
+                      {busyId === t.id ? "Memproses…" : `Beli · ${formatPrice(t.price_cents)}`}
                     </button>
                   )}
-                  <span className="text-[11px] text-zinc-500">Includes 12 months updates + support</span>
+                  <span className="text-[11px] text-zinc-500">Termasuk update + bantuan 12 bulan</span>
                 </div>
               </div>
             );
@@ -244,9 +244,9 @@ export default function MarketView({
         </div>
       )}
 
-      <h3 className="mb-2 mt-6 text-sm font-bold uppercase tracking-wide text-zinc-500">My licenses {teamId ? "" : "(pick a team)"}</h3>
+      <h3 className="mb-2 mt-6 text-sm font-bold uppercase tracking-wide text-zinc-500">Aplikasi saya {teamId ? "" : "(pilih tim dulu)"}</h3>
       {licenses.length === 0 ? (
-        <p className="text-sm text-zinc-600">No licenses on this team yet.</p>
+        <p className="text-sm text-zinc-600">Tim ini belum punya aplikasi.</p>
       ) : (
         <ul className="flex flex-col gap-1">
           {licenses.map((l) => (
@@ -256,7 +256,7 @@ export default function MarketView({
               <span className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${l.status === "active" ? "bg-emerald-950 text-emerald-300" : "bg-zinc-800 text-zinc-400"}`}>
                 {l.status}
               </span>
-              <span className="text-xs text-zinc-500">support until {l.support_until || "—"} · {l.provider}</span>
+              <span className="text-xs text-zinc-500">bantuan s/d {l.support_until || "—"} · {l.provider}</span>
             </li>
           ))}
         </ul>

@@ -14,11 +14,11 @@ import {
 } from "./api";
 
 const COLUMNS = [
-  { id: "backlog", label: "Backlog" },
-  { id: "todo", label: "Todo" },
-  { id: "in_progress", label: "In Progress" },
-  { id: "in_review", label: "In Review" },
-  { id: "done", label: "Done" },
+  { id: "backlog", label: "Ide" },
+  { id: "todo", label: "Antrian" },
+  { id: "in_progress", label: "Dikerjakan" },
+  { id: "in_review", label: "Diperiksa" },
+  { id: "done", label: "Selesai" },
 ] as const;
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -26,6 +26,13 @@ const PRIORITY_COLORS: Record<string, string> = {
   medium: "bg-blue-950 text-blue-300",
   high: "bg-amber-950 text-amber-300",
   urgent: "bg-red-950 text-red-300",
+};
+
+const PRIORITY_LABELS: Record<string, string> = {
+  low: "Ringan",
+  medium: "Normal",
+  high: "Tinggi",
+  urgent: "Mendesak",
 };
 
 /** Kanban board for ONE project (used inside a channel; auto-filtered). */
@@ -130,9 +137,9 @@ export default function KanbanBoard({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="font-bold text-zinc-100">{project?.name ?? "Board"}</h3>
+        <h3 className="font-bold text-zinc-100">{project?.name ?? "Tugas"}</h3>
         <div className="ml-auto flex items-center gap-2 text-xs text-zinc-400">
-          <span>{done}/{issues.length} done</span>
+          <span>{done}/{issues.length} selesai</span>
           <span className="h-2 w-20 overflow-hidden rounded-full bg-zinc-800">
             <span className="block h-full bg-emerald-500" style={{ width: `${pct}%` }} />
           </span>
@@ -141,7 +148,7 @@ export default function KanbanBoard({
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <label className="flex items-center gap-1 text-zinc-400">
-          Repo:
+          File sumber:
           <select
             value={project?.repo_id || ""}
             onChange={(e) => attachRepo(e.target.value)}
@@ -186,12 +193,12 @@ export default function KanbanBoard({
                   <div className="truncate text-[13px] font-semibold text-zinc-100">{issue.title}</div>
                   <div className="mt-1 flex items-center gap-1">
                     <span className={`rounded px-1 text-[10px] font-bold uppercase ${PRIORITY_COLORS[issue.priority] ?? PRIORITY_COLORS.medium}`}>
-                      {issue.priority}
+                      {PRIORITY_LABELS[issue.priority] ?? issue.priority}
                     </span>
                     {issue.assignee_name ? (
                       <span className="truncate text-[11px] text-emerald-300">◈ {issue.assignee_name}</span>
                     ) : (
-                      <span className="text-[11px] text-zinc-600">unassigned</span>
+                      <span className="text-[11px] text-zinc-600">belum ada yang pegang</span>
                     )}
                   </div>
                 </button>
@@ -203,17 +210,17 @@ export default function KanbanBoard({
 
       <div className="grid gap-3 lg:grid-cols-2">
         <form onSubmit={addIssue} className="rounded-lg border border-zinc-800 bg-zinc-900 p-3">
-          <h3 className="mb-2 text-sm font-bold text-zinc-200">New issue</h3>
+          <h3 className="mb-2 text-sm font-bold text-zinc-200">Tugas baru</h3>
           <input
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
-            placeholder="Title, e.g. Add QRIS checkout"
+            placeholder="Judul, cth. Tambah bayar QRIS"
             className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
           />
           <textarea
             value={newBody}
             onChange={(e) => setNewBody(e.target.value)}
-            placeholder="Acceptance criteria (optional)"
+            placeholder="Syarat selesai (opsional)"
             rows={2}
             className="mt-2 w-full resize-none rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
           />
@@ -223,33 +230,33 @@ export default function KanbanBoard({
               onChange={(e) => setNewAssignee(e.target.value)}
               className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
             >
-              <option value="">Unassigned</option>
+              <option value="">Belum ada yang pegang</option>
               {bots.filter((b) => !b.archived).map((b) => (
                 <option key={b.id} value={b.id}>{b.name}</option>
               ))}
             </select>
             <button type="submit" disabled={!newTitle.trim() || busy} className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
-              Add
+              Tambah
             </button>
           </div>
         </form>
 
         <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-3">
-          <h3 className="mb-2 text-sm font-bold text-zinc-200">Issue detail</h3>
+          <h3 className="mb-2 text-sm font-bold text-zinc-200">Detail tugas</h3>
           {!selected ? (
-            <p className="text-xs text-zinc-500">Click a card to inspect, assign, move, or start an agent run.</p>
+            <p className="text-xs text-zinc-500">Klik kartu untuk lihat, bagi tugas, atau pindahkan.</p>
           ) : (
             <div className="flex flex-col gap-2">
               <div className="font-semibold text-zinc-100">{selected.title}</div>
               {selected.body && <p className="whitespace-pre-wrap text-xs text-zinc-400">{selected.body}</p>}
               <label className="flex items-center gap-2 text-xs text-zinc-400">
-                Assignee
+                Yang pegang
                 <select
                   value={selected.assignee_bot_id || ""}
                   onChange={(e) => assign(selected.id, e.target.value)}
                   className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-100 focus:border-emerald-500 focus:outline-none"
                 >
-                  <option value="">Unassigned</option>
+                  <option value="">Belum ada yang pegang</option>
                   {bots.filter((b) => !b.archived).map((b) => (
                     <option key={b.id} value={b.id}>{b.name}</option>
                   ))}

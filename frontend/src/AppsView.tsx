@@ -85,14 +85,14 @@ export default function AppsView({
   }
 
   if (!teamId) {
-    return <p className="p-6 text-sm text-zinc-500">Pick a team to see its apps.</p>;
+    return <p className="p-6 text-sm text-zinc-500">Pilih tim untuk melihat aplikasinya.</p>;
   }
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col gap-4 p-4">
       <div>
-        <h2 className="text-xl font-bold text-zinc-100">Apps</h2>
-        <p className="mt-1 text-sm text-zinc-400">Aplikasi milik team ini — preview langsung di sini, atau buka penuh di tab baru.</p>
+        <h2 className="text-xl font-bold text-zinc-100">Aplikasi</h2>
+        <p className="mt-1 text-sm text-zinc-400">Aplikasi milik tim ini — intip langsung di sini, atau buka penuh di tab baru.</p>
       </div>
       {error && <p className="text-sm text-red-400">{error}</p>}
 
@@ -100,10 +100,10 @@ export default function AppsView({
         <div className="rounded-xl border border-dashed border-zinc-700 bg-zinc-900/60 p-10 text-center">
           <div className="text-3xl">◈</div>
           <h3 className="mt-2 font-bold text-zinc-100">Belum ada aplikasi</h3>
-          <p className="mx-auto mt-1 max-w-md text-sm text-zinc-400">Beli template di Marketplace (otomatis jadi aplikasi), atau buat board di channel lalu hubungkan URL deploy-nya.</p>
+          <p className="mx-auto mt-1 max-w-md text-sm text-zinc-400">Beli template di Toko (otomatis jadi aplikasi), atau buat daftar tugas di channel lalu hubungkan alamat web-nya.</p>
           <div className="mt-4 flex justify-center gap-2">
-            <button type="button" onClick={onGoMarket} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500">Lihat Marketplace</button>
-            <button type="button" onClick={onGoChat} className="rounded-md border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">Buka channel</button>
+            <button type="button" onClick={onGoMarket} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500">Lihat Toko</button>
+            <button type="button" onClick={onGoChat} className="rounded-md border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">Buka chat</button>
           </div>
         </div>
       ) : (
@@ -123,9 +123,9 @@ export default function AppsView({
                 </div>
                 {p.description && <p className="mt-1 line-clamp-2 text-xs text-zinc-400">{p.description}</p>}
                 <div className="mt-2 flex items-center gap-2 text-[11px] text-zinc-500">
-                  {live ? <span className="rounded bg-emerald-950 px-1.5 py-0.5 font-bold text-emerald-300">LIVE</span> : <span className="rounded bg-zinc-800 px-1.5 py-0.5">NO URL</span>}
-                  {p.dev_url && <span className="rounded bg-zinc-800 px-1.5 py-0.5">DEV</span>}
-                  <span className="ml-auto">{stats.done}/{stats.total} done</span>
+                  {live ? <span className="rounded bg-emerald-950 px-2 py-0.5 text-[11px] font-bold text-emerald-300">TAYANG</span> : <span className="rounded bg-zinc-800 px-1.5 py-0.5">BELUM ADA ALAMAT</span>}
+                  {p.dev_url && <span className="rounded bg-zinc-800 px-1.5 py-0.5">UJI COBA</span>}
+                  <span className="ml-auto">{stats.done}/{stats.total} selesai</span>
                 </div>
               </button>
             );
@@ -145,21 +145,21 @@ export default function AppsView({
                   onClick={() => setEnv(e)}
                   className={`rounded px-2.5 py-1 font-bold uppercase ${env === e ? "bg-zinc-950 text-emerald-300" : "text-zinc-500 hover:text-zinc-200"}`}
                 >
-                  {e}
+                  {e === "prod" ? "Asli" : "Uji coba"}
                 </button>
               ))}
             </div>
             {previewUrl && (
               <a href={previewUrl} target="_blank" rel="noreferrer" className="rounded-md border border-zinc-700 px-2.5 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-800">
-                Open full ↗
+                Buka penuh ↗
               </a>
             )}
             <div className="ml-auto flex items-center gap-2">
               <button type="button" onClick={() => onOpenProject(selected.id)} className="rounded-md px-2.5 py-1 text-xs font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-                Board ▤
+                Tugas ▤
               </button>
               <button type="button" onClick={() => (editing ? setEditing(false) : startEdit())} className="rounded-md px-2.5 py-1 text-xs font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-                {editing ? "Cancel" : "Set URL"}
+                {editing ? "Batal" : "Atur alamat"}
               </button>
             </div>
           </div>
@@ -167,16 +167,16 @@ export default function AppsView({
           {editing ? (
             <div className="flex flex-col gap-2 p-4">
               <label className="text-xs font-semibold text-zinc-300">
-                Production URL
-                <input value={prodUrl} onChange={(e) => setProdUrl(e.target.value)} placeholder="https://app-xxx.slaver.app" className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+                Alamat versi asli (dilihat pelanggan)
+                <input value={prodUrl} onChange={(e) => setProdUrl(e.target.value)} placeholder="https://app-xxx.slaver.app" className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
               </label>
               <label className="text-xs font-semibold text-zinc-300">
-                Dev URL
-                <input value={devUrl} onChange={(e) => setDevUrl(e.target.value)} placeholder="https://app-xxx-dev.fly.dev" className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+                Alamat uji coba
+                <input value={devUrl} onChange={(e) => setDevUrl(e.target.value)} placeholder="https://app-xxx-dev.fly.dev" className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
               </label>
               <div>
                 <button type="button" onClick={saveUrls} disabled={busy} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
-                  {busy ? "Saving..." : "Save URLs"}
+                  {busy ? "Menyimpan..." : "Simpan alamat"}
                 </button>
               </div>
             </div>
@@ -190,8 +190,8 @@ export default function AppsView({
             />
           ) : (
             <div className="p-8 text-center text-sm text-zinc-500">
-              Belum ada URL {env === "prod" ? "production" : "dev"} — klik <b>Set URL</b> untuk menghubungkan hasil deploy
-              (VPS via Code/Deploy, atau Fly machine via Settings → Fly.io).
+              Belum ada alamat {env === "prod" ? "versi asli" : "uji coba"} — klik <b>Atur alamat</b> untuk menghubungkan
+              (server via File, atau mesin Fly via Pengaturan → Server).
             </div>
           )}
         </div>

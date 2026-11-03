@@ -17,7 +17,7 @@
 
 1. Sidebar = navigasi saja (search, DM, Channels, Meetings, Support). Tidak ada form, tidak ada footer berisik.
 2. Semua konfigurasi di **Settings** (Profile, New bot, Teams, Fly.io, Developer).
-3. Bahasa manusia, bukan jargon: "Direct messages" bukan "bot_access matrix", "Beli" bukan "provision license".
+3. Bahasa manusia (Indonesia santai), bukan jargon: "Chat" bukan "Direct messages", "Asisten AI" bukan "slaveBot", "Beli" bukan "provision license", "Tugas" bukan "kanban/issues", "Toko" bukan "marketplace", "Kunci AI" bukan "provider", "Server" bukan "VPS/Fly machine", "Tayangkan" bukan "deploy", "Rapat" bukan "huddle/meeting", "Bantuan" bukan "support channel". Istilah teknis (model id, base URL, token) tetap apa adanya tapi selalu disertai contoh.
 4. Setiap layar punya 3 kondisi: **isi**, **kosong** (dengan CTA jelas), **error** (kalimat + tombol coba lagi).
 5. Satu aksi utama per layar (tombol hijau). Aksi sekunder berupa teks/link.
 6. Tidak ada aksi destruktif tanpa konfirmasi (`window.confirm` minimal).
@@ -28,15 +28,14 @@
 ## 1. Global shell
 
 ### 1.1 Top bar (selalu terlihat)
-- Kiri: hamburger (mobile saja) + **logo ikon huruf team** — klik = dropdown ganti team (nama + role, tanpa pindah halaman). Tidak ada teks nama "Slaver".
-- Tengah (scroll horizontal di mobile): **Apps ⌂ · Chat 💬 · Code </> · Market ◈ · Settings ⚙**. Tidak ada menu Projects (kanban di channel §4.3) dan tidak ada menu Harness (dihapus; kerja agent lewat Code).
+- Kiri: hamburger (mobile saja) + **logo ikon huruf tim** — klik = dropdown ganti tim (nama + role, tanpa pindah halaman). Tidak ada teks nama "Slaver".
+- Tengah (scroll horizontal di mobile): **Aplikasi ⌂ · Chat 💬 · File </> · Toko ◈ · Pengaturan ⚙**. Tidak ada menu Projects (kanban di channel §4.3) dan tidak ada menu Harness (dihapus, kerja agent di File).
 - Kanan: avatar huruf depan (tooltip = email). Tidak ada badge kredit.
 - Aturan aktif: Chat aktif untuk DM/channel/meeting/bot-settings; tiap menu lain aktif di view-nya.
 
 ### 1.2 Sidebar (navigasi saja — media komunikasi)
-- Header: ikon huruf + nama team aktif saja (tanpa role, tanpa dropdown — ganti team via logo di top bar). Ganti team → reset chat/channel/meeting/bot yang terbuka.
-- Tanpa search box.
-- Section **Direct messages** (+ di kanan judul → ke Settings#new-bot).
+- Header: ikon huruf + nama tim aktif saja (tanpa role, tanpa dropdown, tanpa search — ganti tim via logo di top bar). Ganti tim → reset chat/grup/rapat/asisten yang terbuka.
+- Section **Chat** (+ di kanan judul → ke Pengaturan#asisten-baru).
   - Baris bot: avatar + presence dot hijau + nama + subteks (role/title, partner `◈ nama` bila bukan milik sendiri) + badge PIN bila pinned.
   - Baris user: avatar huruf + nama (DM user-to-user, 1 team).
   - Sub-bot (punya parent): indent + garis kiri.

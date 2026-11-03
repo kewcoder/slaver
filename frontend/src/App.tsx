@@ -272,15 +272,15 @@ function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
         <ul className="mt-8 flex flex-col gap-4 text-[15px] text-zinc-300">
           <li className="flex gap-3"><span className="text-emerald-400">◈</span><span><b>Marketplace</b> — beli aplikasi sekali, jadi milikmu selamanya.</span></li>
           <li className="flex gap-3"><span className="text-emerald-400">▤</span><span><b>AI team</b> — agen yang customize, review, dan deploy untukmu.</span></li>
-          <li className="flex gap-3"><span className="text-emerald-400">⌁</span><span><b>Your VPS</b> — jalan di servermu sendiri, bukan sewa SaaS.</span></li>
+          <li className="flex gap-3"><span className="text-emerald-400">⌁</span><span><b>Server sendiri</b> — jalan di servermu, bukan sewa SaaS.</span></li>
         </ul>
       </div>
       <div className="flex flex-1 items-center justify-center p-6">
         <div className="w-full max-w-sm rounded-xl border border-zinc-800 bg-zinc-900 p-8">
           <div className="text-2xl font-bold text-zinc-100 lg:hidden">Slaver<span className="text-emerald-400">.</span></div>
-          <p className="mb-5 mt-1 text-sm text-zinc-400">Log in to your workspace.</p>
+          <p className="mb-5 mt-1 text-sm text-zinc-400">Masuk untuk mengelola usaha dan asisten AI-mu.</p>
           <button type="button" onClick={fillDemo} className="mb-4 w-full rounded-md border border-dashed border-zinc-700 px-3 py-2 text-left text-xs text-zinc-400 hover:border-emerald-600 hover:text-zinc-200">
-            <span className="font-bold text-emerald-400">Try the restaurant demo →</span><br />
+            <span className="font-bold text-emerald-400">Coba demo rumah makan →</span><br />
             <span className="font-mono">resto@slaver.app / demo1234</span>
           </button>
           <div className="mb-4 flex gap-2">
@@ -293,28 +293,28 @@ function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
                   mode === m ? "bg-zinc-100 text-zinc-900" : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
                 }`}
               >
-                {m === "register" ? "Sign up" : "Log in"}
+                {m === "register" ? "Daftar" : "Masuk"}
               </button>
             ))}
           </div>
           <form onSubmit={submit} className="flex flex-col gap-3">
             {mode === "register" && (
               <label className="text-sm font-semibold text-zinc-300">
-                Name
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" autoComplete="name" className={inputCls} />
+                Nama
+                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nama kamu" autoComplete="name" className={inputCls} />
               </label>
             )}
             <label className="text-sm font-semibold text-zinc-300">
               Email
-              <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" className={inputCls} />
+              <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="kamu@usaha.com" autoComplete="email" className={inputCls} />
             </label>
             <label className="text-sm font-semibold text-zinc-300">
-              Password
-              <input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" autoComplete={mode === "register" ? "new-password" : "current-password"} className={inputCls} />
+              Kata sandi
+              <input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Minimal 8 karakter" autoComplete={mode === "register" ? "new-password" : "current-password"} className={inputCls} />
             </label>
             {error && <p className="text-sm text-red-400">{error}</p>}
             <button type="submit" disabled={busy} className="rounded-md bg-emerald-600 px-3 py-2.5 font-semibold text-white hover:bg-emerald-500 disabled:opacity-50">
-              {busy ? "Please wait..." : mode === "register" ? "Create account" : "Log in"}
+              {busy ? "Tunggu..." : mode === "register" ? "Buat akun" : "Masuk"}
             </button>
           </form>
         </div>
@@ -460,8 +460,8 @@ function GroupView({
       if (saveMemory) {
         setSavedNote(
           res.saved_to_memory.length > 0
-            ? `Saved to memory of: ${res.saved_to_memory.join(", ")}`
-            : "Sent. (No memories updated — needs owner/admin.)",
+            ? `Tersimpan di ingatan: ${res.saved_to_memory.join(", ")}`
+            : "Terkirim. (Tidak ada ingatan yang diubah — butuh pemilik/admin.)",
         );
       }
     } catch (err) {
@@ -477,7 +477,7 @@ function GroupView({
     setSavedNote("");
     try {
       await appendMemory(botId, content.slice(0, 2000));
-      setSavedNote(`Saved to ${botName ?? "bot"}'s memory.`);
+      setSavedNote(`Tersimpan di ingatan ${botName ?? "asisten"}.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save to memory.");
     }
@@ -577,7 +577,7 @@ function GroupView({
         {!minimized && (
           <div className="min-h-0 flex-1 overflow-y-auto">
             {detail.messages.length === 0 && (
-              <p className="py-8 text-center text-zinc-500">No discussion yet. Give the team a task below.</p>
+              <p className="py-8 text-center text-zinc-500">Belum ada obrolan. Beri tugas ke tim di bawah.</p>
             )}
             {detail.messages.map((m) => (
               <div key={m.id} className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
@@ -588,16 +588,16 @@ function GroupView({
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">
-                    <span className="text-sm font-bold">{m.slavebot_id ? (m.bot_name ?? "SlaveBot") : "You"}</span>
+                    <span className="text-sm font-bold">{m.slavebot_id ? (m.bot_name ?? "Asisten") : "Anda"}</span>
                     <span className="text-xs text-zinc-500">{new Date(m.created_at).toLocaleString()}</span>
                     {m.slavebot_id && (
                       <button
                         type="button"
                         onClick={() => saveReply(m.slavebot_id, m.bot_name, m.content)}
-                        title="Save this reply into the bot's memory"
+                        title="Simpan jawaban ini ke ingatan asisten"
                         className="rounded px-1 text-xs text-zinc-500 hover:bg-zinc-700 hover:text-emerald-400"
                       >
-                        Save to memory
+                        Simpan ke ingatan
                       </button>
                     )}
                   </div>
@@ -620,7 +620,7 @@ function GroupView({
                 sendTask();
               }
             }}
-            placeholder="Message the group... (every bot replies, each billed)"
+            placeholder="Tulis pesan untuk grup… (semua asisten menjawab)"
             rows={1}
             disabled={busy}
             className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
@@ -683,14 +683,14 @@ function GroupView({
             </button>
           )}
           {!renaming && detail.group.is_public ? (
-            <span title="Public support channel — visible to everyone" className="shrink-0 rounded border border-emerald-700 px-2 py-0.5 text-[11px] font-bold text-emerald-400">
-              PUBLIC SUPPORT
+            <span title="Grup bantuan umum — terlihat semua orang" className="shrink-0 rounded border border-emerald-700 px-2 py-0.5 text-[11px] font-bold text-emerald-400">
+              BANTUAN UMUM
             </span>
           ) : null}
           {!renaming && (
             <div className="flex shrink-0 items-center">
-              <button type="button" onClick={() => { setNewName(detail.group.name); setRenaming(true); }} title="Rename group" className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200">
-                Rename
+              <button type="button" onClick={() => { setNewName(detail.group.name); setRenaming(true); }} title="Ganti nama grup" className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200">
+                Ganti nama
               </button>
               <button
                 type="button"
@@ -706,13 +706,13 @@ function GroupView({
                     }
                   })();
                 }}
-                title={detail.group.is_public ? "Make private" : "Make public — anyone can ask here, your bots reply"}
+                title={detail.group.is_public ? "Tutup untuk umum" : "Buka untuk umum — siapa pun bisa bertanya, asistenmu menjawab"}
                 className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-emerald-400"
               >
-                {detail.group.is_public ? "Make private" : "Make public"}
+                {detail.group.is_public ? "Tutup" : "Buka umum"}
               </button>
               <button type="button" onClick={doDelete} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400">
-                Delete
+                Hapus
               </button>
             </div>
           )}
@@ -722,7 +722,7 @@ function GroupView({
             <span key={m.id} className="flex items-center gap-1.5 rounded-full bg-zinc-800 py-1 pl-1 pr-2 text-sm">
               <BotAvatar bot={m} size="sm" />
               <span className="text-zinc-200">{m.name}</span>
-              <button type="button" onClick={() => doRemove(m.id)} title={`Remove ${m.name}`} className="text-zinc-500 hover:text-red-400">
+              <button type="button" onClick={() => doRemove(m.id)} title={`Keluarkan ${m.name}`} className="text-zinc-500 hover:text-red-400">
                 ×
               </button>
             </span>
@@ -733,16 +733,16 @@ function GroupView({
               onClick={() => { setPicked([]); setPickFilter(""); setAddOpen(true); }}
               className="rounded-full border border-dashed border-zinc-700 px-3 py-1 text-sm text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
             >
-              + Add members
+              + Tambah anggota
             </button>
           )}
           {addOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Add members">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Tambah anggota">
               <div className="absolute inset-0 bg-black/60" onClick={() => { if (!busy) setAddOpen(false); }} />
               <div className="relative flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-zinc-700 bg-zinc-900 shadow-xl">
                 <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-                  <h3 className="font-bold text-zinc-100">Add members to {detail.group.name}</h3>
-                  <button type="button" onClick={() => setAddOpen(false)} disabled={busy} title="Close" className="rounded px-2 py-1 text-lg leading-none text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40">
+                  <h3 className="font-bold text-zinc-100">Tambah anggota ke {detail.group.name}</h3>
+                  <button type="button" onClick={() => setAddOpen(false)} disabled={busy} title="Tutup" className="rounded px-2 py-1 text-lg leading-none text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40">
                     ×
                   </button>
                 </div>
@@ -750,7 +750,7 @@ function GroupView({
                   <input
                     value={pickFilter}
                     onChange={(e) => setPickFilter(e.target.value)}
-                    placeholder="Search slaveBots..."
+                    placeholder="Cari asisten..."
                     autoFocus
                     className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
                   />
@@ -782,14 +782,14 @@ function GroupView({
                 </div>
                 <div className="flex items-center justify-between gap-2 border-t border-zinc-800 px-4 py-3">
                   <span className="text-xs text-zinc-500">
-                    {picked.length === 0 ? "Select slaveBots to add" : `${picked.length} selected`}
+                    {picked.length === 0 ? "Pilih asisten untuk ditambah" : `${picked.length} dipilih`}
                   </span>
                   <div className="flex gap-2">
                     <button type="button" onClick={() => setAddOpen(false)} disabled={busy} className="rounded-md px-3 py-1.5 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40">
-                      Cancel
+                      Batal
                     </button>
                     <button type="button" onClick={doAdd} disabled={picked.length === 0 || busy} className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
-                      {busy ? "Adding..." : `Add${picked.length > 0 ? ` (${picked.length})` : ""}`}
+                      {busy ? "Menambah..." : `Tambah${picked.length > 0 ? ` (${picked.length})` : ""}`}
                     </button>
                   </div>
                 </div>
@@ -797,16 +797,16 @@ function GroupView({
             </div>
           )}
         </div>
-        <div className="mt-2 flex items-center gap-1 border-t border-zinc-800 pt-2">
+          <div className="mt-2 flex items-center gap-1 border-t border-zinc-800 pt-2">
           <button type="button" onClick={() => setTab("chat")} className={`rounded-md px-3 py-1 text-xs font-bold ${tab === "chat" ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-200"}`}>
             💬 Chat
           </button>
           <button type="button" onClick={openBoard} className={`rounded-md px-3 py-1 text-xs font-bold ${tab === "board" ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-200"}`}>
-            ▤ Board{detail.group.project_id ? "" : " +"}
+            ▤ Tugas{detail.group.project_id ? "" : " +"}
           </button>
           {tab === "board" && detail.group.project_id && (
-            <button type="button" onClick={() => setBoardFull((v) => !v)} title={boardFull ? "Side-by-side: chat + board" : "Fullscreen board, chat minimized"} className="ml-auto rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200">
-              {boardFull ? "⇲ Side" : "⛶ Full"}
+            <button type="button" onClick={() => setBoardFull((v) => !v)} title={boardFull ? "Tampilkan chat di samping" : "Tugas layar penuh, chat mengecil"} className="ml-auto rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200">
+              {boardFull ? "⇲ Samping" : "⛶ Penuh"}
             </button>
           )}
         </div>
@@ -817,8 +817,8 @@ function GroupView({
       ) : !detail.group.project_id ? (
         <div className="rounded-xl border border-dashed border-zinc-700 bg-zinc-900/60 p-8 text-center">
           <div className="text-2xl">▤</div>
-          <h3 className="mt-2 font-bold text-zinc-100">Channel ini belum punya board</h3>
-          <p className="mx-auto mt-1 max-w-md text-sm text-zinc-400">Tempel project yang sudah ada, atau buat board baru — task otomatis kefilter channel ini.</p>
+          <h3 className="mt-2 font-bold text-zinc-100">Channel ini belum punya daftar tugas</h3>
+          <p className="mx-auto mt-1 max-w-md text-sm text-zinc-400">Tempel daftar yang sudah ada, atau buat baru — tugas otomatis hanya untuk channel ini.</p>
           {teamProjects.length > 0 && (
             <div className="mx-auto mt-3 flex max-w-md gap-2">
               <select
@@ -827,7 +827,7 @@ function GroupView({
                 disabled={attachBusy}
                 className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none disabled:opacity-40"
               >
-                <option value="">Pilih project…</option>
+                <option value="">Pilih daftar tugas…</option>
                 {teamProjects.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
@@ -838,7 +838,7 @@ function GroupView({
             <input
               value={newProjName}
               onChange={(e) => setNewProjName(e.target.value)}
-              placeholder="atau nama board baru…"
+              placeholder="atau nama daftar baru…"
               className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
             />
             <button type="submit" disabled={!newProjName.trim() || attachBusy} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
@@ -964,7 +964,7 @@ function MeetingView({
     try {
       const res = await meetingChat(detail.meeting.id, task.trim());
       setTask("");
-      setSavedNote(`Heard by ${res.replies.length} bot(s) · ${formatUsd(res.total_cost_usd)}`);
+      setSavedNote(`Dijawab ${res.replies.length} asisten · ${formatUsd(res.total_cost_usd)}`);
       await load();
       await onChanged();
     } catch (err) {
@@ -988,27 +988,27 @@ function MeetingView({
     return (
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-6">
         <div>
-          <h2 className="text-xl font-bold">Start a meeting</h2>
+          <h2 className="text-xl font-bold">Mulai rapat</h2>
           <p className="mt-1 text-sm text-zinc-400">
-            Notify your slaveBots about a topic. Each bot reads its role and decides by itself whether to join.
-            Up to 8 bots are asked per meeting.
+            Beri tahu asisten tentang suatu topik. Masing-masing membaca tugasnya lalu memutuskan ikut atau tidak.
+            Maksimal 8 asisten per rapat.
           </p>
         </div>
-        {activeBots.length === 0 && <p className="text-sm text-zinc-400">Create a slaveBot first — there is nobody to meeting with yet.</p>}
+        {activeBots.length === 0 && <p className="text-sm text-zinc-400">Buat asisten dulu — belum ada yang bisa diajak rapat.</p>}
         <form onSubmit={start} className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
           <label className="text-sm font-semibold text-zinc-300">
-            Topic
+            Topik
             <input
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
-              placeholder="e.g. Plan next week's launch content"
+              placeholder="cth. Rencana promo akhir pekan"
               maxLength={500}
               className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
             />
           </label>
           {activeBots.length > 0 && (
             <div className="text-sm">
-              <div className="mb-1 font-semibold text-zinc-300">Notify (each decides to join or not)</div>
+              <div className="mb-1 font-semibold text-zinc-300">Beri tahu (masing-masing memutuskan ikut/tidak)</div>
               <div className="flex flex-col gap-1">
                 {activeBots.map((b) => (
                   <label key={b.id} className="flex cursor-pointer items-center gap-2 text-zinc-200">
@@ -1023,7 +1023,7 @@ function MeetingView({
           )}
           {error && <p className="text-sm text-red-400">{error}</p>}
           <button type="submit" disabled={busy || !topic.trim() || selected.length === 0} className="self-start rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
-            {busy ? "Asking bots to join..." : "Start meeting"}
+            {busy ? "Menanyakan asisten..." : "Mulai rapat"}
           </button>
         </form>
       </div>
@@ -1049,7 +1049,7 @@ function MeetingView({
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-lg font-bold">{detail.meeting.topic}</h2>
           <button type="button" onClick={remove} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400">
-            Delete
+            Hapus
           </button>
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -1058,7 +1058,7 @@ function MeetingView({
               key={p.slavebot_id}
               type="button"
               onClick={() => onOpenBot(p.slavebot_id)}
-              title={p.reason || "joined"}
+              title={p.reason || "ikut"}
               className="flex items-center gap-1.5 rounded-full border border-emerald-800 bg-emerald-950 py-1 pl-1 pr-2 text-sm hover:bg-emerald-900"
             >
               <BotAvatar bot={avatarFor(p.slavebot_id, p.bot_name)} size="sm" />
@@ -1070,7 +1070,7 @@ function MeetingView({
               key={p.slavebot_id}
               type="button"
               onClick={() => onOpenBot(p.slavebot_id)}
-              title={p.reason ? `Declined: ${p.reason}` : "Declined"}
+              title={p.reason ? `Tidak ikut: ${p.reason}` : "Tidak ikut"}
               className="flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900 py-1 pl-1 pr-2 text-sm opacity-70 hover:opacity-100"
             >
               <BotAvatar bot={avatarFor(p.slavebot_id, p.bot_name)} size="sm" />
@@ -1079,13 +1079,13 @@ function MeetingView({
           ))}
         </div>
         {declined.length > 0 && (
-          <p className="mt-1 text-xs text-zinc-500">Hover a declined bot to see why it sat out.</p>
+          <p className="mt-1 text-xs text-zinc-500">Arahkan kursor ke yang tidak ikut untuk tahu alasannya.</p>
         )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {detail.messages.length === 0 && (
-          <p className="py-8 text-center text-zinc-500">The bots that joined are listening. Say something to start the discussion.</p>
+          <p className="py-8 text-center text-zinc-500">Asisten yang ikut sudah siap. Sapa mereka untuk mulai diskusi.</p>
         )}
         {detail.messages.map((m) => (
           <div key={m.id} className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
@@ -1096,7 +1096,7 @@ function MeetingView({
             )}
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2">
-                <span className="text-sm font-bold">{m.slavebot_id ? (m.bot_name ?? "SlaveBot") : "You"}</span>
+                <span className="text-sm font-bold">{m.slavebot_id ? (m.bot_name ?? "Asisten") : "Anda"}</span>
                 <span className="text-xs text-zinc-500">{new Date(m.created_at).toLocaleString()}</span>
               </div>
               <div className="whitespace-pre-wrap break-words text-[15px] text-zinc-200">{m.content}</div>
@@ -1204,13 +1204,13 @@ function SchedulesView({ botId }: { botId: string }) {
 
   return (
     <div className="mb-8 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
-      <h3 className="font-semibold text-zinc-200">Schedules</h3>
+      <h3 className="font-semibold text-zinc-200">Jadwal otomatis</h3>
       <p className="mb-3 mt-1 text-xs text-zinc-500">
-        The bot runs these by itself on Jakarta time — e.g. a morning briefing posted into its history.
-        You can also type <span className="text-zinc-300">/remind daily 07:00 ...</span> in chat, or <span className="text-zinc-300">/schedules</span> to list.
+        Asisten mengerjakan ini sendiri sesuai jam Jakarta — cth. ringkasan pagi yang masuk ke riwayat chat.
+        Bisa juga ketik <span className="text-zinc-300">/remind daily 07:00 ...</span> di chat, atau <span className="text-zinc-300">/schedules</span> untuk lihat daftar.
       </p>
       {schedules.length === 0 ? (
-        <p className="mb-3 text-sm text-zinc-500">No schedules yet.</p>
+        <p className="mb-3 text-sm text-zinc-500">Belum ada jadwal.</p>
       ) : (
         <ul className="mb-4 flex flex-col gap-2">
           {schedules.map((s) => (
@@ -1219,16 +1219,16 @@ function SchedulesView({ botId }: { botId: string }) {
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-semibold text-zinc-200">{s.name}</span>
                 <span className="block truncate text-xs text-zinc-500">
-                  {s.kind === "interval" ? `every ${s.interval_minutes}m` : `${s.kind} ${s.time_hhmm} (${s.days})`}
-                  {" · next "}{s.next_run_at || "—"}
+                  {s.kind === "interval" ? `tiap ${s.interval_minutes} mnt` : `${s.kind} ${s.time_hhmm} (${s.days})`}
+                  {" · berikut "}{s.next_run_at || "—"}
                   {" · "}{s.prompt}
                 </span>
               </span>
               <button type="button" onClick={() => toggle(s)} className="rounded px-2 py-1 text-xs font-semibold text-zinc-300 hover:bg-zinc-800">
-                {s.active ? "Pause" : "Resume"}
+                {s.active ? "Jeda" : "Jalan"}
               </button>
               <button type="button" onClick={() => remove(s)} className="rounded px-2 py-1 text-xs font-semibold text-zinc-500 hover:bg-zinc-800 hover:text-red-400">
-                Delete
+                Hapus
               </button>
             </li>
           ))}
@@ -1236,41 +1236,41 @@ function SchedulesView({ botId }: { botId: string }) {
       )}
       <form onSubmit={create} className="grid grid-cols-2 gap-2">
         <label className="col-span-2 text-sm font-semibold text-zinc-300">
-          Task for the bot
-          <input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. Post a morning briefing" maxLength={1000} className={inputCls} />
+          Tugas untuk asisten
+          <input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="cth. Kirim ringkasan pagi" maxLength={1000} className={inputCls} />
         </label>
         <label className="text-sm font-semibold text-zinc-300">
-          Repeat
+          Ulangi
           <select value={kind} onChange={(e) => setKind(e.target.value)} className={inputCls}>
-            <option value="daily">Daily</option>
-            <option value="once">Once</option>
-            <option value="interval">Every N minutes</option>
+            <option value="daily">Harian</option>
+            <option value="once">Sekali</option>
+            <option value="interval">Tiap N menit</option>
           </select>
         </label>
         {kind === "interval" ? (
           <label className="text-sm font-semibold text-zinc-300">
-            Minutes (5 or more)
+            Menit (5 atau lebih)
             <input value={interval} onChange={(e) => setInterval(e.target.value)} inputMode="numeric" className={inputCls} />
           </label>
         ) : (
           <label className="text-sm font-semibold text-zinc-300">
-            Time (Jakarta)
+            Jam (Jakarta)
             <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputCls} />
           </label>
         )}
         {kind === "daily" && (
           <label className="col-span-2 text-sm font-semibold text-zinc-300">
-            Days
+            Hari
             <select value={days} onChange={(e) => setDays(e.target.value)} className={inputCls}>
-              <option value="all">Every day</option>
-              <option value="weekdays">Weekdays</option>
-              <option value="weekends">Weekends</option>
+              <option value="all">Setiap hari</option>
+              <option value="weekdays">Senin–Jumat</option>
+              <option value="weekends">Akhir pekan</option>
             </select>
           </label>
         )}
         <div className="col-span-2">
           <button type="submit" disabled={busy || !prompt.trim()} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
-            {busy ? "Adding..." : "Add schedule"}
+            {busy ? "Menambah..." : "Tambah jadwal"}
           </button>
         </div>
       </form>
@@ -1329,13 +1329,13 @@ function TeamView({ bot, onOpenBot, onTeamChanged }: { bot: SlaveBot; onOpenBot:
 
   return (
     <div className="mb-8 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
-      <h3 className="font-semibold text-zinc-200">Team</h3>
+      <h3 className="font-semibold text-zinc-200">Tim kecil</h3>
       <p className="mb-3 mt-1 text-xs text-zinc-500">
-        Managers grow sub-bots for specific tasks. Sub-bots report to their manager and can be meetingd, scheduled, and grouped like any bot.
+        Asisten bisa punya anak buah untuk tugas khusus. Anak buah lapor ke atasannya dan bisa diajak rapat, dijadwal, dan dimasukkan grup seperti asisten biasa.
       </p>
       {parent && (
         <p className="mb-2 text-sm text-zinc-300">
-          Reports to{" "}
+          Atasan:{" "}
           <button type="button" onClick={() => onOpenBot(parent.id)} className="font-semibold text-emerald-400 hover:underline">
             {parent.name}
           </button>
@@ -1355,32 +1355,32 @@ function TeamView({ bot, onOpenBot, onTeamChanged }: { bot: SlaveBot; onOpenBot:
           ))}
         </ul>
       ) : (
-        <p className="mb-3 text-sm text-zinc-500">No sub-bots yet.</p>
+        <p className="mb-3 text-sm text-zinc-500">Belum ada anak buah.</p>
       )}
       <form onSubmit={spawn} className="grid grid-cols-2 gap-2">
         <label className="text-sm font-semibold text-zinc-300">
-          Sub-bot name
+          Nama anak buah
           <input
             value={subName}
             onChange={(e) => setSubName(e.target.value)}
-            placeholder="e.g. Scout"
+            placeholder="cth. Pramuniaga"
             maxLength={40}
             className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
           />
         </label>
         <label className="text-sm font-semibold text-zinc-300">
-          Task / role
+          Tugas
           <input
             value={subRole}
             onChange={(e) => setSubRole(e.target.value)}
-            placeholder="e.g. Track competitor prices"
+            placeholder="cth. Catat harga kompetitor"
             maxLength={120}
             className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
           />
         </label>
         <div className="col-span-2">
           <button type="submit" disabled={busy || !subName.trim()} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
-            {busy ? "Spawning..." : "Spawn sub-bot"}
+            {busy ? "Menambah..." : "Tambah anak buah"}
           </button>
         </div>
       </form>
@@ -1390,13 +1390,13 @@ function TeamView({ bot, onOpenBot, onTeamChanged }: { bot: SlaveBot; onOpenBot:
 }
 
 const TEAM_PROVIDER_PRESETS = [
-  { id: "meta", label: "Meta (Spark / Wonder) — default", needs_url: false, placeholder: "", help: "One key from dev.meta.ai. Models: muse-spark-1.3, muse-wonder-1.0." },
-  { id: "openrouter", label: "OpenRouter (last resort)", needs_url: false, placeholder: "", help: "Key sk-or-v1-… from openrouter.ai/keys. Fixed model list." },
-  { id: "opencode", label: "OpenCode (Go subscription or Console credits)", needs_url: true, placeholder: "https://opencode.ai/inference/go/openai/v1", help: "Go subscribers: https://opencode.ai/inference/go/openai/v1. Pay-as-you-go instead: https://opencode.ai/inference/openai/v1 (needs console credits). Do NOT append /chat/completions." },
-  { id: "ollama", label: "Ollama (local, no key)", needs_url: true, placeholder: "http://localhost:11434/v1", help: "Local Ollama. No key needed. Model must be pulled first — run `ollama list` and use that exact id in Bot settings." },
-  { id: "baseten", label: "Baseten", needs_url: true, placeholder: "https://inference.baseten.co/v1", help: "Your Baseten deployment base URL + API key." },
-  { id: "modal", label: "Modal", needs_url: true, placeholder: "https://<you>--<app>.modal.run/v1", help: "Your deployed Modal function URL (API root) + key." },
-  { id: "custom", label: "Custom (any OpenAI-compatible server)", needs_url: true, placeholder: "http://127.0.0.1:1234/v1", help: "Any OpenAI-compatible server (vLLM, LM Studio, …). Root must end in /v1. Key optional only for localhost." },
+  { id: "meta", label: "Meta (disarankan)", needs_url: false, placeholder: "", help: "Satu kunci dari dev.meta.ai. Model: muse-spark-1.3, muse-wonder-1.0." },
+  { id: "openrouter", label: "OpenRouter (cadangan)", needs_url: false, placeholder: "", help: "Kunci sk-or-v1-… dari openrouter.ai/keys. Daftar model tetap." },
+  { id: "opencode", label: "OpenCode (langganan Go / kredit Console)", needs_url: true, placeholder: "https://opencode.ai/inference/go/openai/v1", help: "Pelanggan Go: https://opencode.ai/inference/go/openai/v1. Bayar per pakai: https://opencode.ai/inference/openai/v1 (butuh kredit console). Jangan tambah /chat/completions." },
+  { id: "ollama", label: "Ollama (lokal, tanpa kunci)", needs_url: true, placeholder: "http://localhost:11434/v1", help: "Ollama lokal. Tanpa kunci. Model harus diunduh dulu — jalankan `ollama list` lalu pakai id persisnya di pengaturan Asisten." },
+  { id: "baseten", label: "Baseten", needs_url: true, placeholder: "https://inference.baseten.co/v1", help: "Alamat + kunci API deployment Baseten milikmu." },
+  { id: "modal", label: "Modal", needs_url: true, placeholder: "https://<you>--<app>.modal.run/v1", help: "Alamat fungsi Modal milikmu (akar API) + kunci." },
+  { id: "custom", label: "Lainnya (server OpenAI-compatible)", needs_url: true, placeholder: "http://127.0.0.1:1234/v1", help: "Server OpenAI-compatible apa pun (vLLM, LM Studio, …). Alamat harus berakhiran /v1. Kunci boleh kosong hanya untuk localhost." },
 ];
 
 function isLocalHost(v: string): boolean {
@@ -1468,7 +1468,7 @@ function TeamProviderSection({ team, onChanged }: { team: TeamDetail["team"]; on
   }
 
   async function remove() {
-    if (!window.confirm("Remove this team's API key? Bots in this team will stop working until a new key is added.")) return;
+    if (!window.confirm("Hapus kunci AI tim ini? Asisten tidak bisa menjawab sampai ada kunci baru.")) return;
     setBusy(true);
     setError("");
     try {
@@ -1484,14 +1484,15 @@ function TeamProviderSection({ team, onChanged }: { team: TeamDetail["team"]; on
   return (
     <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
       <div className="flex items-center justify-between">
-        <h4 className="text-sm font-bold uppercase tracking-wide text-zinc-500">AI provider</h4>
+        <h4 className="text-sm font-bold uppercase tracking-wide text-zinc-500">Kunci AI</h4>
         <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${team.provider_key_set || keyOptional ? "bg-emerald-950 text-emerald-300" : "bg-amber-950 text-amber-300"}`}>
-          {team.provider_key_set ? "key saved" : keyOptional ? "keyless local OK" : "key missing"}
+          {team.provider_key_set ? "sudah ada" : keyOptional ? "tanpa kunci OK" : "belum ada"}
         </span>
       </div>
+      <p className="mt-1 text-[11px] text-zinc-500">Agar asisten bisa menjawab, tim ini butuh kunci dari penyedia AI (mis. Meta, OpenRouter). Satu kunci untuk satu tim.</p>
       <form onSubmit={save} className="mt-3 space-y-3">
         <label className="block text-xs font-semibold text-zinc-300">
-          Preset
+          Penyedia
           <select value={preset} onChange={(e) => { setPreset(e.target.value); setTestResult(null); }} className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none">
             {TEAM_PROVIDER_PRESETS.map((x) => (
               <option key={x.id} value={x.id}>{x.label}</option>
@@ -1501,54 +1502,54 @@ function TeamProviderSection({ team, onChanged }: { team: TeamDetail["team"]; on
         <p className="text-[11px] leading-snug text-zinc-500">{meta.help}</p>
         {needsUrl && (
           <label className="block text-xs font-semibold text-zinc-300">
-            Base URL <span className="font-normal text-zinc-500">(API root ending in /v1)</span>
+            Alamat server <span className="font-normal text-zinc-500">(berakhiran /v1)</span>
             <input value={baseUrl} onChange={(e) => { setBaseUrl(e.target.value); setTestResult(null); }} placeholder={meta.placeholder || "https://..."} autoComplete="off" spellCheck={false} className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 font-mono text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
           </label>
         )}
         <label className="block text-xs font-semibold text-zinc-300">
-          API key {team.provider_key_set ? "(saved — enter a new one to replace)" : keyOptional ? "(optional for local)" : "(required)"}
-          <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={team.provider_key_set ? "••••••••" : keyOptional ? "leave empty for local" : "paste key..."} autoComplete="off" className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+          Kunci {team.provider_key_set ? "(sudah tersimpan — isi baru untuk ganti)" : keyOptional ? "(boleh kosong untuk server lokal)" : "(wajib diisi)"}
+          <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={team.provider_key_set ? "••••••••" : keyOptional ? "kosongkan untuk lokal" : "tempel kunci..."} autoComplete="off" className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
         </label>
         {needsUrl && baseUrl.trim() && (
           <div className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Requests will POST to</div>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Akan menghubungi</div>
             <div className="mt-0.5 break-all font-mono text-[12px] text-emerald-300">{normalizedEndpoint() || "—"}</div>
             {baseUrl.trim().endsWith("/chat/completions") && (
-              <div className="mt-1 text-[11px] text-amber-300">You pasted the full endpoint — we strip the trailing /chat/completions automatically.</div>
+              <div className="mt-1 text-[11px] text-amber-300">Alamat kepanjangan — akhiran /chat/completions kami buang otomatis.</div>
             )}
           </div>
         )}
         <label className="block text-xs font-semibold text-zinc-300">
-          Test model <span className="font-normal text-zinc-500">(exact id from your server's /v1/models)</span>
-          <input value={testModel} onChange={(e) => setTestModel(e.target.value)} placeholder="e.g. qwen3:8b — leave empty to use first listed model" autoComplete="off" spellCheck={false} className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 font-mono text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+          Model untuk tes <span className="font-normal text-zinc-500">(nama persis dari server)</span>
+          <input value={testModel} onChange={(e) => setTestModel(e.target.value)} placeholder="cth. qwen3:8b — kosongkan untuk pakai yang pertama" autoComplete="off" spellCheck={false} className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 font-mono text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
         </label>
         <div className="flex flex-wrap items-center gap-2">
           <button type="submit" disabled={busy || testing} className="rounded-md bg-zinc-700 px-3 py-1.5 text-sm font-bold text-white hover:bg-zinc-600 disabled:opacity-50">
-            {busy ? "Saving..." : "Save provider"}
+            {busy ? "Menyimpan..." : "Simpan"}
           </button>
           <button type="button" onClick={runTest} disabled={testing || busy} className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
-            {testing ? "Testing..." : "Save + test connection"}
+            {testing ? "Mengetes..." : "Simpan + tes koneksi"}
           </button>
           {team.provider_key_set && (
             <button type="button" onClick={remove} disabled={busy || testing} className="rounded px-2 py-1 text-xs text-zinc-500 hover:text-red-400 disabled:opacity-50">
-              Remove key
+              Hapus kunci
             </button>
           )}
         </div>
         {testResult && (
           <div className={`rounded-lg border px-3 py-2 text-[12px] ${testResult.ok ? "border-emerald-800 bg-emerald-950/60 text-emerald-200" : "border-red-800 bg-red-950/50 text-red-200"}`}>
-            <div className="font-bold">{testResult.ok ? "Connection OK" : "Connection failed"}</div>
+            <div className="font-bold">{testResult.ok ? "Koneksi OK" : "Koneksi gagal"}</div>
             {testResult.endpoint && <div className="mt-0.5 break-all font-mono text-[11px] opacity-80">{testResult.endpoint}{testResult.model ? ` · ${testResult.model}` : ""}</div>}
             {testResult.models && testResult.models.length > 0 && (
-              <div className="mt-1 opacity-90">Server models: <span className="font-mono">{testResult.models.slice(0, 8).join(", ")}</span>{testResult.models.length > 8 ? ` +${testResult.models.length - 8} more` : ""}</div>
+              <div className="mt-1 opacity-90">Model di server: <span className="font-mono">{testResult.models.slice(0, 8).join(", ")}</span>{testResult.models.length > 8 ? ` +${testResult.models.length - 8} lagi` : ""}</div>
             )}
             {testResult.notes?.map((n, i) => <div key={i} className="mt-0.5 opacity-80">{n}</div>)}
             {!testResult.ok && testResult.error && <div className="mt-1">{testResult.error}</div>}
           </div>
         )}
         <p className="text-[11px] text-zinc-500">
-          {team.provider_key_set ? "Team key active — this key pays the provider directly." : keyOptional ? "No key saved — OK for keyless local servers only." : "No key yet — bots in this team cannot chat until an owner or admin adds one."}
-          {" "}Fixing a 404? The model id must exactly match your server, and the base URL must be the /v1 root.
+          {team.provider_key_set ? "Kunci aktif — tagihan AI dibayar langsung oleh kunci ini." : keyOptional ? "Belum ada kunci — boleh kosong hanya untuk server lokal." : "Belum ada kunci — asisten tidak bisa menjawab sampai pemilik/admin menambahkan."}
+          {" "}Error 404? Nama model harus persis sama dengan di server, dan alamat harus akar /v1.
         </p>
         {error && !testResult && <p className="text-xs text-red-400">{error}</p>}
       </form>
@@ -1619,8 +1620,8 @@ function TeamsView({
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
-      <h2 className="text-xl font-bold">Teams</h2>
-      <p className="mt-1 text-sm text-zinc-400">Each team owns its slaveBots, groups, and meetings. Owners and admins manage everything; staff only see bots granted to them.</p>
+      <h2 className="text-xl font-bold">Tim</h2>
+      <p className="mt-1 text-sm text-zinc-400">Satu tim punya asisten AI, grup, dan rapatnya sendiri. Pemilik dan admin mengatur semuanya; anggota biasa hanya melihat asisten yang dibagikan ke mereka.</p>
       <form
         onSubmit={(e) => { e.preventDefault(); if (name.trim()) void run(() => createTeam(name.trim())); setName(""); }}
         className="mt-4 flex gap-2"
@@ -1628,11 +1629,11 @@ function TeamsView({
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="New team name"
+          placeholder="Nama tim baru, cth. Warung Bu Tini"
           className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
         />
         <button type="submit" disabled={busy || !name.trim()} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
-          Create
+          Buat
         </button>
       </form>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -1643,7 +1644,7 @@ function TeamsView({
             onClick={() => onSelect(t.id)}
             className={`rounded-md border px-3 py-1.5 text-sm font-semibold ${t.id === activeId ? "border-emerald-600 bg-zinc-800 text-zinc-100" : "border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}
           >
-            {t.name} <span className="text-xs text-zinc-500">{t.role}{t.personal ? " · personal" : ""}</span>
+            {t.name} <span className="text-xs text-zinc-500">{t.role}{t.personal ? " · pribadi" : ""}</span>
           </button>
         ))}
       </div>
@@ -1653,8 +1654,8 @@ function TeamsView({
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-bold">{detail.team.name}</h3>
             {canManage && !detail.team.personal && (
-              <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Delete team ${detail.team.name}? Its bots are archived; groups and meetings are removed.`)) void run(() => deleteTeam(detail.team.id)); }} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400 disabled:opacity-50">
-                Delete team
+              <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Hapus tim ${detail.team.name}? Asistennya diarsipkan; grup dan rapat dihapus.`)) void run(() => deleteTeam(detail.team.id)); }} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400 disabled:opacity-50">
+                Hapus tim
               </button>
             )}
           </div>
@@ -1667,10 +1668,10 @@ function TeamsView({
           )}
           {!canManage && (
             <p className="mt-4 rounded-md border border-zinc-800 bg-zinc-800/40 px-3 py-2 text-xs text-zinc-500">
-              AI provider: {detail.team.provider || "meta"}{detail.team.provider_key_set ? " · key set" : " · no key yet — ask an owner or admin to add one"}.
+              Kunci AI: {detail.team.provider || "meta"}{detail.team.provider_key_set ? " · sudah ada" : " · belum ada — minta pemilik/admin menambahkan"}.
             </p>
           )}
-          <h4 className="mt-4 text-sm font-bold uppercase tracking-wide text-zinc-500">Members ({detail.members.length})</h4>
+          <h4 className="mt-4 text-sm font-bold uppercase tracking-wide text-zinc-500">Anggota ({detail.members.length})</h4>
           <ul className="mt-2 space-y-1">
             {detail.members.map((m) => (
               <li key={m.user_id} className="flex items-center gap-2 rounded-md bg-zinc-800/60 px-3 py-2 text-sm">
@@ -1684,7 +1685,7 @@ function TeamsView({
                   <span className="rounded border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">{m.role}</span>
                 )}
                 {canManage && m.user_id !== userId && (
-                  <button type="button" disabled={busy} onClick={() => void run(() => removeMember(detail.team.id, m.user_id))} className="rounded px-1 text-xs text-zinc-500 hover:text-red-400 disabled:opacity-50">Remove</button>
+                  <button type="button" disabled={busy} onClick={() => void run(() => removeMember(detail.team.id, m.user_id))} className="rounded px-1 text-xs text-zinc-500 hover:text-red-400 disabled:opacity-50">Keluarkan</button>
                 )}
               </li>
             ))}
@@ -1706,11 +1707,11 @@ function TeamsView({
                 <option value="staff">staff</option>
               </select>
               <button type="submit" disabled={busy || !inviteEmail.trim()} className="rounded-md bg-zinc-700 px-3 py-2 text-sm font-bold text-white hover:bg-zinc-600 disabled:opacity-50">
-                Invite
+                Undang
               </button>
             </form>
           )}
-          <h4 className="mt-5 text-sm font-bold uppercase tracking-wide text-zinc-500">SlaveBots ({detail.bots.length})</h4>
+          <h4 className="mt-5 text-sm font-bold uppercase tracking-wide text-zinc-500">Asisten AI ({detail.bots.length})</h4>
           <ul className="mt-2 space-y-1">
             {detail.bots.map((b) => {
               const owner = detail.members.find((m) => m.user_id === b.owner_user_id);
@@ -1722,7 +1723,7 @@ function TeamsView({
                 </div>
                 {canManage && (
                   <label className="mt-1 flex items-center gap-2 text-xs text-zinc-400">
-                    Partner
+                    Partner (penanggung jawab)
                     <select
                       value={b.owner_user_id}
                       disabled={busy}
@@ -1744,11 +1745,11 @@ function TeamsView({
                           key={m.user_id}
                           type="button"
                           disabled={busy}
-                          title={has ? `Revoke ${b.name} from ${m.email}` : `Grant ${b.name} to ${m.email}`}
+                          title={has ? `Cabut akses ${b.name} dari ${m.email}` : `Beri akses ${b.name} ke ${m.email}`}
                           onClick={() => void run(() => has ? revokeBotAccess(detail.team.id, b.id, m.user_id, m.bot_ids) : grantBotAccess(detail.team.id, b.id, m.user_id, m.bot_ids))}
                           className={`rounded border px-2 py-0.5 text-xs ${has ? "border-emerald-700 text-emerald-400" : "border-zinc-700 text-zinc-500 hover:text-zinc-200"}`}
                         >
-                          {m.email}: {has ? "granted" : "grant"}
+                          {m.email}: {has ? "boleh" : "beri akses"}
                         </button>
                       );
                     })}
@@ -1757,13 +1758,13 @@ function TeamsView({
               </li>
               );
             })}
-            {detail.bots.length === 0 && <p className="text-sm text-zinc-600">No bots in this team yet.</p>}
+            {detail.bots.length === 0 && <p className="text-sm text-zinc-600">Belum ada asisten di tim ini.</p>}
           </ul>
           {canManage && (
             <>
-              <h4 className="mt-5 text-sm font-bold uppercase tracking-wide text-zinc-500">Recent activity (all bots)</h4>
+              <h4 className="mt-5 text-sm font-bold uppercase tracking-wide text-zinc-500">Obrolan terakhir (semua asisten)</h4>
               {activity.length === 0 ? (
-                <p className="mt-1 text-sm text-zinc-600">No bot conversations yet.</p>
+                <p className="mt-1 text-sm text-zinc-600">Belum ada obrolan asisten.</p>
               ) : (
                 <ul className="mt-2 max-h-96 space-y-1 overflow-y-auto">
                   {activity.map((a, i) => (
@@ -1958,7 +1959,7 @@ function BotView({
             <button
               type="button"
               onClick={() => setTitleEdit(bot.name)}
-              title="Rename slaveBot"
+              title="Ganti nama asisten"
               className="rounded px-1 text-left text-xl font-bold text-zinc-100 hover:bg-zinc-800"
             >
               {bot.name}
@@ -1990,34 +1991,34 @@ function BotView({
               onBlur={() => setTitleEdit(null)}
               autoFocus
               maxLength={40}
-              aria-label="Rename slaveBot"
+              aria-label="Ganti nama asisten"
               className="w-full max-w-xs rounded-md border border-emerald-600 bg-zinc-800 px-2 py-0.5 text-xl font-bold text-zinc-100 focus:outline-none"
             />
           )}
           {bot.title && <p className="text-sm text-zinc-400">{bot.title}</p>}
-          <p className="mt-0.5 text-xs text-zinc-500">◈ Partner: {partnerName} · transfer in Teams settings</p>
+          <p className="mt-0.5 text-xs text-zinc-500">◈ Partner: {partnerName} · ganti di Pengaturan → Tim</p>
         </div>
       </div>
 
       <form onSubmit={save} className="mb-8 flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
-        <h3 className="font-semibold text-zinc-200">Identity</h3>
+        <h3 className="font-semibold text-zinc-200">Identitas</h3>
         <label className="text-sm font-semibold text-zinc-300">
-          Name
+          Nama
           <input value={name} onChange={(e) => { setName(e.target.value); setSaved(false); }} maxLength={40} className={inputCls} />
         </label>
         <label className="text-sm font-semibold text-zinc-300">
-          Role (personal identity)
+          Tugas
           <input
             value={role}
             onChange={(e) => { setRole(e.target.value); setSaved(false); }}
-            placeholder="e.g. Sales manager — tracks leads and reminds me to follow up"
+            placeholder="cth. Kasir — rekap penjualan harian"
             maxLength={120}
             className={inputCls}
           />
         </label>
-        <p className="-mt-2 text-xs text-zinc-500">The role guides meeting join decisions: bots join only when the topic fits their job. New bots ask for this in their first message.</p>
+        <p className="-mt-2 text-xs text-zinc-500">Tugas menentukan kapan asisten ikut rapat: hanya topik yang cocok dengan pekerjaannya. Asisten baru menanyakan ini di pesan pertama.</p>
         <label className="text-sm font-semibold text-zinc-300">
-          Avatar
+          Foto
           <span className="mt-1 flex items-center gap-3">
             <input
               ref={fileRef}
@@ -2027,12 +2028,12 @@ function BotView({
               onChange={(e) => onAvatarFile(e.target.files?.[0])}
             />
             <button type="button" disabled={avatarBusy} onClick={() => fileRef.current?.click()} className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800 disabled:opacity-50">
-              {avatarBusy ? "Uploading..." : "Upload image (max 2 MB)"}
+              {avatarBusy ? "Mengunggah..." : "Unggah foto (maks 2 MB)"}
             </button>
           </span>
         </label>
         <label className="text-sm font-semibold text-zinc-300">
-          Model <span className="font-normal text-zinc-500">(exact id your server exposes)</span>
+          Model AI <span className="font-normal text-zinc-500">(nama persis dari penyedia AI)</span>
           <input value={model} onChange={(e) => { setModel(e.target.value); setSaved(false); }} list="bot-model-list" placeholder={providerInfo?.custom_allowed ? (providerInfo.example_models || "e.g. qwen3:8b") : "pick a model"} spellCheck={false} className={`${inputCls} font-mono ${!model.trim() ? "border-amber-600" : ""}`} />
           <datalist id="bot-model-list">
             {(providerInfo?.models ?? []).map((m) => (
@@ -2043,19 +2044,19 @@ function BotView({
           </datalist>
           {providerInfo && (
             <span className="mt-1 block text-xs font-normal text-zinc-500">
-              Provider: {providerInfo.provider_label ?? providerInfo.provider}
-              {providerInfo.default ? ` · default ${providerInfo.default}` : " · no fixed list — free-form id"}
+              Penyedia: {providerInfo.provider_label ?? providerInfo.provider}
+              {providerInfo.default ? ` · bawaan ${providerInfo.default}` : " · ketik manual"}
               {providerInfo.example_models ? ` · ${providerInfo.example_models}` : ""}
             </span>
           )}
           {!model.trim() && (
             <span className="mt-1 block rounded-md border border-amber-800 bg-amber-950/60 px-2 py-1 text-xs font-normal text-amber-200">
-              No model set — chat will fail with a 404 until you save an exact model id here (check Teams → Save + test connection for the server's model list).
+              Model belum diisi — chat akan gagal. Isi nama model yang persis, atau cek daftar di Tim → Simpan + tes koneksi.
             </span>
           )}
         </label>
         <label className="text-sm font-semibold text-zinc-300">
-          Voice (spoken replies)
+          Suara (balasan bersuara)
           <select value={voice} onChange={(e) => { setVoice(e.target.value); setSaved(false); }} className={inputCls}>
             {AURA_VOICES.map((v) => (
               <option key={v} value={v}>
@@ -2064,7 +2065,7 @@ function BotView({
             ))}
           </select>
         </label>
-        <p className="-mt-2 text-xs text-zinc-500">Per-message Speak buttons and hands-free chat use this Aura voice via server TTS (billed per character); the Voice on toggle stays on the free built-in browser voice.</p>
+        <p className="-mt-2 text-xs text-zinc-500">Tombol Bicara dan chat hands-free memakai suara ini.</p>
         <label className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
           <input
             type="checkbox"
@@ -2072,63 +2073,63 @@ function BotView({
             onChange={(e) => { setRelay(e.target.checked); setSaved(false); }}
             className="h-4 w-4 accent-emerald-600"
           />
-          Let {bot.name} consult other bots on its own
+          Biarkan {bot.name} bertanya ke asisten lain sendiri
         </label>
-        <p className="-mt-2 text-xs font-normal text-zinc-500">When on, the bot may message teammates itself before replying. You send to one bot only.</p>
+        <p className="-mt-2 text-xs font-normal text-zinc-500">Jika aktif, asisten boleh bertanya ke rekan timnya dulu sebelum menjawab. Kamu cukup chat ke satu asisten.</p>
         <div className="grid grid-cols-3 gap-2">
           <label className="text-sm font-semibold text-zinc-300">
-            Active days
+            Hari aktif
             <select value={activeDays} onChange={(e) => { setActiveDays(e.target.value); setSaved(false); }} className={inputCls}>
-              <option value="all">Every day</option>
-              <option value="weekdays">Weekdays</option>
-              <option value="weekends">Weekends</option>
+              <option value="all">Setiap hari</option>
+              <option value="weekdays">Senin–Jumat</option>
+              <option value="weekends">Akhir pekan</option>
             </select>
           </label>
           <label className="text-sm font-semibold text-zinc-300">
-            Active from
+            Aktif dari jam
             <input type="time" value={activeStart} onChange={(e) => { setActiveStart(e.target.value); setSaved(false); }} className={inputCls} />
           </label>
           <label className="text-sm font-semibold text-zinc-300">
-            Active until
+            Aktif sampai jam
             <input type="time" value={activeEnd} onChange={(e) => { setActiveEnd(e.target.value); setSaved(false); }} className={inputCls} />
           </label>
         </div>
-        <p className="-mt-2 text-xs text-zinc-500">Scheduled tasks only fire inside this window (Jakarta time). Leave times empty for always-on.</p>
+        <p className="-mt-2 text-xs text-zinc-500">Tugas terjadwal hanya jalan di jam ini (waktu Jakarta). Kosongkan agar selalu aktif.</p>
         <label className="text-sm font-semibold text-zinc-300">
-          Memory
+          Ingatan
           <textarea
             value={memory}
             onChange={(e) => { setMemory(e.target.value); setSaved(false); }}
-            placeholder={"e.g. Owner prefers concise answers. Building a warung POS; stack: ..."}
+            placeholder={"cth. Pemilik suka jawaban singkat. Menu andalan: nasi timbel…"}
             rows={5}
             maxLength={4000}
             className={inputCls}
           />
         </label>
-        <p className="-mt-1 text-xs text-zinc-500">Memory is fed to the model as persistent context on every message.</p>
+        <p className="-mt-1 text-xs text-zinc-500">Ingatan selalu dibaca asisten di setiap chat sebagai fakta tentang usahamu.</p>
         {error && <p className="text-sm text-red-400">{error}</p>}
-        {saved && <p className="text-sm font-semibold text-emerald-400">Saved.</p>}
+        {saved && <p className="text-sm font-semibold text-emerald-400">Tersimpan.</p>}
         <div className="flex items-center gap-3">
           <button type="submit" disabled={busy} className="rounded-md bg-emerald-600 px-6 py-2 font-semibold text-white hover:bg-emerald-500 disabled:opacity-50">
-            {busy ? "Saving..." : "Save"}
+            {busy ? "Menyimpan..." : "Simpan"}
           </button>
           <button
             type="button"
             disabled={busy}
             onClick={togglePin}
-            title={bot.pinned ? "Unpin: no bot auto-opens on visit" : "Pin: this bot opens automatically on every visit"}
+            title={bot.pinned ? "Lepas: tidak ada asisten yang terbuka otomatis" : "Sematkan: asisten ini terbuka otomatis tiap kunjungan"}
             className={`rounded-md border px-4 py-2 text-sm font-semibold disabled:opacity-50 ${bot.pinned ? "border-emerald-600 text-emerald-400 hover:bg-emerald-950" : "border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
           >
-            {bot.pinned ? "Unpin bot" : "Pin bot"}
+            {bot.pinned ? "Lepas" : "Sematkan"}
           </button>
           <button
             type="button"
             disabled={busy}
             onClick={toggleArchive}
-            title={bot.archived ? "Restore this bot to the active list" : "Hide this bot from lists, groups, and crons (history is kept)"}
+            title={bot.archived ? "Kembalikan asisten ke daftar aktif" : "Sembunyikan asisten (riwayat tetap ada)"}
             className={`rounded-md border px-4 py-2 text-sm font-semibold disabled:opacity-50 ${bot.archived ? "border-emerald-600 text-emerald-400 hover:bg-emerald-950" : "border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
           >
-            {bot.archived ? "Restore bot" : "Archive bot"}
+            {bot.archived ? "Kembalikan" : "Arsipkan"}
           </button>
         </div>
       </form>
@@ -2139,25 +2140,25 @@ function BotView({
 
       <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="font-semibold text-zinc-200">Conversation recaps</h3>
+          <h3 className="font-semibold text-zinc-200">Ringkasan obrolan</h3>
           <button type="button" disabled={summarizing} onClick={summarizeNow} className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800 disabled:opacity-50">
-            {summarizing ? <Spinner /> : "Summarize now"}
+            {summarizing ? <Spinner /> : "Buat ringkasan"}
           </button>
         </div>
-        <p className="mb-3 text-xs text-zinc-500">Daily recaps are generated every night; weekly on Mondays; monthly on the 1st. The bot reads these as older context.</p>
+        <p className="mb-3 text-xs text-zinc-500">Ringkasan harian dibuat tiap malam; mingguan tiap Senin; bulanan tiap tanggal 1. Asisten membacanya sebagai ingatan lama.</p>
         {!summaries ? (
           <div className="space-y-2" aria-label="Loading summaries">
             <div className="loading-skeleton h-10 w-full" />
             <div className="loading-skeleton h-10 w-full" />
           </div>
         ) : summaries.daily.length + summaries.weekly.length + summaries.monthly.length === 0 ? (
-          <p className="text-sm text-zinc-400">No recaps yet — chat first, then summarize.</p>
+          <p className="text-sm text-zinc-400">Belum ada ringkasan — chat dulu, lalu buat ringkasan.</p>
         ) : (
           (["monthly", "weekly", "daily"] as const).map((period) =>
             summaries[period].map((s) => (
               <details key={s.id} className="mb-2 rounded-md border border-zinc-800 bg-zinc-950 p-3">
                 <summary className="cursor-pointer text-sm font-semibold text-zinc-300">
-                  {period} · {s.period_key}
+                  {period === "monthly" ? "Bulanan" : period === "weekly" ? "Mingguan" : "Harian"} · {s.period_key}
                 </summary>
                 <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-400">{s.content}</p>
               </details>
@@ -2214,29 +2215,29 @@ function FlySection({ teamId }: { teamId: string | null }) {
 
   return (
     <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-      <h3 className="mb-1 text-sm font-bold uppercase tracking-wide text-zinc-500">Fly.io — team machines (prod + dev/harness)</h3>
-      <p className="mb-2 text-xs text-zinc-500">Owner connects their own Fly API token. Slaver provisions 2 isolated machines: <b>prod</b> (stable, public iframe) + <b>dev</b> (sandbox + computer-use). Token stored server-side, never shown again.</p>
+      <h3 className="mb-1 text-sm font-bold uppercase tracking-wide text-zinc-500">Server (Fly.io)</h3>
+      <p className="mb-2 text-xs text-zinc-500">Sambungkan akun Fly.io milik usaha. Slaver menyiapkan 2 mesin terpisah: <b>prod</b> (stabil, untuk aplikasi yang dilihat pelanggan) + <b>dev</b> (untuk coba-coba). Token tersimpan aman di server.</p>
       {error && <p className="mb-2 text-sm text-red-400">{error}</p>}
       <form onSubmit={connect} className="flex flex-col gap-2">
         <div className="flex flex-col gap-2 sm:flex-row">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Account name" disabled={!teamId} className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40" />
-          <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="Org slug (optional)" disabled={!teamId} className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40" />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nama akun, cth. warung" disabled={!teamId} className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40" />
+          <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="Kode organisasi (opsional)" disabled={!teamId} className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40" />
         </div>
-        <input value={token} onChange={(e) => setTokenInput(e.target.value)} placeholder="Fly API token (fo1_...)" type="password" disabled={!teamId} className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40" />
-        <div><button type="submit" disabled={!token.trim() || !teamId || busy} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">{busy ? "Saving..." : "Connect Fly token"}</button></div>
+        <input value={token} onChange={(e) => setTokenInput(e.target.value)} placeholder="Token Fly (fo1_...)" type="password" disabled={!teamId} className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40" />
+        <div><button type="submit" disabled={!token.trim() || !teamId || busy} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">{busy ? "Menyimpan..." : "Sambungkan"}</button></div>
       </form>
       {accounts.map((a) => (
         <div key={a.id} className="mt-3 rounded-md bg-zinc-800/60 p-3 text-xs">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-zinc-100">{a.name}</span>
             <span className="font-mono text-zinc-500">{a.org || "default org"} · token ✓</span>
-            <button type="button" onClick={() => teamId && disconnectFly(teamId, a.id).then(refresh)} className="ml-auto text-zinc-500 hover:text-red-400">Disconnect</button>
+            <button type="button" onClick={() => teamId && disconnectFly(teamId, a.id).then(refresh)} className="ml-auto text-zinc-500 hover:text-red-400">Putuskan</button>
           </div>
           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-            <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="app slug, e.g. warung" className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
-            <button type="button" onClick={() => provision(a.id)} disabled={!slug.trim() || busy} className="rounded-md bg-sky-600 px-3 py-1.5 font-bold text-white hover:bg-sky-500 disabled:opacity-40">Provision prod+dev</button>
+            <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="nama pendek, cth. warung" className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+            <button type="button" onClick={() => provision(a.id)} disabled={!slug.trim() || busy} className="rounded-md bg-sky-600 px-3 py-1.5 font-bold text-white hover:bg-sky-500 disabled:opacity-40">Buatkan 2 mesin</button>
           </div>
-          <p className="mt-1 text-zinc-500">Creates <span className="font-mono">{slug || "slug"}-prod</span> (1cpu/512MB, Caddy) + <span className="font-mono">{slug || "slug"}-dev</span> (2cpu/2GB, sandbox).</p>
+          <p className="mt-1 text-zinc-500">Membuat <span className="font-mono">{slug || "slug"}-prod</span> (asli) + <span className="font-mono">{slug || "slug"}-dev</span> (uji coba).</p>
         </div>
       ))}
       {machines.length > 0 && (
@@ -2246,22 +2247,22 @@ function FlySection({ teamId }: { teamId: string | null }) {
               <span className={m.role === "prod" ? "font-bold text-emerald-400" : "font-bold text-sky-400"}>{m.role}</span>
               <span className="text-zinc-100">{m.app_name}</span>
               <span className="text-zinc-500">{m.machine_id.slice(0, 8)} · {m.image} · {m.cpus}cpu/{m.memory_mb}MB · {m.status}</span>
-              <button type="button" onClick={() => teamId && destroyFlyMachine(teamId, m.id, false).then(refresh)} className="ml-auto text-zinc-500 hover:text-red-400">Destroy</button>
+              <button type="button" onClick={() => teamId && destroyFlyMachine(teamId, m.id, false).then(refresh)} className="ml-auto text-zinc-500 hover:text-red-400">Hapus</button>
             </li>
           ))}
         </ul>
       )}
       <div className="mt-3 border-t border-zinc-800 pt-3">
-        <div className="mb-1 text-xs font-bold uppercase tracking-wide text-zinc-500">Custom domains — {`{uuid}.slaver.app`}</div>
+        <div className="mb-1 text-xs font-bold uppercase tracking-wide text-zinc-500">Alamat web — {`{nama}.slaver.app`}</div>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <input value={sub} onChange={(e) => setSub(e.target.value)} placeholder="subdomain uuid" className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
-          <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="target: xxx.fly.dev or IP" className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
-          <button type="button" onClick={async () => { if (!teamId || !sub.trim() || !target.trim()) return; setError(""); try { await addDomain(teamId, { subdomain: sub.trim().toLowerCase(), target: target.trim() }); setSub(""); setTarget(""); await refresh(); } catch (err) { setError(err instanceof Error ? err.message : "Domain failed."); } }} className="rounded-md bg-zinc-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-zinc-600">Map domain</button>
+          <input value={sub} onChange={(e) => setSub(e.target.value)} placeholder="nama depan, cth. kasirku" className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+          <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="tujuan: xxx.fly.dev atau IP" className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+          <button type="button" onClick={async () => { if (!teamId || !sub.trim() || !target.trim()) return; setError(""); try { await addDomain(teamId, { subdomain: sub.trim().toLowerCase(), target: target.trim() }); setSub(""); setTarget(""); await refresh(); } catch (err) { setError(err instanceof Error ? err.message : "Gagal pasang alamat."); } }} className="rounded-md bg-zinc-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-zinc-600">Pasang alamat</button>
         </div>
         {domains.map((d) => (
           <div key={d.id} className="mt-1 flex items-center gap-2 font-mono text-xs text-zinc-400">
             <span className="text-zinc-100">{d.hostname}</span><span>→ {d.target}</span><span className="text-zinc-600">[{d.status}]</span>
-            <button type="button" onClick={() => teamId && removeDomain(teamId, d.id).then(refresh)} className="ml-auto text-zinc-600 hover:text-red-400">remove</button>
+            <button type="button" onClick={() => teamId && removeDomain(teamId, d.id).then(refresh)} className="ml-auto text-zinc-600 hover:text-red-400">lepas</button>
           </div>
         ))}
       </div>
@@ -2313,7 +2314,7 @@ function DeveloperSection({ teamId }: { teamId: string | null }) {
   }
 
   async function revoke(clientId: string) {
-    if (!teamId || !window.confirm("Revoke this client? Its tokens stop working immediately.")) return;
+    if (!teamId || !window.confirm("Cabut akses ini? Pelanggan yang sedang masuk langsung keluar.")) return;
     setError("");
     try {
       await revokeOAuthClient(teamId, clientId);
@@ -2325,15 +2326,14 @@ function DeveloperSection({ teamId }: { teamId: string | null }) {
 
   return (
     <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-      <h3 className="mb-1 text-sm font-bold uppercase tracking-wide text-zinc-500">Developer — Login with Slaver</h3>
+      <h3 className="mb-1 text-sm font-bold uppercase tracking-wide text-zinc-500">Login dengan Slaver</h3>
       <p className="mb-2 text-xs text-zinc-500">
-        Let users log in to your deployed app with their Slaver account. The app receives their name, email, team, and role.
-        Authorize endpoint: <span className="font-mono">/oauth/authorize</span> · Token: <span className="font-mono">/oauth/token</span> · Profile: <span className="font-mono">/oauth/userinfo</span>
+        Pelanggan bisa masuk ke aplikasimu dengan akun Slaver-nya. Aplikasi menerima nama, email, tim, dan peran mereka.
       </p>
       {error && <p className="mb-2 text-sm text-red-400">{error}</p>}
       {newSecret && (
         <div className="mb-2 rounded-md border border-amber-700 bg-amber-950/60 p-2 text-xs text-amber-200">
-          <div className="font-bold">Copy the secret now — it is shown only once.</div>
+          <div className="font-bold">Salin kunci rahasia sekarang — hanya tampil sekali.</div>
           <div className="mt-1 break-all font-mono">client_id: {newSecret.id}</div>
           <div className="break-all font-mono">client_secret: {newSecret.secret}</div>
         </div>
@@ -2342,20 +2342,20 @@ function DeveloperSection({ teamId }: { teamId: string | null }) {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="App name, e.g. My Warung POS"
+          placeholder="Nama aplikasi, cth. Kasir Warung Saya"
           disabled={!teamId}
           className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40"
         />
         <input
           value={redirects}
           onChange={(e) => setRedirects(e.target.value)}
-          placeholder="Redirect URIs, comma-separated — https://app.example.com/oauth/callback"
+          placeholder="Alamat kembali, pisah koma — https://aplikasi.com/oauth/callback"
           disabled={!teamId}
           className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40"
         />
         <div>
           <button type="submit" disabled={!name.trim() || !redirects.trim() || !teamId || busy} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
-            {busy ? "Creating..." : "Create OAuth client"}
+            {busy ? "Membuat..." : "Buat akses login"}
           </button>
         </div>
       </form>
@@ -2367,13 +2367,13 @@ function DeveloperSection({ teamId }: { teamId: string | null }) {
               <span className="font-mono text-zinc-500">{c.id}</span>
               <span className="truncate text-zinc-500">{c.redirect_uris}</span>
               <button type="button" onClick={() => revoke(c.id)} className="ml-auto text-zinc-500 hover:text-red-400">
-                Revoke
+                Cabut
               </button>
             </li>
           ))}
         </ul>
       )}
-      {!teamId && <p className="mt-1 text-xs text-zinc-500">Pick a team first (owners/admins only).</p>}
+      {!teamId && <p className="mt-1 text-xs text-zinc-500">Pilih tim dulu (khusus pemilik/admin).</p>}
     </div>
   );
 }
@@ -2412,10 +2412,10 @@ function SettingsView({
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-6">
-      <h2 className="text-xl font-bold text-zinc-100">Settings</h2>
+      <h2 className="text-xl font-bold text-zinc-100">Pengaturan</h2>
 
       <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-        <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-zinc-500">Profile</h3>
+        <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-zinc-500">Profil</h3>
         <div className="flex items-center gap-3">
           <span className="flex h-11 w-11 items-center justify-center rounded-full bg-zinc-800 text-lg font-bold text-zinc-200">
             {(user.name || user.email || "?").slice(0, 1).toUpperCase()}
@@ -2425,31 +2425,31 @@ function SettingsView({
             <div className="truncate text-xs text-zinc-500">{user.email}</div>
           </div>
           <button type="button" onClick={onLogout} className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800">
-            Log out
+            Keluar
           </button>
         </div>
       </div>
 
       <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-        <h3 className="mb-1 text-sm font-bold uppercase tracking-wide text-zinc-500">New slaveBot</h3>
-        <p className="mb-2 text-xs text-zinc-500">Bots live on the selected team and appear in Direct messages.</p>
+        <h3 className="mb-1 text-sm font-bold uppercase tracking-wide text-zinc-500">Asisten AI baru</h3>
+        <p className="mb-2 text-xs text-zinc-500">Asisten tinggal di tim yang dipilih dan muncul di Chat.</p>
         <div className="flex gap-2">
           <select
             value={createOwner}
             onChange={(e) => setCreateOwner(e.target.value)}
-            title="Partner (owner)"
+            title="Partner (penanggung jawab)"
             className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
           >
-            <option value={user.id}>{memberNames[user.id] ?? "Me"}</option>
+            <option value={user.id}>{memberNames[user.id] ?? "Saya"}</option>
             {Object.entries(memberNames).filter(([id]) => id !== user.id).map(([id, name]) => (
               <option key={id} value={id}>{name}</option>
             ))}
           </select>
           <button type="button" onClick={create} disabled={creating || !teamId} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
-            {creating ? "Creating..." : "Create"}
+            {creating ? "Membuat..." : "Buat"}
           </button>
         </div>
-        {!teamId && <p className="mt-1 text-xs text-amber-300">Pick a team first.</p>}
+        {!teamId && <p className="mt-1 text-xs text-amber-300">Pilih tim dulu.</p>}
       </div>
 
       <div className="mt-4">
@@ -2699,7 +2699,7 @@ export default function App() {
   async function newGroup() {
     setError("");
     try {
-      const created = await createGroup("", teamId ?? undefined);
+      const created = await createGroup("Grup baru", teamId ?? undefined);
       await refreshGroups();
       await openGroup(created.id);
     } catch (err) {
@@ -2955,7 +2955,7 @@ export default function App() {
     setMeetingId(null);
   }
 
-  if (checking) return <div className="flex min-h-screen items-center justify-center text-zinc-400">Loading...</div>;
+  if (checking) return <div className="flex min-h-screen items-center justify-center text-zinc-400">Memuat...</div>;
   if (!user) return <AuthView onAuth={setUser} />;
 
   // Team scope: only rows of the selected team ("" = legacy row, shown as fallback).
@@ -3010,8 +3010,8 @@ export default function App() {
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
       {/* Top bar — logo = team switcher, then workspace nav */}
-      <header className="flex h-13 shrink-0 items-center gap-1 overflow-x-auto border-b border-zinc-800 bg-zinc-950 px-2 py-1">
-        <button type="button" onClick={() => setSideOpen((v) => !v)} title="Conversations" className="shrink-0 rounded-md px-2 py-2 text-lg text-zinc-300 hover:bg-zinc-800 md:hidden">
+      <header className="flex h-13 shrink-0 items-center gap-1 border-b border-zinc-800 bg-zinc-950 px-2 py-1">
+        <button type="button" onClick={() => setSideOpen((v) => !v)} title="Obrolan" className="shrink-0 rounded-md px-2 py-2 text-lg text-zinc-300 hover:bg-zinc-800 md:hidden">
           ☰
         </button>
         <div className="relative shrink-0">
@@ -3052,12 +3052,12 @@ export default function App() {
             </>
           )}
         </div>
-        <nav className="flex items-center gap-0.5">
-          <button type="button" onClick={() => setView("apps")} className={topBtn(view === "apps")}><span aria-hidden="true">⌂</span> Apps</button>
+        <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+          <button type="button" onClick={() => setView("apps")} className={topBtn(view === "apps")}><span aria-hidden="true">⌂</span> Aplikasi</button>
           <button type="button" onClick={() => setView("chat")} className={topBtn(view === "chat" || view === "group" || view === "bot" || view === "meeting")}><span aria-hidden="true">💬</span> Chat</button>
-          <button type="button" onClick={() => setView("code")} className={topBtn(view === "code")}><span aria-hidden="true">{"</>"}</span> Code</button>
-          <button type="button" onClick={() => setView("market")} className={topBtn(view === "market")}><span aria-hidden="true">◈</span> Market</button>
-          <button type="button" onClick={() => setView("settings")} className={topBtn(view === "settings")}><span aria-hidden="true">⚙</span> Settings</button>
+          <button type="button" onClick={() => setView("code")} className={topBtn(view === "code")}><span aria-hidden="true">{"</>"}</span> File</button>
+          <button type="button" onClick={() => setView("market")} className={topBtn(view === "market")}><span aria-hidden="true">◈</span> Toko</button>
+          <button type="button" onClick={() => setView("settings")} className={topBtn(view === "settings")}><span aria-hidden="true">⚙</span> Pengaturan</button>
         </nav>
         <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800 text-sm font-bold text-zinc-200" title={user.email}>
@@ -3078,22 +3078,22 @@ export default function App() {
           <span className="truncate text-sm font-bold text-zinc-100">{teams.find((t) => t.id === teamId)?.name ?? "SlaveBots"}</span>
         </div>
         <div className="flex items-center justify-between px-4 pb-1 pt-3">
-          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Direct messages</div>
-          <button type="button" onClick={() => { setView("settings"); setSideOpen(false); }} title="New slaveBot in Settings" className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Chat</div>
+          <button type="button" onClick={() => { setView("settings"); setSideOpen(false); }} title="Tambah asisten baru di Pengaturan" className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
             +
           </button>
         </div>
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
           {topBots.flatMap((b) => [botRow(b, false), ...(childMap.get(b.id) ?? []).map((c) => botRow(c, true))])}
           {orphanBots.map((b) => botRow(b, false))}
-          {activeBots.length === 0 && <p className="px-2 py-2 text-sm text-zinc-500">No slaveBots yet — create one to start.</p>}
+          {activeBots.length === 0 && <p className="px-2 py-2 text-sm text-zinc-500">Belum ada asisten — buat satu untuk mulai.</p>}
           {archivedBots.length > 0 && (
             <button
               type="button"
               onClick={() => setShowArchived((v) => !v)}
               className="mt-1 rounded-md px-2 py-1.5 text-left text-xs font-semibold text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
             >
-              {showArchived ? "▾ Archived" : `▸ Archived (${archivedBots.length})`}
+              {showArchived ? "▾ Arsip" : `▸ Arsip (${archivedBots.length})`}
             </button>
           )}
           {showArchived &&
@@ -3102,21 +3102,21 @@ export default function App() {
                 key={b.id}
                 type="button"
                 onClick={() => openBot(b.id)}
-                title={`${b.title || b.name} (archived)`}
+                title={`${b.title || b.name} (arsip)`}
                 className={`flex items-center gap-2.5 rounded-md px-2 py-2 text-left opacity-60 hover:bg-zinc-800 hover:opacity-100 ${b.id === botId ? "bg-zinc-800" : ""}`}
               >
                 <BotAvatar bot={b} size="sm" />
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-semibold">{b.name}</span>
-                  <span className="block truncate text-xs text-zinc-500">archived</span>
+                  <span className="block truncate text-xs text-zinc-500">arsip</span>
                 </span>
               </button>
             ))}
         </nav>
         <div className="flex items-center justify-between border-t border-zinc-800 px-4 pb-1 pt-3">
-          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Channels</div>
-          <button type="button" onClick={newGroup} className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-            + New
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Grup</div>
+          <button type="button" onClick={newGroup} title="Buat grup baru" className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
+            + Baru
           </button>
         </div>
         <nav className="flex max-h-40 flex-col gap-1 overflow-y-auto p-2 pt-1">
@@ -3131,12 +3131,12 @@ export default function App() {
               <span className="mr-1 text-zinc-500">##</span>{g.name}
             </button>
           ))}
-          {teamGroups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">No groups yet.</p>}
+          {teamGroups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">Belum ada grup.</p>}
         </nav>
         <div className="flex items-center justify-between border-t border-zinc-800 px-4 pb-1 pt-3">
-          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Meetings</div>
-          <button type="button" onClick={() => openMeeting(null)} className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-            + New
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Rapat</div>
+          <button type="button" onClick={() => openMeeting(null)} title="Mulai rapat baru" className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
+            + Baru
           </button>
         </div>
         <nav className="flex max-h-40 flex-col gap-1 overflow-y-auto p-2 pt-1">
@@ -3151,11 +3151,11 @@ export default function App() {
               <span className="mr-1 text-zinc-500">◉</span>{h.topic.length > 40 ? `${h.topic.slice(0, 40)}…` : h.topic}
             </button>
           ))}
-          {teamMeetings.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">No meetings yet.</p>}
+          {teamMeetings.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">Belum ada rapat.</p>}
         </nav>
         <div className="border-t border-zinc-800 px-4 pb-1 pt-3">
-          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Support channels</div>
-          <div className="text-[11px] text-zinc-600">Public help desks from any team</div>
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Bantuan</div>
+          <div className="text-[11px] text-zinc-600">Tempat tanya jawab umum</div>
         </div>
         <nav className="flex max-h-32 flex-col gap-1 overflow-y-auto p-2 pt-1">
           {supportGroups.map((g) => (
@@ -3170,7 +3170,7 @@ export default function App() {
               <span className="ml-1 text-[11px] text-zinc-500">{g.team_name}</span>
             </button>
           ))}
-          {supportGroups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">No public channels yet.</p>}
+          {supportGroups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">Belum ada channel bantuan.</p>}
         </nav>
       </aside>
 
@@ -3179,34 +3179,34 @@ export default function App() {
         <header className="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2 md:px-4">
           <div className="flex min-w-0 items-center gap-1">
             {view === "bot" && bot ? (
-              <button type="button" onClick={() => setView("chat")} title="Back to chat" className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800">
-                ← {bot.name} <span className="text-xs font-normal text-zinc-500">settings</span>
+              <button type="button" onClick={() => setView("chat")} title="Kembali ke chat" className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800">
+                ← {bot.name} <span className="text-xs font-normal text-zinc-500">pengaturan</span>
               </button>
             ) : view === "group" ? (
               <span className="truncate px-1 font-semibold"><span className="mr-1 font-bold text-zinc-300">#</span>{groups.find((g) => g.id === groupId)?.name ?? "group"}</span>
             ) : view === "meeting" ? (
               <span className="truncate px-1 font-semibold"><span className="mr-1 text-zinc-300">◉</span>{meetings.find((h) => h.id === meetingId)?.topic.slice(0, 40) ?? "meeting"}</span>
             ) : view === "settings" ? (
-              <span className="px-1 font-semibold">Settings</span>
+              <span className="px-1 font-semibold">Pengaturan</span>
             ) : view === "code" ? (
-              <span className="px-1 font-semibold">Code</span>
+              <span className="px-1 font-semibold">File</span>
             ) : view === "market" ? (
-              <span className="px-1 font-semibold">Marketplace</span>
+              <span className="px-1 font-semibold">Toko</span>
             ) : view === "apps" ? (
-              <span className="px-1 font-semibold">Apps</span>
+              <span className="px-1 font-semibold">Aplikasi</span>
             ) : (
-              <button type="button" onClick={() => bot && setView("bot")} disabled={!bot} title={bot ? "Bot settings" : undefined} className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800 disabled:hover:bg-transparent">
-                <span className="mr-1 font-bold text-zinc-300">#</span>{bot ? bot.name : "pick a slaveBot"}
+              <button type="button" onClick={() => bot && setView("bot")} disabled={!bot} title={bot ? "Pengaturan asisten" : undefined} className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800 disabled:hover:bg-transparent">
+                <span className="mr-1 font-bold text-zinc-300">#</span>{bot ? bot.name : "pilih asisten"}
               </button>
             )}
           </div>
           <button
             type="button"
             onClick={() => { if (voiceOn) stopSpeaking(); setVoiceOn((v) => !v); }}
-            title="Spoken replies on/off"
+            title="Balasan bersuara nyala/mati"
             className={`rounded-md border px-2 py-1 text-xs font-semibold ${voiceOn ? "border-emerald-600 text-emerald-400" : "border-zinc-700 text-zinc-400"}`}
           >
-            {voiceOn ? "Voice on" : "Voice off"}
+              {voiceOn ? "Suara nyala" : "Suara mati"}
           </button>
         </header>
 
@@ -3308,17 +3308,17 @@ export default function App() {
             <main className="flex-1 overflow-y-auto px-4 py-4">
               {!bot ? (
                 <div className="mx-auto max-w-xl py-16">
-                  <h2 className="text-xl font-bold">Hi, {user.name || user.email}.</h2>
-                  <p className="mt-2 text-zinc-400">Select a slaveBot on the left to continue the conversation — or create a new one. Each bot keeps its own history and memory.</p>
+                  <h2 className="text-xl font-bold">Halo, {user.name || user.email}.</h2>
+                  <p className="mt-2 text-zinc-400">Pilih asisten di kiri untuk lanjut ngobrol — atau buat yang baru. Tiap asisten punya riwayat dan ingatannya sendiri.</p>
                   <button type="button" onClick={() => newBot()} className="mt-4 rounded-md bg-emerald-600 px-4 py-2 font-semibold text-white hover:bg-emerald-500">
-                    + New slaveBot
+                    + Asisten baru
                   </button>
                 </div>
               ) : (
                 messages.length === 0 && (
                   <div className="mx-auto max-w-xl py-16">
-                    <h2 className="text-xl font-bold">{bot.name} is ready.</h2>
-                    <p className="mt-2 text-zinc-400">Type or dictate a message below. Set memory in the Bot tab and {bot.name} will remember it across conversations.</p>
+                    <h2 className="text-xl font-bold">{bot.name} siap.</h2>
+                    <p className="mt-2 text-zinc-400">Ketik atau dikte pesan di bawah. Atur ingatan di tab Asisten dan {bot.name} akan mengingatnya di semua obrolan.</p>
                   </div>
                 )
               )}
@@ -3335,10 +3335,10 @@ export default function App() {
                       </div>
                     )}
                 <div className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
-                  <BotAvatar bot={bot ?? { id: "u", name: m.role === "user" ? (user.name || "You") : "A", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", relay: 1, user_id: "u", team_id: "", avatar_key: "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" } as SlaveBot} size="sm" />
+                  <BotAvatar bot={bot ?? { id: "u", name: m.role === "user" ? (user.name || "Anda") : "A", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", relay: 1, user_id: "u", team_id: "", avatar_key: "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" } as SlaveBot} size="sm" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
-                      <span className="text-sm font-bold">{m.role === "user" ? (user.name || "You") : (bot?.name ?? "Assistant")}</span>
+                      <span className="text-sm font-bold">{m.role === "user" ? (user.name || "Anda") : (bot?.name ?? "Asisten")}</span>
                       {m.created_at && <span className="text-xs text-zinc-500">{new Date(m.created_at).toLocaleString()}</span>}
                       {m.role === "assistant" && m.content.trim() && bot && (
                         <button
@@ -3351,10 +3351,10 @@ export default function App() {
                               void speakReply(m.content, m.key, true);
                             }
                           }}
-                          title="Hear this reply in the bot's voice"
+                          title="Dengarkan jawaban ini dengan suara asisten"
                           className="rounded px-1 text-xs text-zinc-500 hover:bg-zinc-700 hover:text-emerald-400"
                         >
-                          {speakingKey === m.key ? "Stop" : "Speak"}
+                          {speakingKey === m.key ? "Stop" : "Bicara"}
                         </button>
                       )}
                     </div>
@@ -3375,7 +3375,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setPlusOpen((v) => !v)}
-                    title="More actions"
+                    title="Aksi lain"
                     className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100"
                   >
                     <PlusIcon />
@@ -3385,13 +3385,13 @@ export default function App() {
                       <div className="fixed inset-0 z-30" onClick={() => setPlusOpen(false)} />
                       <div className="absolute bottom-11 left-0 z-40 w-52 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 py-1 shadow-xl">
                         <button type="button" onClick={() => { setPlusOpen(false); setView("settings"); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">
-                          New slaveBot
+                          Asisten baru
                         </button>
                         <button type="button" onClick={() => { setPlusOpen(false); newGroup(); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">
-                          New channel
+                          Grup baru
                         </button>
                         <button type="button" onClick={() => { setPlusOpen(false); openMeeting(null); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">
-                          New meeting
+                          Rapat baru
                         </button>
                       </div>
                     </>
@@ -3406,7 +3406,7 @@ export default function App() {
                       send();
                     }
                   }}
-                  placeholder={bot ? `Message ${bot.name}...` : "Select a slaveBot first"}
+                  placeholder={bot ? `Pesan untuk ${bot.name}...` : "Pilih asisten dulu"}
                   rows={1}
                   disabled={!bot}
                   className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
@@ -3420,7 +3420,7 @@ export default function App() {
                   type="button"
                   onClick={toggleMic}
                   disabled={streaming || transcribing || conversing || !bot}
-                  title={recorder ? `Stop recording (${recSecs.toFixed(0)}s)` : "Dictate with microphone"}
+                  title={recorder ? `Berhenti merekam (${recSecs.toFixed(0)} dtk)` : "Dikte dengan mikrofon"}
                   className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full hover:bg-zinc-700 disabled:opacity-40 ${recorder ? "text-red-400" : "text-zinc-300"}`}
                 >
                   {recorder ? <span className="flex items-center gap-1 text-xs font-bold tabular-nums"><span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />{recSecs.toFixed(0)}</span> : transcribing ? <Spinner /> : <MicIcon />}
@@ -3429,7 +3429,7 @@ export default function App() {
                   <button
                     type="submit"
                     disabled={!input.trim() || !bot || streaming}
-                    title="Send"
+                    title="Kirim"
                     className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500"
                   >
                     {streaming ? <Spinner /> : <ArrowUpIcon />}
@@ -3439,7 +3439,7 @@ export default function App() {
                     type="button"
                     onClick={toggleConverse}
                     disabled={!bot || streaming || transcribing || !!recorder}
-                    title={conversing ? "Stop hands-free chat" : "Hands-free voice chat"}
+                    title={conversing ? "Berhenti mode hands-free" : "Chat suara hands-free"}
                     className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white disabled:opacity-40 ${conversing ? "bg-red-500 hover:bg-red-400" : "bg-blue-500 hover:bg-blue-400"}`}
                   >
                     <WaveIcon />
