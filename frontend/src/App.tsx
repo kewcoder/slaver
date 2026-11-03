@@ -248,7 +248,6 @@ function BotView({
     setName(bot.name);
     setMemory(bot.memory);
     setModel(bot.model);
-    setSaved(false);
     setError("");
     setSummaries(null);
     fetchSummaries(bot.id).then(setSummaries).catch(() => {});
@@ -316,7 +315,7 @@ function BotView({
         <h3 className="font-semibold text-zinc-200">Identity</h3>
         <label className="text-sm font-semibold text-zinc-300">
           Name
-          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} className={inputCls} />
+          <input value={name} onChange={(e) => { setName(e.target.value); setSaved(false); }} maxLength={40} className={inputCls} />
         </label>
         <label className="text-sm font-semibold text-zinc-300">
           Avatar
@@ -335,7 +334,7 @@ function BotView({
         </label>
         <label className="text-sm font-semibold text-zinc-300">
           Model
-          <select value={model} onChange={(e) => setModel(e.target.value)} className={inputCls}>
+          <select value={model} onChange={(e) => { setModel(e.target.value); setSaved(false); }} className={inputCls}>
             {models.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.label}
@@ -347,7 +346,7 @@ function BotView({
           Memory
           <textarea
             value={memory}
-            onChange={(e) => setMemory(e.target.value)}
+            onChange={(e) => { setMemory(e.target.value); setSaved(false); }}
             placeholder={"e.g. Owner prefers concise answers. Building a warung POS; stack: ..."}
             rows={5}
             maxLength={4000}
