@@ -970,7 +970,19 @@ pub async fn fly_forget_machine(db: &Db, team_id: &str, user_id: &str, id: &str)
     Ok(())
 }
 
-// ---------- custom domains (our Cloudflare zone) ----------
+// ---------- custom domains (plain DNS, pointed at Fly) ----------
+
+/// Base domain for team subdomains, e.g. `app-xyz.slaver.app`.
+/// DNS records are created manually (no provider integration by design).
+fn zone_name() -> String {
+    let z = std::env::var("SLAVER_DOMAIN").unwrap_or_default();
+    let z = z.trim().trim_start_matches('.').to_string();
+    if z.is_empty() {
+        "slaver.app".to_string()
+    } else {
+        z
+    }
+}
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct DomainRow {
@@ -1002,14 +1014,10 @@ pub async fn domain_add(db: &Db, team_id: &str, user_id: &str, project_id: &str,
         return Err(anyhow!("Target is required (Fly hostname or IP)."));
     }
     let id = new_id();
-    let hostname = format!("{sub}.{}", crate::cf::zone_name());
-    let mut status = "manual".to_string();
-    if crate::cf::configured() {
-        match crate::cf::upsert_record(&sub, &kind, target.trim(), true).await {
-            Ok(_) => status = "active".to_string(),
-            Err(e) => return Err(anyhow!("Cloudflare rejected the record: {e}")),
-        }
-    }
+    let hostname = format!("{sub}.{}", zone_name());
+    // Always manual: point the record at the target yourself (A/AAAA to the
+    // Fly IPs, or CNAME to the Fly hostname). No DNS provider integration.
+    let status = "manual".to_string();
     db.prepare("INSERT INTO custom_domains (id, team_id, project_id, subdomain, hostname, target, kind, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(&[v_text(&id), v_text(team_id), v_text(project_id), v_text(&sub), v_text(&hostname), v_text(target.trim()), v_text(&kind), v_text(&status)])?
         .run()

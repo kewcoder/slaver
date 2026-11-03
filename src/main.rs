@@ -109,7 +109,7 @@ async fn git_upload_pack(
     git_http::handle_at(state, headers, repo, "git-upload-pack".to_string(), query, body).await
 }
 
-/// Cache policy for the Cloudflare edge (and any downstream cache).
+/// Cache policy for browsers and any downstream cache.
 /// Static bundles are content-hashed by Vite, so they are immutable;
 /// every dynamic surface (API, auth, git, webhooks, SPA shell) must never
 /// be cached, otherwise one user could be served another's content.

@@ -518,6 +518,7 @@ export function FlySection({ teamId }: { teamId: string | null }) {
       )}
       <div className="mt-3 border-t border-zinc-800 pt-3">
         <div className="mb-1 text-xs font-bold uppercase tracking-wide text-zinc-500">Alamat web — {`{nama}.slaver.app`}</div>
+        <p className="mb-2 text-[11px] text-zinc-500">Catat di sini, lalu buat sendiri DNS-nya (A/AAAA ke IP Fly, atau CNAME ke nama app Fly) — tanpa integrasi DNS otomatis.</p>
         <div className="flex flex-col gap-2 sm:flex-row">
           <input value={sub} onChange={(e) => setSub(e.target.value)} placeholder="nama depan, cth. kasirku" className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
           <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="tujuan: xxx.fly.dev atau IP" className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />

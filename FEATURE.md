@@ -203,7 +203,7 @@ Satu layar scroll, kartu per seksi:
    - Members + invite + role + hapus,
    - SlaveBots + transfer partner + grant/revoke per staff,
    - Recent activity (owner/admin).
-4. **Fly.io — team machines**: connect API token team (disimpan server-side, tak pernah tampil lagi) → Provision **prod + dev** (prod stabil untuk iframe publik, dev sandbox untuk harness/computer-use, terisolasi) → list machines + destroy. Custom domains `{uuid}.slaver.app` (CNAME ke Fly, dibuat otomatis bila Cloudflare dikonfigurasi).
+4. **Fly.io — team machines**: connect API token team (disimpan server-side, tak pernah tampil lagi) → Provision **prod + dev** (prod stabil untuk iframe publik, dev sandbox terisolasi) → list machines + destroy. Custom domains `{nama}.slaver.app` (catat di app, buat sendiri record DNS-nya ke IP/hostname Fly — tanpa integrasi DNS otomatis).
 5. **Developer**: OAuth clients (buat/hapus, copy ID/secret, redirect URI).
 6. TIDAK ADA: kartu Usage/logs, sisa kredit, spent. (Telemetry token tetap dicatat server-side, tak ditampilkan.)
 

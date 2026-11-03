@@ -1,7 +1,6 @@
 pub mod auth;
 pub mod avatar;
 pub mod chat;
-pub mod cf;
 pub mod connectors;
 pub mod db;
 pub mod fly;
