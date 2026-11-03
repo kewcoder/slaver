@@ -1,4 +1,4 @@
-use axum::{routing::{get, post}, Router};
+use axum::{middleware::{self, Next}, http::Request, response::Response, routing::{get, post}, Router};
 use chrono::Datelike;
 use slaver::{db::Db, git_http, mcp, oauth_http, platform_api, schedule, store, summarize, AppState};
 use std::{collections::HashMap, time::Duration};
@@ -109,6 +109,32 @@ async fn git_upload_pack(
     git_http::handle_at(state, headers, repo, "git-upload-pack".to_string(), query, body).await
 }
 
+/// Cache policy for the Cloudflare edge (and any downstream cache).
+/// Static bundles are content-hashed by Vite, so they are immutable;
+/// every dynamic surface (API, auth, git, webhooks, SPA shell) must never
+/// be cached, otherwise one user could be served another's content.
+async fn cache_headers(req: Request<axum::body::Body>, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+    let mut res = next.run(req).await;
+    let value = if path.starts_with("/assets/") {
+        "public, max-age=31536000, immutable"
+    } else if path == "/mcp"
+        || path.starts_with("/api/")
+        || path.starts_with("/git/")
+        || path.starts_with("/oauth/")
+        || path.starts_with("/hooks/")
+    {
+        "no-store"
+    } else {
+        "no-cache"
+    };
+    if let Ok(v) = value.parse() {
+        res.headers_mut()
+            .insert(axum::http::header::CACHE_CONTROL, v);
+    }
+    res
+}
+
 async fn git_receive_pack(
     state: axum::extract::State<AppState>,
     headers: axum::http::HeaderMap,
@@ -171,6 +197,7 @@ async fn main() {
                 .not_found_service(ServeFile::new(&index)),
         )
         .layer(CorsLayer::permissive())
+        .layer(middleware::from_fn(cache_headers))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{port}");

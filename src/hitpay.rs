@@ -182,5 +182,5 @@ pub fn app_base_url() -> String {
         .trim()
         .trim_end_matches('/')
         .to_string()
-        .let_if_empty("https://slaver.fly.dev".to_string())
+        .let_if_empty("https://www.slaver.app".to_string())
 }
