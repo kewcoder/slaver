@@ -228,7 +228,7 @@ function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
   function fillDemo() {
     setMode("login");
     setError("");
-    setEmail("demo@slaver.app");
+    setEmail("resto@slaver.app");
     setPassword("demo1234");
   }
 
@@ -253,7 +253,7 @@ function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
           <p className="mb-5 mt-1 text-sm text-zinc-400">Log in to your workspace.</p>
           <button type="button" onClick={fillDemo} className="mb-4 w-full rounded-md border border-dashed border-zinc-700 px-3 py-2 text-left text-xs text-zinc-400 hover:border-emerald-600 hover:text-zinc-200">
             <span className="font-bold text-emerald-400">Try the restaurant demo →</span><br />
-            <span className="font-mono">demo@slaver.app / demo1234</span>
+            <span className="font-mono">resto@slaver.app / demo1234</span>
           </button>
           <div className="mb-4 flex gap-2">
             {(["login", "register"] as const).map((m) => (
