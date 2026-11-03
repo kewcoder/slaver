@@ -129,6 +129,7 @@ export interface SlaveBot {
   parent_id: string;
   pinned: number;
   pinned_by: string;
+  owner_user_id: string;
   avatar_key: string;
   archived: number;
   voice: string;
@@ -360,12 +361,47 @@ export async function fetchBots(): Promise<SlaveBot[]> {
   return data.slavebots;
 }
 
-export async function createBot(model: string, team_id?: string): Promise<SlaveBot> {
+export async function createBot(model: string, team_id?: string, owner_user_id?: string): Promise<SlaveBot> {
   const data = await request<{ slavebot: SlaveBot }>("/api/slavebots", {
     method: "POST",
-    body: JSON.stringify({ model, team_id }),
+    body: JSON.stringify({ model, team_id, owner_user_id }),
   });
   return data.slavebot;
+}
+
+export async function transferBot(botId: string, owner_user_id: string): Promise<SlaveBot> {
+  const data = await request<{ slavebot: SlaveBot }>(`/api/slavebots/${encodeURIComponent(botId)}/transfer`, {
+    method: "POST",
+    body: JSON.stringify({ owner_user_id }),
+  });
+  return data.slavebot;
+}
+
+export interface SendAsResult {
+  reply: string;
+  from_bot_id: string;
+  to_bot_id: string;
+  cost_usd: number;
+}
+
+export async function sendAsBot(fromId: string, to_bot_id: string, message: string): Promise<SendAsResult> {
+  return request<SendAsResult>(`/api/slavebots/${encodeURIComponent(fromId)}/send`, {
+    method: "POST",
+    body: JSON.stringify({ to_bot_id, message }),
+  });
+}
+
+export interface ActivityItem {
+  slavebot_id: string;
+  bot_name: string;
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+export async function fetchTeamActivity(teamId: string): Promise<ActivityItem[]> {
+  const data = await request<{ activity: ActivityItem[] }>(`/api/teams/${encodeURIComponent(teamId)}/activity`);
+  return data.activity;
 }
 
 export async function fetchBotDetail(botId: string): Promise<BotDetail> {

@@ -118,6 +118,25 @@ pub async fn invite(mut req: Request, ctx: RouteContext<()>) -> Result<Response>
     }
 }
 
+/// GET /api/teams/:id/activity — recent bot conversations across the team
+/// for owner oversight. Owner/admin only; newest first.
+pub async fn activity(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
+        Some(id) => id,
+        None => return util::err(401, "Log in first."),
+    };
+    let team_id = ctx.param("id").cloned().unwrap_or_default();
+    let db = ctx.env.d1("DB")?;
+    match store::membership(&db, &team_id, &user_id).await? {
+        Some(r) if r == "owner" || r == "admin" => {}
+        _ => return util::err(403, "Only owners and admins can view team activity."),
+    }
+    match store::team_activity(&db, &team_id, 100).await {
+        Ok(items) => util::json(200, &serde_json::json!({ "activity": items })),
+        Err(e) => util::err(500, &e.to_string()),
+    }
+}
+
 pub async fn delete_team(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let user_id = match auth::bearer_sub(&req, &ctx.env)? {
         Some(id) => id,

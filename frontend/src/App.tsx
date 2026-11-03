@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   addGroupMember,
   appendMemory,
@@ -26,6 +26,7 @@ import {
   fetchSchedules,
   fetchSummaries,
   fetchTeam,
+  fetchTeamActivity,
   fetchTeams,
   fetchUsage,
   finishChat,
@@ -33,6 +34,7 @@ import {
   inviteMember,
   removeMember,
   revokeBotAccess,
+  sendAsBot,
   setMemberRole,
   formatUsd,
   groupChat,
@@ -48,6 +50,7 @@ import {
   spawnSubBot,
   streamChat,
   transcribeVoice,
+  transferBot,
   updateBot,
   updateSchedule,
   uploadAvatar,
@@ -56,6 +59,7 @@ import {
   type GroupDetail,
   type Huddle,
   type HuddleDetail,
+  type ActivityItem,
   type ProviderInfo,
   type SlaveBot,
   type Team,
@@ -450,7 +454,7 @@ function GroupView({
         {detail.messages.map((m) => (
           <div key={m.id} className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
             {m.slavebot_id ? (
-              <BotAvatar bot={({ id: m.slavebot_id, name: m.bot_name ?? "?", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", user_id: "u", team_id: "", avatar_key: bots.find((b) => b.id === m.slavebot_id)?.avatar_key ?? "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" }) as SlaveBot} size="sm" />
+              <BotAvatar bot={({ id: m.slavebot_id, name: m.bot_name ?? "?", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", user_id: "u", team_id: "", avatar_key: bots.find((b) => b.id === m.slavebot_id)?.avatar_key ?? "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" }) as SlaveBot} size="sm" />
             ) : (
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-600 text-sm font-bold text-white">Y</div>
             )}
@@ -576,7 +580,7 @@ function HuddleView({
     if (found) return found;
     return {
       id: botId ?? "u", name: name ?? "?", title: "", model: "", memory: "",
-      role: "", parent_id: "", pinned: 0, pinned_by: "", user_id: "u", team_id: "", avatar_key: "", archived: 0, voice: "luna",
+      role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", user_id: "u", team_id: "", avatar_key: "", archived: 0, voice: "luna",
       active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "",
     };
   }
@@ -1139,6 +1143,7 @@ function TeamsView({
   const [inviteRole, setInviteRole] = useState("staff");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
   const activeId = teamId ?? teams[0]?.id ?? null;
 
   useEffect(() => {
@@ -1147,7 +1152,14 @@ function TeamsView({
       return;
     }
     fetchTeam(activeId)
-      .then(setDetail)
+      .then((d) => {
+        setDetail(d);
+        if (d.my_role === "owner" || d.my_role === "admin") {
+          fetchTeamActivity(activeId).then(setActivity).catch(() => {});
+        } else {
+          setActivity([]);
+        }
+      })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : "Could not load team."));
   }, [activeId, teams.length]);
 
@@ -1156,7 +1168,12 @@ function TeamsView({
     setError("");
     try {
       await fn();
-      if (activeId) setDetail(await fetchTeam(activeId));
+      if (activeId) {
+        setDetail(await fetchTeam(activeId));
+        if (myRole === "owner" || myRole === "admin") {
+          fetchTeamActivity(activeId).then(setActivity).catch(() => {});
+        }
+      }
       await onChanged();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Team action failed.");
@@ -1263,11 +1280,29 @@ function TeamsView({
           )}
           <h4 className="mt-5 text-sm font-bold uppercase tracking-wide text-zinc-500">SlaveBots ({detail.bots.length})</h4>
           <ul className="mt-2 space-y-1">
-            {detail.bots.map((b) => (
+            {detail.bots.map((b) => {
+              const owner = detail.members.find((m) => m.user_id === b.owner_user_id);
+              return (
               <li key={b.id} className="rounded-md bg-zinc-800/60 px-3 py-2 text-sm">
                 <div className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate font-semibold">{b.name}</span>
+                  <span className="shrink-0 text-xs text-zinc-500">◈ {owner ? (owner.name || owner.email) : "unassigned"}</span>
                 </div>
+                {canManage && (
+                  <label className="mt-1 flex items-center gap-2 text-xs text-zinc-400">
+                    Partner
+                    <select
+                      value={b.owner_user_id}
+                      disabled={busy}
+                      onChange={(e) => void run(() => transferBot(b.id, e.target.value))}
+                      className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 focus:border-emerald-500 focus:outline-none"
+                    >
+                      {detail.members.map((m) => (
+                        <option key={m.user_id} value={m.user_id}>{m.name || m.email} ({m.role})</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 {canManage && (
                   <div className="mt-1 flex flex-wrap gap-1">
                     {detail.members.filter((m) => m.role === "staff").map((m) => {
@@ -1288,24 +1323,74 @@ function TeamsView({
                   </div>
                 )}
               </li>
-            ))}
+              );
+            })}
             {detail.bots.length === 0 && <p className="text-sm text-zinc-600">No bots in this team yet.</p>}
           </ul>
+          {canManage && (
+            <>
+              <h4 className="mt-5 text-sm font-bold uppercase tracking-wide text-zinc-500">Recent activity (all bots)</h4>
+              {activity.length === 0 ? (
+                <p className="mt-1 text-sm text-zinc-600">No bot conversations yet.</p>
+              ) : (
+                <ul className="mt-2 max-h-96 space-y-1 overflow-y-auto">
+                  {activity.map((a, i) => (
+                    <li key={i} className="rounded-md bg-zinc-800/60 px-3 py-2 text-sm">
+                      <div className="flex items-baseline gap-2">
+                        <span className="font-semibold">{a.bot_name}</span>
+                        <span className={`rounded px-1 text-[10px] font-bold uppercase ${a.role === "assistant" ? "bg-emerald-900/60 text-emerald-300" : "bg-zinc-700 text-zinc-300"}`}>{a.role}</span>
+                        <span className="text-xs text-zinc-500">{a.created_at ? new Date(a.created_at).toLocaleString() : ""}</span>
+                      </div>
+                      <p className="mt-0.5 whitespace-pre-wrap break-words text-[13px] text-zinc-300">{a.content.length > 300 ? `${a.content.slice(0, 300)}…` : a.content}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
   );
 }
 
+function dayLabel(iso?: string): string {
+  const d = iso ? new Date(iso) : new Date();
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (sameDay(d, today)) return "Today";
+  if (sameDay(d, yesterday)) return "Yesterday";
+  return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+}
+
+function dayKey(iso?: string): string {
+  const d = iso ? new Date(iso) : new Date();
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+function renderMentions(content: string): ReactNode[] {
+  return content.split(/(@[\w.-]+)/g).map((part, i) =>
+    part.startsWith("@") && part.length > 1 ? (
+      <span key={i} className="rounded bg-emerald-900/60 px-0.5 font-semibold text-emerald-300">{part}</span>
+    ) : (
+      <Fragment key={i}>{part}</Fragment>
+    ),
+  );
+}
+
 function BotView({
   bot,
   providerInfo,
+  partnerName,
   onSaved,
   onOpenBot,
   onTeamChanged,
 }: {
   bot: SlaveBot;
   providerInfo: ProviderInfo | null;
+  partnerName: string;
   onSaved: (bot: SlaveBot) => void;
   onOpenBot: (id: string) => void;
   onTeamChanged: () => void;
@@ -1436,6 +1521,7 @@ function BotView({
         <div>
           <h2 className="text-xl font-bold text-zinc-100">{bot.name}</h2>
           {bot.title && <p className="text-sm text-zinc-400">{bot.title}</p>}
+          <p className="mt-0.5 text-xs text-zinc-500">◈ Partner: {partnerName} · transfer in Teams settings</p>
         </div>
       </div>
 
@@ -1605,6 +1691,9 @@ export default function App() {
   const [huddleId, setHuddleId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState("");
+  const [sendTarget, setSendTarget] = useState("");
+  const [sendAsText, setSendAsText] = useState("");
+  const [sendBusy, setSendBusy] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
   const [usage, setUsage] = useState<UsageSummary | null>(null);
@@ -1616,6 +1705,8 @@ export default function App() {
   const [micLevel, setMicLevel] = useState(0);
   const [speakingKey, setSpeakingKey] = useState<number | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [botFilter, setBotFilter] = useState("");
+  const [memberNames, setMemberNames] = useState<Record<string, string>>({});
   const keyRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -1663,7 +1754,17 @@ export default function App() {
     fetchProviderModels().then(setProviderInfo).catch(() => {});
     fetchTeams().then((list) => {
       setTeams(list);
-      if (list.length > 0) setTeamId((prev) => prev ?? list[0].id);
+      if (list.length > 0) {
+        setTeamId((prev) => {
+          const next = prev ?? list[0].id;
+          fetchTeam(next).then((d) => {
+            const names: Record<string, string> = {};
+            for (const m of d.members) names[m.user_id] = m.name || m.email || m.user_id;
+            setMemberNames(names);
+          }).catch(() => {});
+          return next;
+        });
+      }
     }).catch(() => {});
   }, [refreshUser]);
 
@@ -1692,6 +1793,13 @@ export default function App() {
       })();
       refreshGroups();
       refreshHuddles();
+      if (teamId) {
+        fetchTeam(teamId).then((d) => {
+          const names: Record<string, string> = {};
+          for (const m of d.members) names[m.user_id] = m.name || m.email || m.user_id;
+          setMemberNames(names);
+        }).catch(() => {});
+      }
     } else {
       setBots([]);
       setGroups([]);
@@ -1822,14 +1930,45 @@ export default function App() {
     }
   }
 
-  async function newBot() {
+  const [creating, setCreating] = useState(false);
+  const [createOwner, setCreateOwner] = useState("");
+
+  async function newBot(ownerId?: string) {
     setError("");
     try {
-      const created = await createBot(providerInfo?.default ?? "meta-llama/llama-3.3-70b-instruct", teamId ?? undefined);
+      const created = await createBot(providerInfo?.default ?? "meta-llama/llama-3.3-70b-instruct", teamId ?? undefined, ownerId || undefined);
       await refreshBots();
+      setCreating(false);
       await openBot(created.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create slaveBot.");
+    }
+  }
+
+  async function sendAs(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (!bot || !sendTarget || !sendAsText.trim() || sendBusy) return;
+    const target = bots.find((b) => b.id === sendTarget);
+    setSendBusy(true);
+    setError("");
+    const text = sendAsText.trim();
+    setSendAsText("");
+    try {
+      const r = await sendAsBot(bot.id, sendTarget, text);
+      const now = new Date().toISOString();
+      keyRef.current += 1;
+      setMessages((prev) => [
+        ...prev,
+        { key: keyRef.current, role: "user", content: `(to ${target?.name ?? "bot"}) ${text}`, created_at: now },
+        { key: keyRef.current + 1, role: "assistant", content: r.reply, created_at: now },
+      ]);
+      keyRef.current += 1;
+      void refreshBots();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not send to that bot.");
+      setSendAsText(text);
+    } finally {
+      setSendBusy(false);
     }
   }
 
@@ -2066,19 +2205,27 @@ export default function App() {
   const topBots = activeBots.filter((b) => !b.parent_id);
   const orphanBots = activeBots.filter((b) => b.parent_id && !activeBots.some((p) => p.id === b.parent_id));
 
+  const ownerName = (b: SlaveBot) => (b.owner_user_id && b.owner_user_id !== user.id ? (memberNames[b.owner_user_id] ?? "teammate") : "");
   function botRow(b: SlaveBot, indented: boolean) {
+    if (botFilter.trim() && !`${b.name} ${b.role} ${b.title}`.toLowerCase().includes(botFilter.trim().toLowerCase())) return null;
+    const partner = ownerName(b);
     return (
       <button
         key={b.id}
         type="button"
         onClick={() => openBot(b.id)}
-        title={(b.role ? `${b.role} — ` : "") + (b.title || b.name)}
+        title={(b.role ? `${b.role} — ` : "") + (b.title || b.name) + (partner ? ` (partner: ${partner})` : "")}
         className={`flex items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-zinc-800 ${b.id === botId ? "bg-zinc-800" : ""} ${indented ? "ml-5 border-l border-zinc-800" : ""}`}
       >
-        <BotAvatar bot={b} size="sm" />
+        <span className="relative shrink-0">
+          <BotAvatar bot={b} size="sm" />
+          <span title="Active" className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-zinc-950 bg-emerald-500" />
+        </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold">{b.name}</span>
-          {(b.role || b.title) && <span className="block truncate text-xs text-zinc-500">{b.role || b.title}</span>}
+          <span className="block truncate text-xs text-zinc-500">
+            {[b.role || b.title, partner ? `◈ ${partner}` : ""].filter(Boolean).join("  ")}
+          </span>
         </span>
         {b.pinned ? (
           <span title="Pinned — opens automatically on visit" className="shrink-0 rounded border border-emerald-700 px-1 text-[10px] font-bold text-emerald-400">PIN</span>
@@ -2090,10 +2237,30 @@ export default function App() {
   const tabCls = (active: boolean) =>
     `rounded-md px-3 py-1.5 text-sm font-medium ${active ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`;
 
+  const railBtn = (active: boolean) =>
+    `flex h-10 w-10 items-center justify-center rounded-lg text-lg ${active ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:bg-zinc-800/60 hover:text-zinc-200"}`;
+
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100">
-      {/* Sidebar — bot list */}
+      {/* App rail — Slack-style workspace nav */}
+      <nav className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-zinc-800 bg-zinc-950 py-3">
+        <button type="button" onClick={() => setView("chat")} title="Home" className={railBtn(view === "chat" || view === "group" || view === "bot")}>⌂</button>
+        <button type="button" onClick={() => openHuddle(null)} title="New huddle" className={railBtn(false)}>◉</button>
+        <button type="button" onClick={() => setView("teams")} title="Teams" className={railBtn(view === "teams")}>▦</button>
+        <button type="button" onClick={() => { setView("logs"); fetchUsage().then(setUsage).catch(() => {}); }} title="Usage & logs" className={railBtn(view === "logs")}>≡</button>
+        <div className="mt-auto flex flex-col items-center gap-2">
+          <span className="rounded px-1 text-[11px] font-bold text-emerald-400" title="Demo credit left">{formatUsd(user.credit_usd)}</span>
+          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-800 text-sm font-bold text-zinc-200" title={user.email}>
+            {(user.name || user.email || "?").slice(0, 1).toUpperCase()}
+          </span>
+        </div>
+      </nav>
+      {/* Sidebar — workspace sections */}
       <aside className="flex w-60 shrink-0 flex-col border-r border-zinc-800 bg-zinc-950">
+        <div className="border-b border-zinc-800 px-4 py-3">
+          <div className="truncate font-bold">{teams.find((t) => t.id === teamId)?.name ?? "SlaveBots"}</div>
+          <div className="truncate text-xs text-zinc-500">{teams.find((t) => t.id === teamId)?.role ?? user.email}</div>
+        </div>
         <div className="border-b border-zinc-800 px-3 py-2">
           <label className="block text-[11px] font-bold uppercase tracking-wide text-zinc-500">
             Team
@@ -2108,13 +2275,44 @@ export default function App() {
               {teams.length === 0 && <option value="">No team yet</option>}
             </select>
           </label>
+          <input
+            value={botFilter}
+            onChange={(e) => setBotFilter(e.target.value)}
+            placeholder="Find a conversation..."
+            className="mt-2 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
+          />
         </div>
-        <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-          <div className="font-bold">SlaveBots</div>
-          <button type="button" onClick={newBot} className="rounded-md px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-            + New
+        <div className="flex items-center justify-between px-4 pb-1 pt-3">
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Direct messages</div>
+          <button type="button" onClick={() => { setCreating((v) => !v); setCreateOwner(user.id); }} title="New slaveBot" className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
+            +
           </button>
         </div>
+        {creating && (
+          <div className="mx-2 mb-1 rounded-md border border-zinc-800 bg-zinc-900 p-2">
+            <label className="block text-[11px] font-bold uppercase tracking-wide text-zinc-500">
+              Partner (owner)
+              <select
+                value={createOwner}
+                onChange={(e) => setCreateOwner(e.target.value)}
+                className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-xs text-zinc-100 focus:border-emerald-500 focus:outline-none"
+              >
+                <option value={user.id}>{memberNames[user.id] ?? "Me"}</option>
+                {Object.entries(memberNames).filter(([id]) => id !== user.id).map(([id, name]) => (
+                  <option key={id} value={id}>{name}</option>
+                ))}
+              </select>
+            </label>
+            <div className="mt-2 flex gap-2">
+              <button type="button" onClick={() => newBot(createOwner)} className="flex-1 rounded-md bg-emerald-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-emerald-500">
+                Create
+              </button>
+              <button type="button" onClick={() => setCreating(false)} className="rounded-md px-2 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
           {topBots.flatMap((b) => [botRow(b, false), ...(childMap.get(b.id) ?? []).map((c) => botRow(c, true))])}
           {orphanBots.map((b) => botRow(b, false))}
@@ -2146,7 +2344,7 @@ export default function App() {
             ))}
         </nav>
         <div className="flex items-center justify-between border-t border-zinc-800 px-4 pb-1 pt-3">
-          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Groups</div>
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Channels</div>
           <button type="button" onClick={newGroup} className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
             + New
           </button>
@@ -2274,6 +2472,7 @@ export default function App() {
             <BotView
               bot={bot}
               providerInfo={providerInfo}
+              partnerName={bot.owner_user_id === user.id ? "you" : (memberNames[bot.owner_user_id] ?? "teammate")}
               onSaved={(updated) => {
                 setBot(updated);
                 setBots((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
@@ -2291,7 +2490,7 @@ export default function App() {
                 <div className="mx-auto max-w-xl py-16">
                   <h2 className="text-xl font-bold">Hi, {user.name || user.email}.</h2>
                   <p className="mt-2 text-zinc-400">Select a slaveBot on the left to continue the conversation — or create a new one. Each bot keeps its own history and memory.</p>
-                  <button type="button" onClick={newBot} className="mt-4 rounded-md bg-emerald-600 px-4 py-2 font-semibold text-white hover:bg-emerald-500">
+                  <button type="button" onClick={() => newBot()} className="mt-4 rounded-md bg-emerald-600 px-4 py-2 font-semibold text-white hover:bg-emerald-500">
                     + New slaveBot
                   </button>
                 </div>
@@ -2303,9 +2502,20 @@ export default function App() {
                   </div>
                 )
               )}
-              {messages.map((m) => (
-                <div key={m.key} className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
-                  <BotAvatar bot={bot ?? { id: "u", name: m.role === "user" ? (user.name || "You") : "A", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", user_id: "u", team_id: "", avatar_key: "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" } as SlaveBot} size="sm" />
+              {messages.map((m, i) => {
+                const prev = i > 0 ? messages[i - 1] : null;
+                const showDay = !prev || dayKey(prev.created_at) !== dayKey(m.created_at);
+                return (
+                  <Fragment key={m.key}>
+                    {showDay && (
+                      <div className="flex items-center gap-3 px-2 py-2">
+                        <div className="h-px flex-1 bg-zinc-800" />
+                        <span className="rounded-full border border-zinc-700 px-3 py-0.5 text-xs font-semibold text-zinc-300">{dayLabel(m.created_at)}</span>
+                        <div className="h-px flex-1 bg-zinc-800" />
+                      </div>
+                    )}
+                <div className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
+                  <BotAvatar bot={bot ?? { id: "u", name: m.role === "user" ? (user.name || "You") : "A", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", user_id: "u", team_id: "", avatar_key: "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" } as SlaveBot} size="sm" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
                       <span className="text-sm font-bold">{m.role === "user" ? (user.name || "You") : (bot?.name ?? "Assistant")}</span>
@@ -2328,17 +2538,47 @@ export default function App() {
                         </button>
                       )}
                     </div>
-                    <div className="whitespace-pre-wrap break-words text-[15px] text-zinc-200">{m.content || (streaming ? "…" : "")}</div>
+                    <div className="whitespace-pre-wrap break-words text-[15px] text-zinc-200">{renderMentions(m.content) || (streaming ? "…" : "")}</div>
                   </div>
                 </div>
-              ))}
+                  </Fragment>
+                );
+              })}
               <div ref={bottomRef} />
             </main>
 
             {error && <p className="mx-auto w-full max-w-3xl px-4 text-sm text-red-400">{error}</p>}
 
+            {bot && (
+              <div className="px-4 pb-2">
+                <form onSubmit={sendAs} className="mx-auto flex max-w-3xl items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-2 py-1.5">
+                  <span className="shrink-0 px-1 text-xs text-zinc-500" title={`Send as ${bot.name} to another bot`}>
+                    as {bot.name} →
+                  </span>
+                  <select
+                    value={sendTarget}
+                    onChange={(e) => setSendTarget(e.target.value)}
+                    className="shrink-0 rounded-md border border-zinc-700 bg-zinc-800 px-1.5 py-1 text-xs text-zinc-100 focus:border-emerald-500 focus:outline-none"
+                  >
+                    <option value="">pick bot...</option>
+                    {bots.filter((b) => !b.archived && b.id !== bot.id).map((b) => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                  <input
+                    value={sendAsText}
+                    onChange={(e) => setSendAsText(e.target.value)}
+                    placeholder="Message that bot..."
+                    className="min-w-0 flex-1 bg-transparent px-1 py-1 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
+                  />
+                  <button type="submit" disabled={!sendTarget || !sendAsText.trim() || sendBusy} className="shrink-0 rounded-md bg-zinc-700 px-3 py-1 text-xs font-bold text-white hover:bg-zinc-600 disabled:opacity-40">
+                    {sendBusy ? "..." : "Send"}
+                  </button>
+                </form>
+              </div>
+            )}
             <div className="px-4 pb-4">
-              <form onSubmit={send} className="mx-auto flex max-w-3xl items-end gap-2 rounded-lg bg-zinc-800 p-2">
+              <form onSubmit={send} className="mx-auto flex max-w-3xl items-end gap-2 rounded-xl border border-zinc-700 bg-zinc-900 p-2 shadow-lg">
                 <button
                   type="button"
                   onClick={toggleMic}

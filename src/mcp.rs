@@ -12,7 +12,7 @@ pub fn info() -> Result<Response> {
             "transport": "streamable-http",
             "endpoint": "/mcp",
             "methods": ["initialize", "tools/list", "tools/call"],
-            "tools": ["chat", "models", "bot_archive", "bot_pin", "bot_set_role", "bot_spawn", "team_create", "team_list", "team_invite", "schedule_create", "schedule_list", "schedule_delete", "huddle_start", "huddle_list", "huddle_chat"],
+            "tools": ["chat", "models", "bot_archive", "bot_pin", "bot_set_role", "bot_spawn", "bot_send", "team_create", "team_list", "team_invite", "schedule_create", "schedule_list", "schedule_delete", "huddle_start", "huddle_list", "huddle_chat"],
         }),
     )
 }
@@ -133,6 +133,22 @@ fn bot_set_role_tool_def() -> Value {
             "properties": {
                 "slavebot_id": { "type": "string" },
                 "role": { "type": "string" }
+            }
+        }
+    })
+}
+
+fn bot_send_tool_def() -> Value {
+    json!({
+        "name": "bot_send",
+        "description": "Chat as one bot to another: deliver a message from a sender bot to a target bot and get the target's reply. Recorded in both histories, billed to the target's team.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["from_bot_id", "to_bot_id", "message"],
+            "properties": {
+                "from_bot_id": { "type": "string" },
+                "to_bot_id": { "type": "string" },
+                "message": { "type": "string" }
             }
         }
     })
@@ -262,7 +278,7 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
             Ok(Response::empty()?.with_status(202))
         }
         "ping" => rpc_ok(id, json!({})),
-        "tools/list" => rpc_ok(id, json!({ "tools": [chat_tool_def(), models_tool_def(), bot_archive_tool_def(), bot_pin_tool_def(), bot_set_role_tool_def(), bot_spawn_tool_def(), team_create_tool_def(), team_list_tool_def(), team_invite_tool_def(), schedule_create_tool_def(), schedule_list_tool_def(), schedule_delete_tool_def(), huddle_start_tool_def(), huddle_list_tool_def(), huddle_chat_tool_def()] })),
+        "tools/list" => rpc_ok(id, json!({ "tools": [chat_tool_def(), models_tool_def(), bot_archive_tool_def(), bot_pin_tool_def(), bot_set_role_tool_def(), bot_spawn_tool_def(), team_create_tool_def(), team_list_tool_def(), team_invite_tool_def(), schedule_create_tool_def(), schedule_list_tool_def(), schedule_delete_tool_def(), huddle_start_tool_def(), huddle_list_tool_def(), huddle_chat_tool_def(), bot_send_tool_def()] })),
         "tools/call" => {
             let user_id = match auth::bearer_sub(&req, &ctx.env)? {
                 Some(uid) => uid,
@@ -289,6 +305,7 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
                 "bot_pin" => call_bot_pin(id, &ctx.env, &user_id, &args).await,
                 "bot_set_role" => call_bot_set_role(id, &ctx.env, &user_id, &args).await,
                 "bot_spawn" => call_bot_spawn(id, &ctx.env, &user_id, &args).await,
+                "bot_send" => call_bot_send(id, &ctx.env, &user_id, &args).await,
                 "schedule_create" => call_schedule_create(id, &ctx.env, &user_id, &args).await,
                 "schedule_list" => call_schedule_list(id, &ctx.env, &user_id, &args).await,
                 "schedule_delete" => call_schedule_delete(id, &ctx.env, &user_id, &args).await,
@@ -370,6 +387,23 @@ async fn call_bot_spawn(id: Value, env: &Env, user_id: &str, args: &Value) -> Re
     match store::spawn_bot(&db, user_id, manager_id, name, role, &model).await {
         Ok(child) => mcp_text(id, format!("Spawned {} (id {}) under {}.", child.name, child.id, manager.name)),
         Err(e) => rpc_err(id, -32602, &format!("Spawn failed: {e}")),
+    }
+}
+
+async fn call_bot_send(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+    let from_id = args.get("from_bot_id").and_then(|v| v.as_str()).unwrap_or("");
+    let to_id = args.get("to_bot_id").and_then(|v| v.as_str()).unwrap_or("");
+    let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    if from_id.is_empty() || to_id.is_empty() || message.is_empty() {
+        return rpc_err(id, -32602, "from_bot_id, to_bot_id, and message are required.");
+    }
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+    };
+    match crate::chat::deliver_as(&db, user_id, from_id, to_id, message).await {
+        Ok(r) => mcp_text(id, format!("Delivered to bot {} (${:.6}). Reply: {}", to_id, r.cost_usd, r.reply)),
+        Err(e) => rpc_err(id, -32602, &format!("Send failed: {e}")),
     }
 }
 

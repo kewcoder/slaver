@@ -35,6 +35,7 @@ struct FinishRequest {
 struct CreateBotRequest {
     model: Option<String>,
     team_id: Option<String>,
+    owner_user_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -296,7 +297,7 @@ pub async fn create_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     };
     let body: CreateBotRequest = match req.json().await {
         Ok(b) => b,
-        Err(_) => CreateBotRequest { model: None, team_id: None },
+        Err(_) => CreateBotRequest { model: None, team_id: None, owner_user_id: None },
     };
     let db = ctx.env.d1("DB")?;
     let requested_team = body.team_id.unwrap_or_default();
@@ -310,7 +311,8 @@ pub async fn create_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         .model
         .filter(|m| provider::valid_for(&preset, m))
         .unwrap_or_else(|| provider::effective_model(&preset, ""));
-    let bot = match store::create_bot(&db, &user_id, &team_id, &model).await {
+    let owner = body.owner_user_id.unwrap_or_default();
+    let bot = match store::create_bot(&db, &user_id, &team_id, &model, &owner).await {
         Ok(b) => b,
         Err(e) => return util::err(403, &e.to_string()),
     };
@@ -397,6 +399,129 @@ pub async fn bot_detail(req: Request, ctx: RouteContext<()>) -> Result<Response>
     match store::bot_messages(&db, &user_id, &bot_id).await? {
         Some((bot, messages)) => util::json(200, &serde_json::json!({ "slavebot": bot, "messages": messages })),
         None => util::err(404, "SlaveBot not found."),
+    }
+}
+
+pub struct SendAsResult {
+    pub reply: String,
+    pub from_bot_id: String,
+    pub to_bot_id: String,
+    pub cost_usd: f64,
+}
+
+/// Shared core: the acting user directs bot A to message bot B as a partner.
+/// Recorded in both histories (labeled), billed to B's team provider.
+pub async fn deliver_as(
+    db: &D1Database,
+    user_id: &str,
+    from_id: &str,
+    to_id: &str,
+    message: &str,
+) -> Result<SendAsResult, String> {
+    let message = message.trim();
+    if message.is_empty() || message.len() > 8000 {
+        return Err("message must be 1..8000 characters.".to_string());
+    }
+    if from_id == to_id {
+        return Err("Pick a different bot to message.".to_string());
+    }
+    let from = store::get_bot(db, user_id, from_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Sender bot not found.".to_string())?;
+    let to = store::get_bot(db, user_id, to_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Target bot not found.".to_string())?;
+    if to.archived != 0 {
+        return Err("That bot is archived.".to_string());
+    }
+    let prov = provider::provider_for(db, &to.team_id).await.map_err(|e| e.to_string())?;
+    let model = provider::effective_model(&prov.preset, &to.model);
+    store::insert_message(db, &to.id, "user", &format!("[From {}]: {}", from.name, message))
+        .await
+        .map_err(|e| e.to_string())?;
+    let recaps = crate::summarize::context_block(db, &to.id).await.unwrap_or_default();
+    let history = with_memory(&to.memory, &recaps, store::recent_messages(db, &to.id, 20).await.map_err(|e| e.to_string())?);
+    let done = complete_with_usage(&prov, &model, &history).await?;
+    store::insert_message(db, &to.id, "assistant", &done.text).await.map_err(|e| e.to_string())?;
+    store::touch_bot(db, &to.id).await.map_err(|e| e.to_string())?;
+    let (cost, _) = store::record_usage(
+        db,
+        user_id,
+        Some(&to.id),
+        &store::UsageInput {
+            model: model.clone(),
+            prompt_tokens: done.prompt_tokens,
+            cached_tokens: done.cached_tokens,
+            completion_tokens: done.completion_tokens,
+            estimated: done.estimated,
+            audio_seconds: 0.0,
+            cost_override: None,
+            own_key: prov.own,
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    // Partnership trail in the sender's own history, clearly labeled.
+    store::insert_message(db, &from.id, "user", &format!("(to {}) {}", to.name, message))
+        .await
+        .map_err(|e| e.to_string())?;
+    store::insert_message(db, &from.id, "assistant", &format!("[{} replied] {}", to.name, done.text))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(SendAsResult { reply: done.text, from_bot_id: from.id, to_bot_id: to.id, cost_usd: cost })
+}
+
+#[derive(Deserialize)]
+struct SendBody {
+    to_bot_id: Option<String>,
+    message: Option<String>,
+}
+
+/// POST /api/slavebots/:id/send — chat as this bot to another bot.
+/// Body: {to_bot_id, message}. Non-streaming; billed to the target's team.
+pub async fn send_as(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
+        Some(id) => id,
+        None => return util::err(401, "Unauthorized."),
+    };
+    let body: SendBody = match req.json().await {
+        Ok(b) => b,
+        Err(_) => return util::err(400, "Invalid JSON body."),
+    };
+    let from_id = ctx.param("id").cloned().unwrap_or_default();
+    let db = ctx.env.d1("DB")?;
+    match deliver_as(&db, &user_id, &from_id, &body.to_bot_id.unwrap_or_default(), &body.message.unwrap_or_default()).await {
+        Ok(r) => util::json(200, &serde_json::json!({
+            "reply": r.reply, "from_bot_id": r.from_bot_id,
+            "to_bot_id": r.to_bot_id, "cost_usd": r.cost_usd,
+        })),
+        Err(e) => util::err(400, &e),
+    }
+}
+
+#[derive(Deserialize)]
+struct TransferBody {
+    owner_user_id: Option<String>,
+}
+
+/// POST /api/slavebots/:id/transfer — reassign a bot's partnership.
+/// Body: {owner_user_id}. Only the team's owner/admin may do this.
+pub async fn transfer(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
+        Some(id) => id,
+        None => return util::err(401, "Unauthorized."),
+    };
+    let body: TransferBody = match req.json().await {
+        Ok(b) => b,
+        Err(_) => return util::err(400, "Invalid JSON body."),
+    };
+    let bot_id = ctx.param("id").cloned().unwrap_or_default();
+    let db = ctx.env.d1("DB")?;
+    match store::set_bot_owner(&db, &user_id, &bot_id, &body.owner_user_id.unwrap_or_default()).await {
+        Ok(bot) => util::json(200, &serde_json::json!({ "slavebot": bot })),
+        Err(e) => util::err(403, &e),
     }
 }
 
