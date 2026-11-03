@@ -79,7 +79,6 @@ async fn ask_to_join(
             estimated: done.estimated,
             audio_seconds: 0.0,
             cost_override: None,
-            own_key: prov.own,
         },
     )
     .await;
@@ -99,14 +98,6 @@ pub async fn start_meeting(
         return Err("topic must be 1..500 characters.".to_string());
     }
     let prov = provider::provider_for(db, team_id).await.map_err(|e| e.to_string())?;
-    let credit = store::get_user(db, user_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .map(|u| u.credit_usd)
-        .unwrap_or(0.0);
-    if !prov.own && credit <= 0.0 {
-        return Err("Out of credit (balance $0.00). Demo credit is $10 per user.".to_string());
-    }
     let mut candidates: Vec<store::BotRow> = Vec::new();
     if let Some(ids) = slavebot_ids {
         for id in ids.iter().take(MAX_MEETING_BOTS) {
@@ -134,16 +125,6 @@ pub async fn start_meeting(
         return Err("None of those bots are on this meeting's team.".to_string());
     }
     for bot in &candidates {
-        if !prov.own {
-            let credit_now = store::get_user(db, user_id)
-                .await
-                .map_err(|e| e.to_string())?
-                .map(|u| u.credit_usd)
-                .unwrap_or(0.0);
-            if credit_now <= 0.0 {
-                break;
-            }
-        }
         let (joined, reason) = ask_to_join(&prov, db, user_id, bot, meeting.topic.trim()).await;
         store::set_participant(db, &meeting.id, &bot.id, if joined { "join" } else { "decline" }, &reason)
             .await
@@ -157,7 +138,6 @@ pub async fn start_meeting(
 pub struct MeetingChatResult {
     pub replies: Vec<serde_json::Value>,
     pub total_cost: f64,
-    pub credit: f64,
 }
 
 /// Core meeting fan-out, shared by the HTTP route and the MCP tool.
@@ -179,14 +159,6 @@ pub async fn post_message(
         None => return Err("Meeting not found.".to_string()),
     };
     let prov = provider::provider_for(db, &meeting.team_id).await.map_err(|e| e.to_string())?;
-    let credit = store::get_user(db, user_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .map(|u| u.credit_usd)
-        .unwrap_or(0.0);
-    if !prov.own && credit <= 0.0 {
-        return Err("Out of credit (balance $0.00). Demo credit is $10 per user.".to_string());
-    }
     // Full bot rows for the joined participants (participants only carry names).
     let mut members: Vec<store::BotRow> = Vec::new();
     for p in store::meeting_participants(db, meeting_id).await.map_err(|e| e.to_string())? {
@@ -210,7 +182,6 @@ pub async fn post_message(
 
     let mut replies = Vec::new();
     let mut total_cost = 0.0;
-    let mut remaining = credit;
     for bot in &members {
         let model = match model_override.clone().filter(|m| provider::valid_for(&prov.preset, m)) {
             Some(m) => m,
@@ -274,7 +245,7 @@ pub async fn post_message(
         store::insert_meeting_message(db, meeting_id, Some(bot), "assistant", &done.text)
             .await
             .map_err(|e| e.to_string())?;
-        let (cost, credit_left) = store::record_usage(
+        let cost = store::record_usage(
             db,
             user_id,
             Some(&bot.id),
@@ -286,13 +257,11 @@ pub async fn post_message(
                 estimated: done.estimated,
                 audio_seconds: 0.0,
                 cost_override: None,
-                own_key: prov.own,
             },
         )
         .await
         .map_err(|e| e.to_string())?;
         total_cost += cost;
-        remaining = credit_left;
         replies.push(serde_json::json!({
             "slavebot_id": bot.id, "name": bot.name, "reply": done.text,
             "usage": { "prompt_tokens": done.prompt_tokens, "completion_tokens": done.completion_tokens, "estimated": done.estimated },
@@ -300,6 +269,6 @@ pub async fn post_message(
         }));
     }
     store::touch_meeting(db, meeting_id).await.map_err(|e| e.to_string())?;
-    Ok(MeetingChatResult { replies, total_cost, credit: remaining })
+    Ok(MeetingChatResult { replies, total_cost })
 
 }

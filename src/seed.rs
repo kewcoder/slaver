@@ -140,5 +140,59 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, seeds_dir: &str
         }
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
+    ensure_demo(db).await;
+}
+
+/// Demo F&B account (used by the login-page demo button): resto@slaver.app
+/// owns a "Saung Rangon" team staffed from the F&B template. Idempotent —
+/// skipped when the user already exists (e.g. after a template was applied).
+async fn ensure_demo(db: &crate::db::Db) {
+    let email = "resto@slaver.app";
+    let row: Option<serde_json::Value> = match db
+        .prepare("SELECT id FROM users WHERE email = ?")
+        .bind(&[crate::db::v_text(email)])
+    {
+        Ok(q) => q.first(None).await.unwrap_or(None),
+        Err(e) => {
+            eprintln!("seed: demo lookup failed: {e}");
+            return;
+        }
+    };
+    if row.is_some() {
+        return;
+    }
+    let mut salt_b = [0u8; 16];
+    if getrandom::getrandom(&mut salt_b).is_err() {
+        eprintln!("seed: demo salt failed");
+        return;
+    }
+    let salt = hex::encode(salt_b);
+    let digest = {
+        use sha2::Digest;
+        let mut h = sha2::Sha256::new();
+        h.update(salt.as_bytes());
+        h.update(b":");
+        h.update(b"demo1234");
+        hex::encode(h.finalize())
+    };
+    let id = new_id();
+    let q = match db
+        .prepare("INSERT INTO users (id, email, name, password_salt, password_hash) VALUES (?, 'resto@slaver.app', 'Saung Rangon (demo)', ?, ?)")
+        .bind(&[crate::db::v_text(&id), crate::db::v_text(&salt), crate::db::v_text(&digest)])
+    {
+        Ok(q) => q,
+        Err(e) => {
+            eprintln!("seed: demo insert prepare failed: {e}");
+            return;
+        }
+    };
+    if let Err(e) = q.run().await {
+        eprintln!("seed: demo insert failed: {e}");
+        return;
+    }
+    match crate::team_templates::apply(db, &id, "saung-rangon", "Saung Rangon").await {
+        Ok((team, bots)) => eprintln!("seed: demo team '{}' ready ({} bots)", team.name, bots.len()),
+        Err(e) => eprintln!("seed: demo team failed: {e:#}"),
+    }
 }
 

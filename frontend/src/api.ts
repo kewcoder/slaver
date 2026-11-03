@@ -5,7 +5,6 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  credit_usd: number;
 }
 
 export interface ProviderInfo {
@@ -114,20 +113,6 @@ export interface Summaries {
   monthly: SummaryRow[];
 }
 
-export interface UsageLog {
-  id: number;
-  slavebot_id: string | null;
-  slavebot_name: string | null;
-  model: string;
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-  cost_usd: number;
-  estimated: number;
-  audio_seconds: number;
-  created_at: string;
-}
-
 export interface Group {
   id: string;
   team_id: string;
@@ -207,18 +192,11 @@ export interface GroupReply {
   cost_usd?: number;
 }
 
-export interface UsageSummary {
-  credit_usd: number;
-  spent_usd: number;
-  logs: UsageLog[];
-}
-
 export interface ChatResult {
   slavebot_id: string;
   reply?: string;
   usage: { prompt_tokens: number; completion_tokens: number; estimated?: boolean };
   cost_usd: number;
-  credit_usd: number;
 }
 
 export interface SendAsResult {
@@ -276,13 +254,11 @@ export interface TranscribeResult {
   audio_seconds: number;
   estimated?: boolean;
   cost_usd: number;
-  credit_usd: number;
 }
 
 export interface SpeakResult {
   audio: Blob;
   cost_usd: number;
-  credit_usd: number;
 }
 
 const TOKEN_KEY = "slaver_token";
@@ -584,7 +560,7 @@ export async function groupChat(
   message: string,
   model?: string,
   saveMemory?: boolean,
-): Promise<{ replies: GroupReply[]; total_cost_usd: number; credit_usd: number; saved_to_memory: string[] }> {
+): Promise<{ replies: GroupReply[]; total_cost_usd: number; saved_to_memory: string[] }> {
   const args: Record<string, unknown> = { group_id: groupId, message };
   if (model) args.model = model;
   if (saveMemory !== undefined) args.save_memory = saveMemory;
@@ -629,7 +605,7 @@ export async function deleteMeeting(meetingId: string): Promise<void> {
 export async function meetingChat(
   meetingId: string,
   message: string,
-): Promise<{ replies: GroupReply[]; total_cost_usd: number; credit_usd: number }> {
+): Promise<{ replies: GroupReply[]; total_cost_usd: number }> {
   return callTool("meeting_chat", { meeting_id: meetingId, message });
 }
 
@@ -641,12 +617,6 @@ export async function fetchSummaries(botId: string): Promise<Summaries> {
 
 export async function runSummary(botId: string): Promise<{ summary: SummaryRow | null; note?: string }> {
   return callTool("summaries_run", { slavebot_id: botId });
-}
-
-// ---------- usage ----------
-
-export async function fetchUsage(): Promise<UsageSummary> {
-  return callTool<UsageSummary>("usage_get");
 }
 
 // ---------- schedules ----------
@@ -710,14 +680,13 @@ export async function transcribeVoice(audio: Blob, teamId?: string): Promise<Tra
 
 /** Server voice (Workers AI Aura). Throws when unconfigured so callers can fall back to browser voice. */
 export async function speakVoice(text: string, voice: string): Promise<SpeakResult> {
-  const data = await callTool<{ audio_base64: string; content_type?: string; cost_usd: number; credit_usd: number }>(
+  const data = await callTool<{ audio_base64: string; content_type?: string; cost_usd: number }>(
     "voice_speak",
     { text: text.slice(0, 2000), voice },
   );
   return {
     audio: base64ToBlob(data.audio_base64, data.content_type || "audio/mpeg"),
     cost_usd: data.cost_usd,
-    credit_usd: data.credit_usd,
   };
 }
 
@@ -935,6 +904,18 @@ export async function fetchVpsList(teamId: string): Promise<VpsTarget[]> {
 export async function startDeploy(projectId: string, vpsId: string): Promise<Deployment> {
   const data = await callTool<{ deployment: Deployment }>("deploy_start", { project_id: projectId, vps_id: vpsId });
   return data.deployment;
+}
+
+export interface TeamTemplateAgent { name: string; role: string; memory: string; }
+export interface TeamTemplate { key: string; category: string; name: string; description: string; team_name: string; agents: TeamTemplateAgent[]; }
+
+export async function fetchTeamTemplates(): Promise<TeamTemplate[]> {
+  const data = await callTool<{ templates: TeamTemplate[] }>("templates_list", {});
+  return data.templates;
+}
+
+export async function applyTeamTemplate(templateKey: string, teamName?: string): Promise<{ team: Team; bots: SlaveBot[] }> {
+  return callTool("templates_apply", { template_key: templateKey, team_name: teamName ?? "" });
 }
 
 export async function fetchDeployments(projectId: string): Promise<Deployment[]> {

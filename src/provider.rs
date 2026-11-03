@@ -71,8 +71,6 @@ pub struct Provider {
     pub preset: String,
     pub base_url: String,
     pub api_key: String,
-    /// True when the call runs on the user's own key (their key pays).
-    pub own: bool,
 }
 
 pub struct Preset {
@@ -264,9 +262,9 @@ pub async fn preset_for_team(db: &Db, team_id: &str) -> String {
     }
 }
 
-/// Resolve the effective provider for a team: the team's own key always
-/// pays (own: true), so team usage is logged but never touches demo credit.
-/// There is no server fallback — every team configures its key in team settings.
+/// Resolve the effective provider for a team: every team brings its own key
+/// (Slaver sells no credit). There is no server fallback — every team
+/// configures its key in team settings.
 /// Keyless local servers (Ollama / OpenCode gateway on localhost) may omit the key.
 pub async fn provider_for(db: &Db, team_id: &str) -> anyhow::Result<Provider> {
     let team = store::get_team(db, team_id)
@@ -286,7 +284,7 @@ pub async fn provider_for(db: &Db, team_id: &str) -> anyhow::Result<Provider> {
             def.label,
         ));
     }
-    Ok(Provider { preset: def.id.to_string(), base_url, api_key: key, own: true })
+    Ok(Provider { preset: def.id.to_string(), base_url, api_key: key })
 }
 
 pub fn model_list(preset: &str) -> serde_json::Value {

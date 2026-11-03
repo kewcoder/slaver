@@ -37,14 +37,6 @@ pub(crate) async fn transcribe_core(
     let prov = crate::provider::provider_for(db, &team_id)
         .await
         .map_err(|e| e.to_string())?;
-    let credit = store::get_user(db, user_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .map(|u| u.credit_usd)
-        .unwrap_or(0.0);
-    if !prov.own && credit <= 0.0 {
-        return Err("Out of credit (balance $0.00). Demo credit is $10 per user.".to_string());
-    }
     if prov.preset != "meta" {
         return Err("Voice transcription needs Meta: set this team's provider to Meta in Teams settings.".to_string());
     }
@@ -97,7 +89,7 @@ pub(crate) async fn transcribe_core(
         _ => (audio.len().saturating_sub(44) as f64 / 32_000.0, true),
     };
     let cost = pricing::stt_cost_usd(seconds);
-    let (cost, remaining) = store::record_usage(
+    let cost = store::record_usage(
         db,
         user_id,
         None,
@@ -109,7 +101,6 @@ pub(crate) async fn transcribe_core(
             estimated,
             audio_seconds: seconds,
             cost_override: Some(cost),
-            own_key: false,
         },
     )
     .await
@@ -119,7 +110,6 @@ pub(crate) async fn transcribe_core(
         "audio_seconds": seconds,
         "estimated": estimated,
         "cost_usd": cost,
-        "credit_usd": remaining,
     }))
 }
 

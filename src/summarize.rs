@@ -66,7 +66,6 @@ async fn summarize_text(
                     estimated: done.estimated,
                     audio_seconds: 0.0,
                     cost_override: None,
-                    own_key: prov.own,
                 },
             )
             .await;

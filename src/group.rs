@@ -16,11 +16,6 @@ pub(crate) async fn post_chat(
     if message.is_empty() || message.len() > 8000 {
         return Err("message must be 1..8000 characters.".to_string());
     }
-    let credit = store::get_user(db, user_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .map(|u| u.credit_usd)
-        .unwrap_or(0.0);
     let group = store::get_group(db, user_id, group_id)
         .await
         .map_err(|e| e.to_string())?
@@ -33,9 +28,6 @@ pub(crate) async fn post_chat(
     let prov = provider::provider_for(db, &group.team_id)
         .await
         .map_err(|e| e.to_string())?;
-    if !prov.own && credit <= 0.0 {
-        return Err("Out of credit (balance $0.00). Demo credit is $10 per user.".to_string());
-    }
     let members = store::group_members(db, user_id, group_id)
         .await
         .map_err(|e| e.to_string())?;
@@ -47,7 +39,6 @@ pub(crate) async fn post_chat(
         .map_err(|e| e.to_string())?;
     let mut replies = Vec::new();
     let mut total_cost = 0.0;
-    let mut remaining = credit;
     // Public support groups: every member bot replies, even though the
     // poster is from another team (the owning team's key pays, since own=true).
     let is_public = group.is_public != 0;
@@ -107,7 +98,7 @@ pub(crate) async fn post_chat(
         store::insert_group_message(db, group_id, Some(&bot.id), None, "assistant", &done.text)
             .await
             .map_err(|e| e.to_string())?;
-        let (cost, credit_left) = store::record_usage(
+        let cost = store::record_usage(
             db,
             user_id,
             Some(&bot.id),
@@ -119,13 +110,11 @@ pub(crate) async fn post_chat(
                 estimated: done.estimated,
                 audio_seconds: 0.0,
                 cost_override: None,
-                own_key: prov.own,
             },
         )
         .await
         .map_err(|e| e.to_string())?;
         total_cost += cost;
-        remaining = credit_left;
         replies.push(serde_json::json!({
             "slavebot_id": bot.id, "name": bot.name, "reply": done.text,
             "usage": { "prompt_tokens": done.prompt_tokens, "completion_tokens": done.completion_tokens, "estimated": done.estimated },
@@ -141,7 +130,7 @@ pub(crate) async fn post_chat(
         }
     }
     store::touch_group(db, group_id).await.map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({ "replies": replies, "total_cost_usd": total_cost, "credit_usd": remaining, "saved_to_memory": saved_to_memory }))
+    Ok(serde_json::json!({ "replies": replies, "total_cost_usd": total_cost, "saved_to_memory": saved_to_memory }))
 }
 
 /// Core broadcast: post one info message to the shared thread, optionally

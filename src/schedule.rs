@@ -96,14 +96,6 @@ async fn fire_one(db: &Db, sched: &store::ScheduleRow) -> Result<(), String> {
         return Ok(());
     }
     let prov = provider::provider_for(db, &bot.team_id).await.map_err(|e| e.to_string())?;
-    let credit = store::get_user(db, &sched.user_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .map(|u| u.credit_usd)
-        .unwrap_or(0.0);
-    if !prov.own && credit <= 0.0 {
-        return Err("owner out of credit".to_string());
-    }
     let task = format!("Scheduled task \"{}\": {}\nReply briefly, in character.", sched.name, sched.prompt);
     let recaps = crate::summarize::context_block(db, &bot.id).await.unwrap_or_default();
     let mut history = Vec::new();
@@ -144,7 +136,6 @@ async fn fire_one(db: &Db, sched: &store::ScheduleRow) -> Result<(), String> {
             estimated: done.estimated,
             audio_seconds: 0.0,
             cost_override: None,
-            own_key: prov.own,
         },
     )
     .await

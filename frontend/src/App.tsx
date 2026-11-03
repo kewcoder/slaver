@@ -10,6 +10,8 @@ import {
   fetchDomains,
   fetchFlyAccounts,
   fetchFlyMachines,
+  fetchTeamTemplates,
+  applyTeamTemplate,
   createBot,
   createOAuthClient,
   createGroup,
@@ -40,7 +42,6 @@ import {
   fetchTeam,
   fetchTeamActivity,
   fetchTeams,
-  fetchUsage,
   grantBotAccess,
   inviteMember,
   removeMember,
@@ -83,7 +84,7 @@ import {
   type Team,
   type TeamDetail,
   type Summaries,
-  type UsageSummary,
+  type TeamTemplate,
   type User,
 } from "./api";
 import {
@@ -216,6 +217,7 @@ function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [pendingUser, setPendingUser] = useState<User | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -226,12 +228,20 @@ function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
         mode === "register"
           ? await register(email, password, name)
           : await login(email, password);
-      onAuth(res.user);
+      if (mode === "register") {
+        setPendingUser(res.user);
+      } else {
+        onAuth(res.user);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed. Try again.");
     } finally {
       setBusy(false);
     }
+  }
+
+  if (pendingUser) {
+    return <OnboardingView user={pendingUser} onDone={() => onAuth(pendingUser)} />;
   }
 
   const inputCls =
@@ -307,6 +317,67 @@ function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
   );
 }
 
+function OnboardingView({ user, onDone }: { user: User; onDone: () => void }) {
+  const [templates, setTemplates] = useState<TeamTemplate[]>([]);
+  const [teamName, setTeamName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    fetchTeamTemplates().then(setTemplates).catch((err) => setError(err instanceof Error ? err.message : "Could not load templates."));
+  }, []);
+
+  async function pick(key: string, fallbackName: string) {
+    setBusy(true);
+    setError("");
+    try {
+      await applyTeamTemplate(key, teamName.trim() || fallbackName);
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create team.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-6">
+      <div className="w-full max-w-2xl">
+        <div className="text-3xl font-black tracking-tight text-zinc-100">Slaver<span className="text-emerald-400">.</span></div>
+        <h1 className="mt-2 text-2xl font-bold text-zinc-100">Halo, {user.name || user.email} — mau mulai usaha apa?</h1>
+        <p className="mt-1 text-sm text-zinc-400">Pilih template tim: dapat team + agen AI yang profilnya sudah diset sesuai kategori bisnis. Bisa diganti nanti.</p>
+        <label className="mt-4 block text-sm font-semibold text-zinc-300">
+          Nama tim / usahamu
+          <input value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="cth. Saung Rangon" className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+        </label>
+        {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {templates.map((t) => (
+            <div key={t.key} className="flex flex-col rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+              <div className="text-xs font-bold uppercase tracking-wide text-emerald-400">{t.category}</div>
+              <div className="mt-1 font-bold text-zinc-100">{t.name}</div>
+              <p className="mt-1 flex-1 text-xs text-zinc-400">{t.description}</p>
+              {t.agents.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {t.agents.map((a) => (
+                    <span key={a.name} className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">{a.name}</span>
+                  ))}
+                </div>
+              )}
+              <button type="button" onClick={() => pick(t.key, t.team_name)} disabled={busy} className="mt-3 rounded-md bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
+                {busy ? "Menyiapkan..." : `Pakai: ${t.team_name}`}
+              </button>
+            </div>
+          ))}
+        </div>
+        <button type="button" onClick={onDone} disabled={busy} className="mt-4 text-sm text-zinc-500 hover:text-zinc-200">
+          Lewati — masuk tanpa template
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface UiMessage {
   key: number;
   role: string;
@@ -314,73 +385,14 @@ interface UiMessage {
   created_at?: string;
 }
 
-function LogsView({ summary }: { summary: UsageSummary | null }) {
-  if (!summary) {
-    return (
-      <div className="space-y-2 p-8" aria-label="Loading usage">
-        <div className="loading-skeleton h-6 w-1/2" />
-        <div className="loading-skeleton h-20 w-full" />
-        <div className="loading-skeleton h-20 w-full" />
-      </div>
-    );
-  }
-  return (
-    <div className="mx-auto w-full max-w-3xl p-6">
-      <div className="mb-3 flex gap-3">
-        <div className="flex-1 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-          <div className="text-xs font-bold uppercase tracking-wide text-zinc-400">Remaining credit</div>
-          <div className="mt-1 text-3xl font-bold text-zinc-100">{formatUsd(summary.credit_usd)}</div>
-        </div>
-        <div className="flex-1 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-          <div className="text-xs font-bold uppercase tracking-wide text-zinc-400">Spent (demo)</div>
-          <div className="mt-1 text-3xl font-bold text-zinc-100">{formatUsd(summary.spent_usd)}</div>
-        </div>
-      </div>
-      <p className="mb-3 text-sm text-zinc-400">Every account starts with $10 demo credit. Costs are estimated from provider token usage.</p>
-      {summary.logs.length === 0 ? (
-        <p className="text-zinc-400">No usage yet — send a chat message first.</p>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-zinc-800">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-zinc-900 text-left text-xs uppercase tracking-wide text-zinc-400">
-                <th className="px-3 py-2">Time</th>
-                <th className="px-3 py-2">SlaveBot</th>
-                <th className="px-3 py-2">Model</th>
-                <th className="px-3 py-2 text-right">In</th>
-                <th className="px-3 py-2 text-right">Out</th>
-                <th className="px-3 py-2 text-right">Cost</th>
-              </tr>
-            </thead>
-            <tbody className="bg-zinc-900 text-zinc-200">
-              {summary.logs.map((l) => (
-                <tr key={l.id} className="border-t border-zinc-800">
-                  <td className="whitespace-nowrap px-3 py-2">{new Date(l.created_at).toLocaleString()}</td>
-                  <td className="px-3 py-2">{l.audio_seconds > 0 ? "Voice input" : (l.slavebot_name ?? "—")}{l.estimated ? " (est.)" : ""}</td>
-                  <td className="whitespace-nowrap px-3 py-2">{l.model}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{l.audio_seconds > 0 ? `${l.audio_seconds.toFixed(1)}s` : l.prompt_tokens.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{l.completion_tokens.toLocaleString()}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{formatUsd(l.cost_usd)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function GroupView({
   groupId,
   bots,
-  onCredit,
   onDeleted,
   onVisibilityChanged,
 }: {
   groupId: string;
   bots: SlaveBot[];
-  onCredit: () => void;
   onDeleted: () => void;
   onVisibilityChanged: () => void;
 }) {
@@ -433,7 +445,6 @@ function GroupView({
             : "Sent. (No memories updated — needs owner/admin.)",
         );
       }
-      onCredit();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Group chat failed.");
     } finally {
@@ -1397,7 +1408,7 @@ function TeamProviderSection({ team, onChanged }: { team: TeamDetail["team"]; on
           </div>
         )}
         <p className="text-[11px] text-zinc-500">
-          {team.provider_key_set ? "Team key active — this key pays the provider directly, demo credit untouched." : keyOptional ? "No key saved — OK for keyless local servers only." : "No key yet — bots in this team cannot chat until an owner or admin adds one."}
+          {team.provider_key_set ? "Team key active — this key pays the provider directly." : keyOptional ? "No key saved — OK for keyless local servers only." : "No key yet — bots in this team cannot chat until an owner or admin adds one."}
           {" "}Fixing a 404? The model id must exactly match your server, and the base URL must be the /v1 root.
         </p>
         {error && !testResult && <p className="text-xs text-red-400">{error}</p>}
@@ -2233,7 +2244,6 @@ function SettingsView({
   teams,
   teamId,
   memberNames,
-  usage,
   onPickTeam,
   onTeamsChanged,
   onCreateBot,
@@ -2243,7 +2253,6 @@ function SettingsView({
   teams: Team[];
   teamId: string | null;
   memberNames: Record<string, string>;
-  usage: UsageSummary | null;
   onPickTeam: (id: string) => void;
   onTeamsChanged: () => Promise<void>;
   onCreateBot: (ownerId: string) => Promise<void>;
@@ -2274,7 +2283,7 @@ function SettingsView({
           </span>
           <div className="min-w-0 flex-1">
             <div className="truncate font-semibold text-zinc-100">{user.name || "Unnamed"}</div>
-            <div className="truncate text-xs text-zinc-500">{user.email} · {formatUsd(user.credit_usd)} left</div>
+            <div className="truncate text-xs text-zinc-500">{user.email}</div>
           </div>
           <button type="button" onClick={onLogout} className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800">
             Log out
@@ -2317,11 +2326,6 @@ function SettingsView({
       <FlySection teamId={teamId} />
 
       <DeveloperSection teamId={teamId} />
-
-      <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-        <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-zinc-500">Usage &amp; logs</h3>
-        <LogsView summary={usage} />
-      </div>
     </div>
   );
 }
@@ -2344,7 +2348,6 @@ export default function App() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
-  const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [recorder, setRecorder] = useState<Recorder | null>(null);
   const [recSecs, setRecSecs] = useState(0);
   const [transcribing, setTranscribing] = useState(false);
@@ -2458,12 +2461,6 @@ export default function App() {
   }, [user, teamId]);
 
   useEffect(() => {
-    if (view === "settings" && user) {
-      fetchUsage().then(setUsage).catch(() => {});
-    }
-  }, [view, user]);
-
-  useEffect(() => {
     if (user) {
       fetchPublicGroups().then(setSupportGroups).catch(() => {});
     } else {
@@ -2508,7 +2505,6 @@ export default function App() {
         const res = await speakVoice(text, bot.voice || "luna");
         const player = playAudioBlob(res.audio);
         audioRef.current = player;
-        setUser((u) => (u ? { ...u, credit_usd: res.credit_usd } : u));
         await player.done;
         return;
       }
@@ -2629,7 +2625,6 @@ export default function App() {
         const wav = await rec.stop();
         const res = await transcribeVoice(wav, teamId ?? undefined);
         setInput((prev) => (prev ? `${prev} ${res.transcript}` : res.transcript));
-        await refreshUser();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Transcription failed.");
       } finally {
@@ -2665,7 +2660,6 @@ export default function App() {
       const res = await sendChat(bot.id, text, bot.model);
       const reply = res.reply ?? "";
       setMessages((prev) => prev.map((m) => (m.key === assistantKey ? { ...m, content: reply } : m)));
-      setUser((u) => (u ? { ...u, credit_usd: res.credit_usd } : u));
       if (text.startsWith("/archive")) {
         await refreshBots();
         const detail = await fetchBotDetail(bot.id);
@@ -2698,7 +2692,6 @@ export default function App() {
       const content = res.reply ?? "";
       setMessages((prev) => prev.map((m) => (m.key === assistantKey ? { ...m, content } : m)));
       await refreshBots();
-      await refreshUser();
       const detail = await fetchBotDetail(bot.id);
       setBot(detail.slavebot);
       if (fromVoice) {
@@ -2757,7 +2750,6 @@ export default function App() {
         if (!converseRef.current || !turn) break;
         try {
           const res = await transcribeVoice(turn.wav, teamId ?? undefined);
-          await refreshUser();
           if (!converseRef.current) break;
           if (!res.transcript.trim()) continue;
           await sendText(res.transcript, true);
@@ -2792,7 +2784,6 @@ export default function App() {
     setGroupId(null);
     setMeetings([]);
     setMeetingId(null);
-    setUsage(null);
   }
 
   if (checking) return <div className="flex min-h-screen items-center justify-center text-zinc-400">Loading...</div>;
@@ -2867,7 +2858,6 @@ export default function App() {
           <button type="button" onClick={() => setView("settings")} className={topBtn(view === "settings")}><span aria-hidden="true">⚙</span> Settings</button>
         </nav>
         <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
-          <span className="rounded px-1 text-[11px] font-bold text-emerald-400" title="Demo credit left">{formatUsd(user.credit_usd)}</span>
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800 text-sm font-bold text-zinc-200" title={user.email}>
             {(user.name || user.email || "?").slice(0, 1).toUpperCase()}
           </span>
@@ -3046,7 +3036,6 @@ export default function App() {
               teams={teams}
               teamId={teamId}
               memberNames={memberNames}
-              usage={usage}
               onPickTeam={(id) => setTeamId(id)}
               onTeamsChanged={async () => {
                 const list = await fetchTeams();
@@ -3090,7 +3079,6 @@ export default function App() {
             <GroupView
               groupId={groupId}
               bots={bots}
-              onCredit={refreshUser}
               onDeleted={async () => {
                 setGroupId(null);
                 await refreshGroups();

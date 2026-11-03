@@ -277,7 +277,7 @@ pub async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes)
         }
         "ping" => rpc_ok(id, json!({})),
         "tools/list" => {
-            let mut tools = vec![auth_register_tool_def(), auth_login_tool_def(), auth_me_tool_def(), models_tool_def(), chat_tool_def(), chat_send_tool_def(), bots_list_tool_def(), bots_create_tool_def(), bots_get_tool_def(), bots_update_tool_def(), bots_children_tool_def(), bots_transfer_tool_def(), bots_append_memory_tool_def(), bots_set_avatar_tool_def(), bots_get_avatar_tool_def(), bot_archive_tool_def(), bot_pin_tool_def(), bot_set_role_tool_def(), bot_spawn_tool_def(), bot_send_tool_def(), groups_list_tool_def(), groups_create_tool_def(), groups_get_tool_def(), groups_rename_tool_def(), groups_delete_tool_def(), groups_add_member_tool_def(), groups_remove_member_tool_def(), groups_chat_tool_def(), groups_broadcast_tool_def(), meeting_list_tool_def(), meeting_get_tool_def(), meeting_start_tool_def(), meeting_chat_tool_def(), meeting_delete_tool_def(), schedules_update_tool_def(), schedule_create_tool_def(), schedule_list_tool_def(), schedule_delete_tool_def(), summaries_get_tool_def(), summaries_run_tool_def(), team_create_tool_def(), team_list_tool_def(), teams_get_tool_def(), teams_delete_tool_def(), team_invite_tool_def(), teams_set_member_tool_def(), teams_remove_member_tool_def(), teams_set_provider_tool_def(), teams_test_provider_tool_def(), teams_clear_provider_tool_def(), teams_activity_tool_def(), usage_get_tool_def(), harness_config_tool_def(), voice_transcribe_tool_def(), voice_speak_tool_def()];
+            let mut tools = vec![auth_register_tool_def(), auth_login_tool_def(), auth_me_tool_def(), models_tool_def(), chat_tool_def(), chat_send_tool_def(), bots_list_tool_def(), bots_create_tool_def(), bots_get_tool_def(), bots_update_tool_def(), bots_children_tool_def(), bots_transfer_tool_def(), bots_append_memory_tool_def(), bots_set_avatar_tool_def(), bots_get_avatar_tool_def(), bot_archive_tool_def(), bot_pin_tool_def(), bot_set_role_tool_def(), bot_spawn_tool_def(), bot_send_tool_def(), groups_list_tool_def(), groups_create_tool_def(), groups_get_tool_def(), groups_rename_tool_def(), groups_delete_tool_def(), groups_add_member_tool_def(), groups_remove_member_tool_def(), groups_chat_tool_def(), groups_broadcast_tool_def(), meeting_list_tool_def(), meeting_get_tool_def(), meeting_start_tool_def(), meeting_chat_tool_def(), meeting_delete_tool_def(), schedules_update_tool_def(), schedule_create_tool_def(), schedule_list_tool_def(), schedule_delete_tool_def(), summaries_get_tool_def(), summaries_run_tool_def(), team_create_tool_def(), team_list_tool_def(), teams_get_tool_def(), teams_delete_tool_def(), team_invite_tool_def(), teams_set_member_tool_def(), teams_remove_member_tool_def(), teams_set_provider_tool_def(), teams_test_provider_tool_def(), teams_clear_provider_tool_def(), teams_activity_tool_def(), harness_config_tool_def(), voice_transcribe_tool_def(), voice_speak_tool_def()];
             tools.extend(crate::platform_api::tool_defs());
             rpc_ok(id, json!({ "tools": tools }))
         },
@@ -364,7 +364,6 @@ pub async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes)
                 "teams_test_provider" => call_teams_test_provider(id, &state, &user_id, &args).await,
                 "teams_clear_provider" => call_teams_clear_provider(id, &state, &user_id, &args).await,
                 "teams_activity" => call_teams_activity(id, &state, &user_id, &args).await,
-                "usage_get" => call_usage_get(id, &state, &user_id).await,
                 "harness_config" => call_harness_config(id, &state),
                 "voice_transcribe" => call_voice_transcribe(id, &state, &user_id, &args).await,
                 "voice_speak" => call_voice_speak(id, &state, &user_id, &args).await,
@@ -546,7 +545,7 @@ async fn call_meeting_chat(id: Value, state: &AppState, user_id: &str, args: &Va
         Ok(r) => mcp_data(
             id,
             format!("{} replie(s), total ${:.6}.", r.replies.len(), r.total_cost),
-            json!({ "replies": r.replies, "total_cost_usd": r.total_cost, "credit_usd": r.credit }),
+            json!({ "replies": r.replies, "total_cost_usd": r.total_cost }),
         ),
         Err(e) => rpc_err(id, -32000, &e),
     }
@@ -606,7 +605,7 @@ fn auth_login_tool_def() -> Value {
 fn auth_me_tool_def() -> Value {
     json!({
         "name": "auth_me",
-        "description": "Current user profile (id, email, name, credit).",
+        "description": "Current user profile (id, email, name).",
         "inputSchema": { "type": "object", "properties": {} }
     })
 }
@@ -845,10 +844,6 @@ fn teams_activity_tool_def() -> Value {
     json!({ "name": "teams_activity", "description": "Recent bot conversations across a team (owner oversight). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } })
 }
 
-fn usage_get_tool_def() -> Value {
-    json!({ "name": "usage_get", "description": "Demo credit balance, total spent, and the usage log.", "inputSchema": { "type": "object", "properties": {} } })
-}
-
 fn harness_config_tool_def() -> Value {
     json!({ "name": "harness_config", "description": "Base URL of the Slaver harness worker (Codex-like agent runs in Sandbox containers). The app calls its /api/runs endpoints there.", "inputSchema": { "type": "object", "properties": {} } })
 }
@@ -858,7 +853,7 @@ fn voice_transcribe_tool_def() -> Value {
 }
 
 fn voice_speak_tool_def() -> Value {
-    json!({ "name": "voice_speak", "description": "Speak text via the Workers AI voice (base64 MP3 out). Billed per character against demo credit.", "inputSchema": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string" }, "voice": { "type": "string" } } } })
+    json!({ "name": "voice_speak", "description": "Speak text via the Workers AI voice (base64 MP3 out).", "inputSchema": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string" }, "voice": { "type": "string" } } } })
 }
 
 async fn call_bot_archive(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
@@ -947,16 +942,9 @@ async fn call_chat(id: Value, state: &AppState, user_id: &str, args: &Value) -> 
     } else {
         provider::effective_model(&prov.preset, "")
     };
-    let credit = crate::store::get_user(&db, user_id)
-        .await
-        .map(|u| u.map(|u| u.credit_usd).unwrap_or(0.0))
-        .unwrap_or(0.0);
-    if !prov.own && credit <= 0.0 {
-        return rpc_err(id, -32000, "Out of credit (balance $0.00). Demo credit is $10 per user.");
-    }
     match chat::complete_with_usage(&prov, &model, &messages, Some(user_id)).await {
         Ok(done) => {
-            let (cost, _) = crate::store::record_usage(
+            let cost = crate::store::record_usage(
                 &db,
                 user_id,
                 None,
@@ -968,16 +956,15 @@ async fn call_chat(id: Value, state: &AppState, user_id: &str, args: &Value) -> 
                     estimated: done.estimated,
                     audio_seconds: 0.0,
                     cost_override: None,
-                    own_key: prov.own,
                 },
             )
             .await
-            .unwrap_or((0.0, credit));
+            .unwrap_or(0.0);
             rpc_ok(
                 id,
                 json!({ "content": [
                     { "type": "text", "text": done.text },
-                    { "type": "text", "text": format!("(tokens: {} in / {} out · cost ${:.6} · demo credit)", done.prompt_tokens, done.completion_tokens, cost) },
+                    { "type": "text", "text": format!("(tokens: {} in / {} out · cost ${:.6})", done.prompt_tokens, done.completion_tokens, cost) },
                 ] }),
             )
         }
@@ -1605,15 +1592,6 @@ async fn call_teams_activity(id: Value, state: &AppState, user_id: &str, args: &
     match store::team_activity(&db, &team_id, 100).await {
         Ok(items) => mcp_data(id, format!("{} activitie(s).", items.len()), json!({ "activity": items })),
         Err(e) => rpc_err(id, -32000, &format!("Activity failed: {e}")),
-    }
-}
-
-async fn call_usage_get(id: Value, state: &AppState, user_id: &str) -> Response {
-    let db = &state.db;
-    let credit = store::get_user(&db, user_id).await.map(|u| u.map(|x| x.credit_usd).unwrap_or(0.0)).unwrap_or(0.0);
-    match store::list_usage(&db, user_id, 100).await {
-        Ok((logs, spent)) => mcp_data(id, format!("Spent ${spent:.4}."), json!({ "credit_usd": credit, "spent_usd": spent, "logs": logs })),
-        Err(e) => rpc_err(id, -32000, &format!("Usage failed: {e}")),
     }
 }
 

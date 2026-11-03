@@ -108,7 +108,7 @@ pub async fn deliver_as(
     let done = complete_with_usage(&prov, &model, &history, Some(&to.id)).await?;
     store::insert_message(db, &to.id, "assistant", &done.text).await.map_err(|e| e.to_string())?;
     store::touch_bot(db, &to.id).await.map_err(|e| e.to_string())?;
-    let (cost, _) = store::record_usage(
+    let cost = store::record_usage(
         db,
         user_id,
         Some(&to.id),
@@ -120,7 +120,6 @@ pub async fn deliver_as(
             estimated: done.estimated,
             audio_seconds: 0.0,
             cost_override: None,
-            own_key: prov.own,
         },
     )
     .await
@@ -240,7 +239,6 @@ async fn consult_peers(
             estimated: decision.estimated,
             audio_seconds: 0.0,
             cost_override: None,
-            own_key: prov.own,
         },
     )
     .await;
@@ -289,14 +287,6 @@ pub(crate) async fn send_message(
     let prov = provider::provider_for(db, &bot.team_id)
         .await
         .map_err(|e| e.to_string())?;
-    let credit = store::get_user(db, user_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .map(|u| u.credit_usd)
-        .unwrap_or(0.0);
-    if !prov.own && credit <= 0.0 {
-        return Err("Out of credit (balance $0.00). Demo credit is $10 per user.".to_string());
-    }
     let model = match model_override.filter(|m| provider::valid_for(&prov.preset, m)) {
         Some(m) => m.trim().to_string(),
         None => provider::effective_model(&prov.preset, &bot.model).trim().to_string(),
@@ -322,7 +312,7 @@ pub(crate) async fn send_message(
         .await
         .map_err(|e| e.to_string())?;
     store::touch_bot(db, bot_id).await.map_err(|e| e.to_string())?;
-    let (cost, remaining) = store::record_usage(
+    let cost = store::record_usage(
         db,
         user_id,
         Some(bot_id),
@@ -334,7 +324,6 @@ pub(crate) async fn send_message(
             estimated: done.estimated,
             audio_seconds: 0.0,
             cost_override: None,
-            own_key: prov.own,
         },
     )
     .await
@@ -344,7 +333,6 @@ pub(crate) async fn send_message(
         "reply": done.text,
         "usage": { "prompt_tokens": done.prompt_tokens, "completion_tokens": done.completion_tokens, "estimated": done.estimated },
         "cost_usd": cost,
-        "credit_usd": remaining,
     }))
 }
 
@@ -356,10 +344,6 @@ pub(crate) async fn command_reply(
     bot: &store::BotRow,
     message: &str,
 ) -> anyhow::Result<serde_json::Value> {
-    let credit = store::get_user(db, user_id)
-        .await?
-        .map(|u| u.credit_usd)
-        .unwrap_or(0.0);
     let reply = if message.starts_with("/remind") {
         match schedule::parse_remind(message) {
             Ok((kind, time_hhmm, days, interval_minutes, prompt)) => {
@@ -469,7 +453,6 @@ pub(crate) async fn command_reply(
         "reply": reply,
         "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 },
         "cost_usd": 0.0,
-        "credit_usd": credit,
     }))
 }
 

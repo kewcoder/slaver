@@ -408,7 +408,6 @@ async fn run_agent(
             estimated: false,
             audio_seconds: 0.0,
             cost_override: None,
-            own_key: true,
         },
     )
     .await;

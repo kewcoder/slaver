@@ -82,6 +82,8 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "oauth_clients_create", "description": "Create a Login with Slaver OAuth client for deployed apps. Owner/admin only; secret is shown once.", "inputSchema": { "type": "object", "required": ["team_id", "name", "redirect_uris"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "redirect_uris": { "type": "string", "description": "Comma-separated https:// URLs (or http://localhost)" } } } }),
         json!({ "name": "oauth_clients_list", "description": "List a team’s OAuth clients (no secrets). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
         json!({ "name": "oauth_clients_revoke", "description": "Delete an OAuth client and all its tokens. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "client_id"], "properties": { "team_id": { "type": "string" }, "client_id": { "type": "string" } } } }),
+        json!({ "name": "templates_list", "description": "List business team templates for onboarding (preset AI agent teams, e.g. Saung Rangon F&B).", "inputSchema": { "type": "object", "properties": {} } }),
+        json!({ "name": "templates_apply", "description": "Create a team from a business template, pre-staffed with preset AI agents. Returns the team and bots.", "inputSchema": { "type": "object", "required": ["template_key"], "properties": { "template_key": { "type": "string" }, "team_name": { "type": "string" } } } }),
     ]
 }
 
@@ -479,6 +481,19 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             }
             match crate::oauth::revoke_client(db, &tid, user_id, &cid).await {
                 Ok(()) => mcp_data(id, "Client revoked.".to_string(), json!({ "revoked": true })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "templates_list" => {
+            mcp_data(id, format!("{} template(s).", crate::team_templates::all().len()), json!({ "templates": crate::team_templates::all() }))
+        }
+        "templates_apply" => {
+            let key = arg_str(args, "template_key");
+            if key.is_empty() {
+                return Some(rpc_err(id, -32602, "template_key is required."));
+            }
+            match crate::team_templates::apply(db, user_id, &key, &arg_str(args, "team_name")).await {
+                Ok((team, bots)) => mcp_data(id, format!("Team {} ready with {} agent(s).", team.name, bots.len()), json!({ "team": team, "bots": bots })),
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }

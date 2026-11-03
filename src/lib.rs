@@ -22,6 +22,7 @@ pub mod schedule;
 pub mod seed;
 pub mod store;
 pub mod summarize;
+pub mod team_templates;
 pub mod teams;
 pub mod util;
 pub mod voice;

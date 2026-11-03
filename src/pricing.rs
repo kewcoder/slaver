@@ -1,8 +1,8 @@
-//! Demo pricing table for OpenRouter models (USD per 1M tokens).
+//! Estimated pricing table for token usage telemetry (USD per 1M tokens).
 //!
 //! Sources: the live OpenRouter catalog (GET /api/v1/models), Nov 2026.
 //! Cached-input rates are estimates (roughly 10% of input) — treat every
-//! figure here as demo credit math, not a billing quote.
+//! figure here as rough cost telemetry, not a billing quote.
 
 pub struct Rates {
     pub input_per_m: f64,

@@ -11,7 +11,6 @@ pub struct UserRecord {
     pub id: String,
     pub email: String,
     pub name: String,
-    pub credit_usd: f64,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -64,7 +63,7 @@ pub struct UsageRow {
 }
 
 pub async fn get_user(db: &Db, id: &str) -> Result<Option<UserRecord>> {
-    db.prepare("SELECT id, email, name, credit_usd FROM users WHERE id = ?")
+    db.prepare("SELECT id, email, name FROM users WHERE id = ?")
         .bind(&[v_text(id)])?
         .first(None)
         .await
@@ -327,20 +326,16 @@ pub struct UsageInput {
     pub audio_seconds: f64,
     /// Explicit cost in USD (voice bills by audio seconds, not tokens).
     pub cost_override: Option<f64>,
-    /// True when the call ran on the user's own key: OpenRouter bills them
-    /// directly, so demo credit is left alone (the row is still logged).
-    pub own_key: bool,
 }
 
-/// Insert a usage log row and deduct the cost from the user's credit
-/// (skipped for BYOK calls — the user's own key pays OpenRouter directly).
-/// Returns (cost_usd, remaining_credit_usd).
+/// Insert a usage log row (token/cost telemetry only — every team pays its
+/// own provider key, Slaver sells no credit). Returns the estimated cost.
 pub async fn record_usage(
     db: &Db,
     user_id: &str,
     slavebot_id: Option<&str>,
     input: &UsageInput,
-) -> Result<(f64, f64)> {
+) -> Result<f64> {
     let rates = pricing::rates_for(&input.model);
     let cost = input.cost_override.unwrap_or_else(|| {
         pricing::cost_usd(&rates, input.prompt_tokens, input.cached_tokens, input.completion_tokens)
@@ -362,14 +357,7 @@ pub async fn record_usage(
     ])?
     .run()
     .await?;
-    if !input.own_key {
-        db.prepare("UPDATE users SET credit_usd = credit_usd - ? WHERE id = ?")
-            .bind(&[v_real(cost), v_text(user_id)])?
-            .run()
-            .await?;
-    }
-    let user = get_user(db, user_id).await?;
-    Ok((cost, user.map(|u| u.credit_usd).unwrap_or(0.0)))
+    Ok(cost)
 }
 
 /// Every bot the caller may use: team owner/admin see all team bots, staff
@@ -457,25 +445,6 @@ pub async fn bot_messages(db: &Db, user_id: &str, slavebot_id: &str) -> Result<O
         .await?
         .results()?;
     Ok(Some((bot, messages)))
-}
-
-pub async fn list_usage(db: &Db, user_id: &str, limit: i32) -> Result<(Vec<UsageRow>, f64)> {
-    let logs: Vec<UsageRow> = db
-        .prepare(
-            "SELECT u.id, u.slavebot_id, c.name AS slavebot_name, u.model, u.prompt_tokens, u.completion_tokens, u.total_tokens, u.cost_usd, u.estimated, u.audio_seconds, u.created_at \
-             FROM usage_logs u LEFT JOIN slavebots c ON c.id = u.slavebot_id \
-             WHERE u.user_id = ? ORDER BY u.id DESC LIMIT ?",
-        )
-        .bind(&[v_text(user_id), v_real(limit as f64)])?
-        .all()
-        .await?
-        .results()?;
-    let spent: Option<UsageSum> = db
-        .prepare("SELECT COALESCE(SUM(cost_usd), 0.0) AS total FROM usage_logs WHERE user_id = ?")
-        .bind(&[v_text(user_id)])?
-        .first(None)
-        .await?;
-    Ok((logs, spent.map(|s| s.total).unwrap_or(0.0)))
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -858,11 +827,6 @@ pub async fn list_summaries(
         .all()
         .await?
         .results()
-}
-
-#[derive(Deserialize)]
-struct UsageSum {
-    total: f64,
 }
 
 /// Wall-clock "now" in the bot timezone (Asia/Jakarta, UTC+7, no DST),
