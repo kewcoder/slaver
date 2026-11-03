@@ -130,6 +130,7 @@ export interface SlaveBot {
   pinned: number;
   pinned_by: string;
   owner_user_id: string;
+  relay: number;
   avatar_key: string;
   archived: number;
   voice: string;
@@ -260,11 +261,20 @@ export async function groupChat(
   groupId: string,
   message: string,
   model?: string,
-): Promise<{ replies: GroupReply[]; total_cost_usd: number; credit_usd: number }> {
+  saveMemory?: boolean,
+): Promise<{ replies: GroupReply[]; total_cost_usd: number; credit_usd: number; saved_to_memory: string[] }> {
   return request(`/api/groups/${encodeURIComponent(groupId)}/chat`, {
     method: "POST",
-    body: JSON.stringify({ message, model }),
+    body: JSON.stringify({ message, model, save_memory: saveMemory }),
   });
+}
+
+export async function renameGroup(groupId: string, name: string): Promise<Group> {
+  const data = await request<{ group: Group }>(`/api/groups/${encodeURIComponent(groupId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ name }),
+  });
+  return data.group;
 }
 
 export async function broadcast(
@@ -421,6 +431,7 @@ export async function updateBot(
     active_days?: string;
     active_start?: string;
     active_end?: string;
+    relay?: boolean;
   },
 ): Promise<SlaveBot> {
   const data = await request<{ slavebot: SlaveBot }>(

@@ -3,7 +3,6 @@ import {
   addGroupMember,
   appendMemory,
   avatarUrl,
-  broadcast,
   createBot,
   createGroup,
   createHuddle,
@@ -34,7 +33,6 @@ import {
   inviteMember,
   removeMember,
   revokeBotAccess,
-  sendAsBot,
   setMemberRole,
   formatUsd,
   groupChat,
@@ -43,6 +41,7 @@ import {
   plainChat,
   register,
   removeGroupMember,
+  renameGroup,
   runSummary,
   setTeamProvider,
   setToken,
@@ -292,8 +291,9 @@ function GroupView({
 }) {
   const [detail, setDetail] = useState<GroupDetail | null>(null);
   const [task, setTask] = useState("");
-  const [info, setInfo] = useState("");
-  const [saveInfo, setSaveInfo] = useState(true);
+  const [saveMemory, setSaveMemory] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [savedNote, setSavedNote] = useState("");
@@ -327,35 +327,18 @@ function GroupView({
     setTask("");
     setBusy(true);
     try {
-      await groupChat(groupId, text);
+      const res = await groupChat(groupId, text, undefined, saveMemory);
       await refresh();
+      if (saveMemory) {
+        setSavedNote(
+          res.saved_to_memory.length > 0
+            ? `Saved to memory of: ${res.saved_to_memory.join(", ")}`
+            : "Sent. (No memories updated — needs owner/admin.)",
+        );
+      }
       onCredit();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Group chat failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function postInfo(e?: React.FormEvent) {
-    e?.preventDefault();
-    const text = info.trim();
-    if (!text || busy) return;
-    setError("");
-    setSavedNote("");
-    setBusy(true);
-    try {
-      const res = await broadcast(groupId, text, saveInfo);
-      setInfo("");
-      await refresh();
-      onCredit();
-      setSavedNote(
-        res.saved_to_memory.length > 0
-          ? `Saved to memory of: ${res.saved_to_memory.join(", ")}`
-          : "Posted to the group thread.",
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Broadcast failed.");
     } finally {
       setBusy(false);
     }
@@ -411,11 +394,39 @@ function GroupView({
   return (
     <div className="mx-auto flex h-full w-full max-w-3xl flex-col px-4 py-4">
       <div className="mb-3 rounded-lg border border-zinc-800 bg-zinc-900 p-3">
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="font-bold text-zinc-100">{detail.group.name}</h2>
-          <button type="button" onClick={doDelete} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400">
-            Delete group
-          </button>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          {renaming ? (
+            <form
+              onSubmit={(e) => { e.preventDefault(); if (newName.trim()) void (async () => { try { await renameGroup(groupId, newName.trim()); setRenaming(false); await refresh(); } catch (err) { setError(err instanceof Error ? err.message : "Could not rename group."); } })(); }}
+              className="flex min-w-0 flex-1 items-center gap-2"
+            >
+              <input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                maxLength={40}
+                autoFocus
+                className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
+              />
+              <button type="submit" disabled={!newName.trim()} className="shrink-0 rounded-md bg-emerald-600 px-2 py-1 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
+                Save
+              </button>
+              <button type="button" onClick={() => setRenaming(false)} className="shrink-0 rounded px-1 text-xs text-zinc-400 hover:text-zinc-200">
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <h2 className="min-w-0 flex-1 truncate font-bold text-zinc-100">{detail.group.name}</h2>
+          )}
+          {!renaming && (
+            <div className="flex shrink-0 items-center">
+              <button type="button" onClick={() => { setNewName(detail.group.name); setRenaming(true); }} title="Rename group" className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200">
+                Rename
+              </button>
+              <button type="button" onClick={doDelete} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400">
+                Delete
+              </button>
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {detail.members.map((m) => (
@@ -454,7 +465,7 @@ function GroupView({
         {detail.messages.map((m) => (
           <div key={m.id} className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
             {m.slavebot_id ? (
-              <BotAvatar bot={({ id: m.slavebot_id, name: m.bot_name ?? "?", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", user_id: "u", team_id: "", avatar_key: bots.find((b) => b.id === m.slavebot_id)?.avatar_key ?? "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" }) as SlaveBot} size="sm" />
+              <BotAvatar bot={({ id: m.slavebot_id, name: m.bot_name ?? "?", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", relay: 1, user_id: "u", team_id: "", avatar_key: bots.find((b) => b.id === m.slavebot_id)?.avatar_key ?? "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" }) as SlaveBot} size="sm" />
             ) : (
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-600 text-sm font-bold text-white">Y</div>
             )}
@@ -483,24 +494,7 @@ function GroupView({
       {error && <p className="py-1 text-sm text-red-400">{error}</p>}
       {savedNote && <p className="py-1 text-sm text-emerald-400">{savedNote}</p>}
 
-      <form onSubmit={postInfo} className="mt-2 flex items-center gap-2 rounded-lg bg-zinc-800 p-2">
-        <input
-          value={info}
-          onChange={(e) => setInfo(e.target.value)}
-          placeholder="Share info with the team..."
-          disabled={busy}
-          className="min-w-0 flex-1 bg-transparent px-1 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
-        />
-        <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs text-zinc-400" title="Append this info to every member's memory">
-          <input type="checkbox" checked={saveInfo} onChange={(e) => setSaveInfo(e.target.checked)} className="accent-emerald-500" />
-          +memory
-        </label>
-        <button type="submit" disabled={!info.trim() || busy} className="shrink-0 rounded-md bg-zinc-700 px-3 py-2 text-sm font-bold text-white hover:bg-zinc-600 disabled:opacity-40">
-          Post
-        </button>
-      </form>
-
-      <form onSubmit={sendTask} className="mt-2 flex items-end gap-2 rounded-lg bg-zinc-800 p-2">
+      <form onSubmit={sendTask} className="mt-2 flex items-end gap-2 rounded-xl border border-zinc-700 bg-zinc-900 p-2 shadow-lg">
         <textarea
           value={task}
           onChange={(e) => setTask(e.target.value)}
@@ -510,11 +504,15 @@ function GroupView({
               sendTask();
             }
           }}
-          placeholder="Give the team a task... (every bot replies, each billed)"
+          placeholder="Message the group... (every bot replies, each billed)"
           rows={1}
           disabled={busy}
           className="max-h-40 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
         />
+        <label className="flex shrink-0 cursor-pointer items-center gap-1 px-1 text-xs text-zinc-400" title="Also append this message to every member's memory">
+          <input type="checkbox" checked={saveMemory} onChange={(e) => setSaveMemory(e.target.checked)} className="accent-emerald-500" />
+          +memory
+        </label>
         <button type="submit" disabled={!task.trim() || busy} className="shrink-0 rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
           {busy ? "..." : "Send"}
         </button>
@@ -580,7 +578,7 @@ function HuddleView({
     if (found) return found;
     return {
       id: botId ?? "u", name: name ?? "?", title: "", model: "", memory: "",
-      role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", user_id: "u", team_id: "", avatar_key: "", archived: 0, voice: "luna",
+      role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", relay: 1, user_id: "u", team_id: "", avatar_key: "", archived: 0, voice: "luna",
       active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "",
     };
   }
@@ -1403,6 +1401,7 @@ function BotView({
   const [activeDays, setActiveDays] = useState(bot.active_days || "all");
   const [activeStart, setActiveStart] = useState(bot.active_start || "");
   const [activeEnd, setActiveEnd] = useState(bot.active_end || "");
+  const [relay, setRelay] = useState((bot.relay ?? 1) !== 0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -1440,6 +1439,7 @@ function BotView({
         active_days: activeDays,
         active_start: activeStart,
         active_end: activeEnd,
+        relay,
       });
       onSaved(updated);
       setSaved(true);
@@ -1584,6 +1584,16 @@ function BotView({
           </select>
         </label>
         <p className="-mt-2 text-xs text-zinc-500">Per-message Speak buttons and hands-free chat use this Aura voice via server TTS (billed per character); the Voice on toggle stays on the free built-in browser voice.</p>
+        <label className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+          <input
+            type="checkbox"
+            checked={relay}
+            onChange={(e) => { setRelay(e.target.checked); setSaved(false); }}
+            className="h-4 w-4 accent-emerald-600"
+          />
+          Let {bot.name} consult other bots on its own
+        </label>
+        <p className="-mt-2 text-xs font-normal text-zinc-500">When on, the bot may message teammates itself before replying. You send to one bot only.</p>
         <div className="grid grid-cols-3 gap-2">
           <label className="text-sm font-semibold text-zinc-300">
             Active days
@@ -1691,9 +1701,6 @@ export default function App() {
   const [huddleId, setHuddleId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState("");
-  const [sendTarget, setSendTarget] = useState("");
-  const [sendAsText, setSendAsText] = useState("");
-  const [sendBusy, setSendBusy] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
   const [usage, setUsage] = useState<UsageSummary | null>(null);
@@ -1705,6 +1712,7 @@ export default function App() {
   const [micLevel, setMicLevel] = useState(0);
   const [speakingKey, setSpeakingKey] = useState<number | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [sideOpen, setSideOpen] = useState(false);
   const [botFilter, setBotFilter] = useState("");
   const [memberNames, setMemberNames] = useState<Record<string, string>>({});
   const keyRef = useRef(0);
@@ -1866,6 +1874,7 @@ export default function App() {
   }
 
   async function openGroup(id: string | null) {
+    setSideOpen(false);
     setError("");
     stopConverse();
     if (recorder) {
@@ -1881,6 +1890,7 @@ export default function App() {
   }
 
   function openHuddle(id: string | null) {
+    setSideOpen(false);
     setError("");
     stopConverse();
     if (recorder) {
@@ -1904,6 +1914,7 @@ export default function App() {
   }
 
   async function openBot(id: string | null) {
+    setSideOpen(false);
     setError("");
     stopConverse();
     if (recorder) {
@@ -1942,33 +1953,6 @@ export default function App() {
       await openBot(created.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create slaveBot.");
-    }
-  }
-
-  async function sendAs(e?: React.FormEvent) {
-    e?.preventDefault();
-    if (!bot || !sendTarget || !sendAsText.trim() || sendBusy) return;
-    const target = bots.find((b) => b.id === sendTarget);
-    setSendBusy(true);
-    setError("");
-    const text = sendAsText.trim();
-    setSendAsText("");
-    try {
-      const r = await sendAsBot(bot.id, sendTarget, text);
-      const now = new Date().toISOString();
-      keyRef.current += 1;
-      setMessages((prev) => [
-        ...prev,
-        { key: keyRef.current, role: "user", content: `(to ${target?.name ?? "bot"}) ${text}`, created_at: now },
-        { key: keyRef.current + 1, role: "assistant", content: r.reply, created_at: now },
-      ]);
-      keyRef.current += 1;
-      void refreshBots();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not send to that bot.");
-      setSendAsText(text);
-    } finally {
-      setSendBusy(false);
     }
   }
 
@@ -2234,9 +2218,6 @@ export default function App() {
     );
   }
 
-  const tabCls = (active: boolean) =>
-    `rounded-md px-3 py-1.5 text-sm font-medium ${active ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`;
-
   const railBtn = (active: boolean) =>
     `flex h-10 w-10 items-center justify-center rounded-lg text-lg ${active ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:bg-zinc-800/60 hover:text-zinc-200"}`;
 
@@ -2256,7 +2237,10 @@ export default function App() {
         </div>
       </nav>
       {/* Sidebar — workspace sections */}
-      <aside className="flex w-60 shrink-0 flex-col border-r border-zinc-800 bg-zinc-950">
+      {sideOpen && (
+        <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setSideOpen(false)} />
+      )}
+      <aside className={`${sideOpen ? "fixed inset-y-0 left-0 z-40 flex w-72" : "hidden"} shrink-0 flex-col border-r border-zinc-800 bg-zinc-950 md:static md:flex md:w-60`}>
         <div className="border-b border-zinc-800 px-4 py-3">
           <div className="truncate font-bold">{teams.find((t) => t.id === teamId)?.name ?? "SlaveBots"}</div>
           <div className="truncate text-xs text-zinc-500">{teams.find((t) => t.id === teamId)?.role ?? user.email}</div>
@@ -2384,9 +2368,14 @@ export default function App() {
           {teamHuddles.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">No huddles yet.</p>}
         </nav>
         <div className="flex flex-col items-start gap-2 border-t border-zinc-800 p-3">
-          <button type="button" onClick={() => { setView("logs"); fetchUsage().then(setUsage).catch(() => {}); }} className="rounded-md px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-            Usage &amp; logs
-          </button>
+          <div className="flex gap-1 px-2">
+            <button type="button" onClick={() => { setView("teams"); setSideOpen(false); }} className="flex-1 rounded-md px-2 py-1 text-left text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
+              Teams
+            </button>
+            <button type="button" onClick={() => { setView("logs"); fetchUsage().then(setUsage).catch(() => {}); setSideOpen(false); }} className="flex-1 rounded-md px-2 py-1 text-left text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
+              Usage &amp; logs
+            </button>
+          </div>
           <div className="px-2 text-sm font-bold text-emerald-400">{formatUsd(user.credit_usd)} left</div>
           <div className="px-2 text-xs text-zinc-500">{user.email}</div>
           <p className="px-2 text-[11px] leading-snug text-zinc-500">AI keys live in Teams settings — open the Teams tab, pick a team, and configure its provider.</p>
@@ -2398,16 +2387,28 @@ export default function App() {
 
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col bg-zinc-900">
-        <header className="flex items-center justify-between gap-2 border-b border-zinc-800 px-4 py-2">
-          <div className="flex items-center gap-1">
-            <span className="px-1 font-bold text-zinc-300">#</span>
-            <span className="font-semibold">{bot ? bot.name : "pick a slaveBot"}</span>
-            <button type="button" onClick={() => setView("chat")} className={tabCls(view === "chat")}>Chat</button>
-          <button type="button" onClick={() => groupId && setView("group")} disabled={!groupId} className={`${tabCls(view === "group")} disabled:opacity-40`}>Group</button>
-            <button type="button" onClick={() => setView("huddle")} className={tabCls(view === "huddle")}>Huddle</button>
-            <button type="button" onClick={() => bot && setView("bot")} disabled={!bot} className={`${tabCls(view === "bot")} disabled:opacity-40`}>Bot</button>
-            <button type="button" onClick={() => setView("logs")} className={tabCls(view === "logs")}>Logs</button>
-            <button type="button" onClick={() => setView("teams")} className={tabCls(view === "teams")}>Teams</button>
+        <header className="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2 md:px-4">
+          <div className="flex min-w-0 items-center gap-1">
+            <button type="button" onClick={() => setSideOpen((v) => !v)} title="Conversations" className="rounded-md px-2 py-1 text-lg text-zinc-300 hover:bg-zinc-800 md:hidden">
+              ☰
+            </button>
+            {view === "bot" && bot ? (
+              <button type="button" onClick={() => setView("chat")} title="Back to chat" className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800">
+                ← {bot.name} <span className="text-xs font-normal text-zinc-500">settings</span>
+              </button>
+            ) : view === "group" ? (
+              <span className="truncate px-1 font-semibold"><span className="mr-1 font-bold text-zinc-300">#</span>{groups.find((g) => g.id === groupId)?.name ?? "group"}</span>
+            ) : view === "huddle" ? (
+              <span className="truncate px-1 font-semibold"><span className="mr-1 text-zinc-300">◉</span>{huddles.find((h) => h.id === huddleId)?.topic.slice(0, 40) ?? "huddle"}</span>
+            ) : view === "teams" ? (
+              <span className="px-1 font-semibold">Teams</span>
+            ) : view === "logs" ? (
+              <span className="px-1 font-semibold">Usage &amp; logs</span>
+            ) : (
+              <button type="button" onClick={() => bot && setView("bot")} disabled={!bot} title={bot ? "Bot settings" : undefined} className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800 disabled:hover:bg-transparent">
+                <span className="mr-1 font-bold text-zinc-300">#</span>{bot ? bot.name : "pick a slaveBot"}
+              </button>
+            )}
           </div>
           <button
             type="button"
@@ -2515,7 +2516,7 @@ export default function App() {
                       </div>
                     )}
                 <div className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
-                  <BotAvatar bot={bot ?? { id: "u", name: m.role === "user" ? (user.name || "You") : "A", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", user_id: "u", team_id: "", avatar_key: "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" } as SlaveBot} size="sm" />
+                  <BotAvatar bot={bot ?? { id: "u", name: m.role === "user" ? (user.name || "You") : "A", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", relay: 1, user_id: "u", team_id: "", avatar_key: "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" } as SlaveBot} size="sm" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
                       <span className="text-sm font-bold">{m.role === "user" ? (user.name || "You") : (bot?.name ?? "Assistant")}</span>
@@ -2549,34 +2550,6 @@ export default function App() {
 
             {error && <p className="mx-auto w-full max-w-3xl px-4 text-sm text-red-400">{error}</p>}
 
-            {bot && (
-              <div className="px-4 pb-2">
-                <form onSubmit={sendAs} className="mx-auto flex max-w-3xl items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-2 py-1.5">
-                  <span className="shrink-0 px-1 text-xs text-zinc-500" title={`Send as ${bot.name} to another bot`}>
-                    as {bot.name} →
-                  </span>
-                  <select
-                    value={sendTarget}
-                    onChange={(e) => setSendTarget(e.target.value)}
-                    className="shrink-0 rounded-md border border-zinc-700 bg-zinc-800 px-1.5 py-1 text-xs text-zinc-100 focus:border-emerald-500 focus:outline-none"
-                  >
-                    <option value="">pick bot...</option>
-                    {bots.filter((b) => !b.archived && b.id !== bot.id).map((b) => (
-                      <option key={b.id} value={b.id}>{b.name}</option>
-                    ))}
-                  </select>
-                  <input
-                    value={sendAsText}
-                    onChange={(e) => setSendAsText(e.target.value)}
-                    placeholder="Message that bot..."
-                    className="min-w-0 flex-1 bg-transparent px-1 py-1 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
-                  />
-                  <button type="submit" disabled={!sendTarget || !sendAsText.trim() || sendBusy} className="shrink-0 rounded-md bg-zinc-700 px-3 py-1 text-xs font-bold text-white hover:bg-zinc-600 disabled:opacity-40">
-                    {sendBusy ? "..." : "Send"}
-                  </button>
-                </form>
-              </div>
-            )}
             <div className="px-4 pb-4">
               <form onSubmit={send} className="mx-auto flex max-w-3xl items-end gap-2 rounded-xl border border-zinc-700 bg-zinc-900 p-2 shadow-lg">
                 <button

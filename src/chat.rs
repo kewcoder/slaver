@@ -50,6 +50,7 @@ struct UpdateBotRequest {
     active_start: Option<String>,
     active_end: Option<String>,
     role: Option<String>,
+    relay: Option<bool>,
 }
 
 
@@ -128,12 +129,15 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
         None => provider::effective_model(&prov.preset, &bot.model),
     };
 
+    // The agent may consult peer bots itself before replying (one hop max).
+    let relay_notes = consult_peers(&db, &prov, &model, &bot, &user_id, &message).await;
     store::insert_message(&db, &bot_id, "user", &message).await?;
     store::maybe_title_bot(&db, &bot_id, &message).await?;
     let recaps = crate::summarize::context_block(&db, &bot_id)
         .await
         .unwrap_or_default();
-    let history = with_memory(&bot.memory, &recaps, store::recent_messages(&db, &bot_id, 20).await?);
+    let mut history = with_memory(&bot.memory, &recaps, store::recent_messages(&db, &bot_id, 20).await?);
+    history.extend(relay_notes);
 
     let mut upstream =
         match provider::post_chat_completions(&prov, &model, &history, stream).await {
@@ -587,12 +591,142 @@ pub async fn update_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         body.active_start.as_deref(),
         body.active_end.as_deref(),
         body.role.as_deref(),
+        body.relay,
     )
     .await?
     {
         Some(bot) => util::json(200, &serde_json::json!({ "slavebot": bot })),
         None => util::err(404, "SlaveBot not found."),
     }
+}
+
+/// A peer consult the model requested, parsed out of the relay decision call.
+#[derive(Debug, PartialEq)]
+struct Consult {
+    bot_id: String,
+    message: String,
+}
+
+/// Pull `{...}` JSON objects carrying bot_id+message out of a decision reply.
+/// Pure (no I/O), so it unit-tests on the host. Caps at two consults.
+fn parse_consults(text: &str) -> Vec<Consult> {
+    let mut out = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && out.len() < 2 {
+        if bytes[i] == b'{' {
+            let mut depth = 0i32;
+            let mut j = i;
+            while j < bytes.len() {
+                if bytes[j] == b'{' {
+                    depth += 1;
+                } else if bytes[j] == b'}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                j += 1;
+            }
+            if depth == 0 {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text[i..=j]) {
+                    let bot_id = v.get("bot_id").and_then(|x| x.as_str()).unwrap_or("").trim();
+                    let message = v.get("message").and_then(|x| x.as_str()).unwrap_or("").trim();
+                    if !bot_id.is_empty() && !message.is_empty() {
+                        out.push(Consult { bot_id: bot_id.to_string(), message: message.to_string() });
+                    }
+                }
+                i = j + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Agent-initiated relay: before replying, the bot may consult peer bots on
+/// its own (max 2, one hop — consulted bots do not relay further). Returns
+/// ephemeral context notes; `deliver_as` already records both sides and bills
+/// the target's team. Disabled per bot via the relay flag.
+async fn consult_peers(
+    db: &D1Database,
+    prov: &provider::Provider,
+    model: &str,
+    bot: &store::BotRow,
+    user_id: &str,
+    message: &str,
+) -> Vec<ChatMessage> {
+    if bot.relay == 0 {
+        return Vec::new();
+    }
+    let peers: Vec<store::BotRow> = match store::list_bots(db, user_id, false).await {
+        Ok(list) => list
+            .into_iter()
+            .filter(|b| b.team_id == bot.team_id && b.id != bot.id)
+            .take(12)
+            .collect(),
+        Err(_) => return Vec::new(),
+    };
+    if peers.is_empty() {
+        return Vec::new();
+    }
+    let roster = peers
+        .iter()
+        .map(|b| {
+            let role = if b.role.trim().is_empty() { b.title.clone() } else { b.role.clone() };
+            format!("- {} (id {}): {}", b.name, b.id, role.trim())
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let who = if bot.role.trim().is_empty() { bot.name.clone() } else { format!("{} ({})", bot.name, bot.role.trim()) };
+    let prompt = format!(
+        "You are the router for {who}. The user just wrote: \"{message}\"\n\nTeammate bots you may consult (only when you genuinely need their expertise to answer well, max 2):\n{roster}\n\nReply with ONLY a JSON array like [{{\"bot_id\": \"<id>\", \"message\": \"<what to ask them>\"}}], or [] when no consult is needed. No other text."
+    );
+    let decision = match complete_with_usage(
+        prov,
+        model,
+        &[ChatMessage { role: "user".to_string(), content: prompt }],
+    )
+    .await
+    {
+        Ok(d) => d,
+        Err(_) => return Vec::new(),
+    };
+    let _ = store::record_usage(
+        db,
+        user_id,
+        Some(&bot.id),
+        &store::UsageInput {
+            model: format!("{model} (relay decision)"),
+            prompt_tokens: decision.prompt_tokens,
+            cached_tokens: decision.cached_tokens,
+            completion_tokens: decision.completion_tokens,
+            estimated: decision.estimated,
+            audio_seconds: 0.0,
+            cost_override: None,
+            own_key: prov.own,
+        },
+    )
+    .await;
+    let mut notes = Vec::new();
+    for c in parse_consults(&decision.text) {
+        if c.bot_id == bot.id {
+            continue;
+        }
+        if let Ok(r) = deliver_as(db, user_id, &bot.id, &c.bot_id, &c.message).await {
+            let peer = peers
+                .iter()
+                .find(|b| b.id == r.to_bot_id)
+                .map(|b| b.name.clone())
+                .unwrap_or_else(|| "teammate".to_string());
+            notes.push(ChatMessage {
+                role: "user".to_string(),
+                content: format!("[{peer}'s answer for you]: {}", r.reply),
+            });
+        }
+    }
+    notes
 }
 
 /// Slash commands handled without calling the model. Returns the same shape
@@ -820,5 +954,36 @@ pub(crate) fn describe_upstream_error(status: u16, text: &str) -> String {
     match upstream_message(text) {
         Some(m) => format!("Model API error ({status}): {m}.{hint}"),
         None => format!("Model API error ({status}).{hint}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_consults;
+
+    #[test]
+    fn parses_single_consult() {
+        let out = parse_consults(r#"[{"bot_id": "abc", "message": "review this PR"}]"#);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].bot_id, "abc");
+        assert_eq!(out[0].message, "review this PR");
+    }
+
+    #[test]
+    fn ignores_prose_and_caps_at_two() {
+        let out = parse_consults(
+            r#"Sure, I'll ask around. {"bot_id": "a", "message": "one"} then {"bot_id": "b", "message": "two"} and {"bot_id": "c", "message": "three"}"#,
+        );
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].bot_id, "a");
+        assert_eq!(out[1].bot_id, "b");
+    }
+
+    #[test]
+    fn empty_when_no_valid_objects() {
+        assert!(parse_consults("[]").is_empty());
+        assert!(parse_consults("no json here").is_empty());
+        assert!(parse_consults(r#"{"bot_id": "", "message": "x"}"#).is_empty());
+        assert!(parse_consults(r#"{"bot_id": "a"}"#).is_empty());
     }
 }

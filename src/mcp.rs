@@ -354,7 +354,7 @@ async fn call_bot_set_role(id: Value, env: &Env, user_id: &str, args: &Value) ->
         Ok(db) => db,
         Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
     };
-    match store::update_bot(&db, user_id, bot_id, None, None, None, None, None, None, None, Some(role)).await {
+    match store::update_bot(&db, user_id, bot_id, None, None, None, None, None, None, None, Some(role), None).await {
         Ok(Some(bot)) => mcp_text(id, format!("{} is now: {}.", bot.name, if bot.role.is_empty() { "no role" } else { &bot.role })),
         Ok(None) => rpc_err(id, -32602, "SlaveBot not found."),
         Err(e) => rpc_err(id, -32000, &format!("Set role failed: {e}")),

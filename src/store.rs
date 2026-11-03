@@ -35,6 +35,7 @@ pub struct BotRow {
     pub pinned: i64,
     pub pinned_by: String,
     pub owner_user_id: String,
+    pub relay: i64,
     pub avatar_key: String,
     pub archived: i64,
     pub voice: String,
@@ -143,7 +144,7 @@ pub async fn create_bot(db: &D1Database, user_id: &str, team_id: &str, model: &s
 
 /// One bot by id, no access check (cron/system paths use this, then check access).
 pub async fn get_bot_any(db: &D1Database, id: &str) -> Result<Option<BotRow>> {
-    db.prepare("SELECT id, user_id, team_id, name, title, model, memory, role, parent_id, pinned, pinned_by, owner_user_id, avatar_key, archived, voice, active_days, active_start, active_end, created_at, updated_at FROM slavebots WHERE id = ?")
+    db.prepare("SELECT id, user_id, team_id, name, title, model, memory, role, parent_id, pinned, pinned_by, owner_user_id, relay, avatar_key, archived, voice, active_days, active_start, active_end, created_at, updated_at FROM slavebots WHERE id = ?")
         .bind(&[str_val(id)])?
         .first(None)
         .await
@@ -168,6 +169,7 @@ pub async fn update_bot(
     active_start: Option<&str>,
     active_end: Option<&str>,
     role: Option<&str>,
+    relay: Option<bool>,
 ) -> Result<Option<BotRow>> {
     if !can_manage(db, user_id, id).await? {
         return Ok(None);
@@ -227,6 +229,12 @@ pub async fn update_bot(
         let role: String = role.trim().chars().take(120).collect();
         db.prepare("UPDATE slavebots SET role = ? WHERE id = ?")
             .bind(&[str_val(&role), str_val(id)])?
+            .run()
+            .await?;
+    }
+    if let Some(relay) = relay {
+        db.prepare("UPDATE slavebots SET relay = ? WHERE id = ?")
+            .bind(&[JsValue::from_f64(if relay { 1.0 } else { 0.0 }), str_val(id)])?
             .run()
             .await?;
     }
@@ -371,7 +379,7 @@ pub async fn record_usage(
 pub async fn list_bots(db: &D1Database, user_id: &str, include_archived: bool) -> Result<Vec<BotRow>> {
     let archived = if include_archived { "1 = 1" } else { "b.archived = 0" };
     let sql = format!(
-        "SELECT b.id, b.user_id, b.team_id, b.name, b.title, b.model, b.memory, b.role, b.parent_id, b.pinned, b.pinned_by, b.owner_user_id, b.avatar_key, b.archived, b.voice, b.active_days, b.active_start, b.active_end, b.created_at, b.updated_at \
+        "SELECT b.id, b.user_id, b.team_id, b.name, b.title, b.model, b.memory, b.role, b.parent_id, b.pinned, b.pinned_by, b.owner_user_id, b.relay, b.avatar_key, b.archived, b.voice, b.active_days, b.active_start, b.active_end, b.created_at, b.updated_at \
          FROM slavebots b WHERE {archived} AND \
          ((b.team_id = '' AND b.user_id = ?) \
           OR EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = b.team_id AND m.user_id = ? AND m.role IN ('owner', 'admin')) \
@@ -593,7 +601,7 @@ pub async fn group_members(db: &D1Database, user_id: &str, group_id: &str) -> Re
         return Ok(vec![]);
     }
     db.prepare(
-        "SELECT s.id, s.user_id, s.team_id, s.name, s.title, s.model, s.memory, s.role, s.parent_id, s.pinned, s.pinned_by, s.owner_user_id, s.avatar_key, s.archived, s.voice, s.active_days, s.active_start, s.active_end, s.created_at, s.updated_at \
+        "SELECT s.id, s.user_id, s.team_id, s.name, s.title, s.model, s.memory, s.role, s.parent_id, s.pinned, s.pinned_by, s.owner_user_id, s.relay, s.avatar_key, s.archived, s.voice, s.active_days, s.active_start, s.active_end, s.created_at, s.updated_at \
          FROM slavebots s JOIN group_members m ON m.slavebot_id = s.id \
          WHERE m.group_id = ? AND s.archived = 0 ORDER BY m.created_at ASC",
     )
@@ -1094,7 +1102,7 @@ pub async fn children_of(db: &D1Database, user_id: &str, manager_id: &str) -> Re
     }
     let rows: Vec<BotRow> = db
         .prepare(
-            "SELECT id, user_id, team_id, name, title, model, memory, role, parent_id, pinned, pinned_by, owner_user_id, avatar_key, archived, voice, active_days, active_start, active_end, created_at, updated_at \
+            "SELECT id, user_id, team_id, name, title, model, memory, role, parent_id, pinned, pinned_by, owner_user_id, relay, avatar_key, archived, voice, active_days, active_start, active_end, created_at, updated_at \
              FROM slavebots WHERE parent_id = ? ORDER BY created_at ASC LIMIT 50",
         )
         .bind(&[str_val(manager_id)])?

@@ -26,6 +26,7 @@ struct MemberBody {
 struct GroupChatBody {
     message: Option<String>,
     model: Option<String>,
+    save_memory: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -266,10 +267,18 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
             "cost_usd": cost,
         }));
     }
+    let mut saved_to_memory = Vec::new();
+    if body.save_memory.unwrap_or(false) {
+        for bot in &members {
+            if store::append_memory(&db, &user_id, &bot.id, &message).await.unwrap_or(None).is_some() {
+                saved_to_memory.push(bot.name.clone());
+            }
+        }
+    }
     store::touch_group(&db, &group_id).await?;
     util::json(
         200,
-        &serde_json::json!({ "replies": replies, "total_cost_usd": total_cost, "credit_usd": remaining }),
+        &serde_json::json!({ "replies": replies, "total_cost_usd": total_cost, "credit_usd": remaining, "saved_to_memory": saved_to_memory }),
     )
 }
 
