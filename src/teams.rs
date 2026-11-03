@@ -1,6 +1,4 @@
-use worker::*;
-
-use crate::store;
+use crate::{db::Db, store};
 
 /// Team management: list/create teams, invite members by email with a role
 /// (admin = same access as owner; staff = only granted bots), change roles,
@@ -21,7 +19,7 @@ pub(crate) fn safe_team(t: &store::TeamRow) -> serde_json::Value {
 
 /// Core team detail (keys never leave the server): team summary, role,
 /// members with staff grants, and bots. Used by the team.get MCP tool.
-pub(crate) async fn team_detail(db: &D1Database, user_id: &str, team_id: &str) -> Result<serde_json::Value, String> {
+pub(crate) async fn team_detail(db: &Db, user_id: &str, team_id: &str) -> Result<serde_json::Value, String> {
     let team = store::get_team(db, team_id)
         .await
         .map_err(|e| e.to_string())?

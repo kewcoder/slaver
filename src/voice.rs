@@ -1,7 +1,5 @@
-use wasm_bindgen::JsValue;
-use worker::*;
-
 use crate::{chat, pricing, store, util};
+use crate::db::Db;
 
 /// Muse Voice Transcribe over the Meta Model API (chat models moved to
 /// OpenRouter, which exposes no transcription endpoint — so STT stays here).
@@ -14,7 +12,7 @@ const MAX_AUDIO_BYTES: usize = 32 * 1024 * 1024;
 /// team's Meta key (transcription only exists on Meta). The app sends audio
 /// as base64 through the voice.transcribe tool (single /mcp endpoint).
 pub(crate) async fn transcribe_core(
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     team_id: &str,
     audio: Vec<u8>,
@@ -66,27 +64,23 @@ pub(crate) async fn transcribe_core(
     push_part(&mut body, &boundary, "request", None, "application/json", request_json.as_bytes());
     push_part(&mut body, &boundary, "audio", Some("audio.wav"), "audio/wav", &audio);
     body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
-    let headers = Headers::new();
-    headers
-        .set("Authorization", &format!("Bearer {key}"))
-        .map_err(|e| e.to_string())?;
-    headers
-        .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
-        .map_err(|e| e.to_string())?;
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post);
-    init.with_headers(headers);
-    let js_body: JsValue = js_sys::Uint8Array::from(body.as_slice()).into();
-    init.with_body(Some(js_body));
-    let request = Request::new_with_init(TRANSCRIBE_URL, &init).map_err(|e| e.to_string())?;
-    let mut upstream = Fetch::Request(request).send().await.map_err(|e| {
-        console_error!("voice upstream fetch failed: {e}");
-        "Could not reach the transcription API.".to_string()
-    })?;
-    if upstream.status_code() != 200 {
-        let status = upstream.status_code();
+
+    let client = reqwest::Client::new();
+    let mut upstream = client
+        .post(TRANSCRIBE_URL)
+        .header("Authorization", format!("Bearer {key}"))
+        .header("Content-Type", format!("multipart/form-data; boundary={boundary}"))
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| {
+            eprintln!("voice upstream fetch failed: {e}");
+            "Could not reach the transcription API.".to_string()
+        })?;
+    if upstream.status().as_u16() != 200 {
+        let status = upstream.status().as_u16();
         let text = upstream.text().await.unwrap_or_default();
-        console_error!("voice upstream status={} body={}", status, util::truncate(&text, 300));
+        eprintln!("voice upstream status={} body={}", status, util::truncate(&text, 300));
         return Err(chat::describe_upstream_error(status, &text));
     }
     let data: serde_json::Value = upstream.json().await.unwrap_or(serde_json::Value::Null);
@@ -124,79 +118,6 @@ pub(crate) async fn transcribe_core(
         "transcript": transcript,
         "audio_seconds": seconds,
         "estimated": estimated,
-        "cost_usd": cost,
-        "credit_usd": remaining,
-    }))
-}
-
-/// Core speech synthesis: text in, base64 MP3 out (Workers AI binding,
-/// no API keys). The app plays it through the voice.speak tool.
-pub(crate) async fn speak_core(
-    env: &Env,
-    db: &D1Database,
-    user_id: &str,
-    text: &str,
-    voice: &str,
-) -> Result<serde_json::Value, String> {
-    let credit = store::get_user(db, user_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .map(|u| u.credit_usd)
-        .unwrap_or(0.0);
-    if credit <= 0.0 {
-        return Err("Out of credit (balance $0.00). Demo credit is $10 per user.".to_string());
-    }
-    let text = text.trim();
-    let chars = text.chars().count();
-    if chars == 0 || chars > 2000 {
-        return Err("text must be 1..2000 characters.".to_string());
-    }
-    let v = voice.trim();
-    let speaker = if v.is_empty() {
-        "luna"
-    } else if ["luna", "athena", "orion", "zeus", "hera", "perseus", "angus", "stella"].contains(&v) {
-        v
-    } else {
-        "luna"
-    };
-    const TTS_MODEL: &str = "@cf/deepgram/aura-1";
-    let ai = env.ai("AI").map_err(|e| {
-        console_error!("ai binding unavailable: {e}");
-        "Server voice is not configured yet (missing Workers AI binding). Use the built-in browser voice instead.".to_string()
-    })?;
-    let data: serde_json::Value = ai
-        .run(TTS_MODEL, serde_json::json!({ "text": text, "speaker": speaker }))
-        .await
-        .map_err(|e| {
-            console_error!("tts run failed: {e}");
-            "Could not reach the voice model.".to_string()
-        })?;
-    let b64 = data.pointer("/result/audio").and_then(|v| v.as_str()).unwrap_or("");
-    let audio: Vec<u8> = match base64_decode(b64) {
-        Some(bytes) if !bytes.is_empty() => bytes,
-        _ => return Err("Voice model returned no audio.".to_string()),
-    };
-    let cost = pricing::tts_cost_usd(chars);
-    let (cost, remaining) = store::record_usage(
-        db,
-        user_id,
-        None,
-        &store::UsageInput {
-            model: "workers-ai-tts".to_string(),
-            prompt_tokens: 0,
-            cached_tokens: 0,
-            completion_tokens: 0,
-            estimated: false,
-            audio_seconds: 0.0,
-            cost_override: Some(cost),
-            own_key: false,
-        },
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({
-        "audio_base64": base64_encode(&audio),
-        "content_type": "audio/mpeg",
         "cost_usd": cost,
         "credit_usd": remaining,
     }))

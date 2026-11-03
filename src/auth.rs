@@ -1,8 +1,7 @@
-use base64::Engine as _;
-use hmac::Mac;
+use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::JsValue;
-use worker::*;
+
+use crate::db::{now_millis, v_text, Db};
 
 const B64: base64::engine::general_purpose::GeneralPurpose =
     base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -18,12 +17,13 @@ struct UserRow {
 }
 
 fn b64url(data: &[u8]) -> String {
+    use base64::Engine as _;
     B64.encode(data)
 }
 
-fn salt() -> Result<String> {
+fn salt() -> anyhow::Result<String> {
     let mut b = [0u8; 16];
-    getrandom::getrandom(&mut b).map_err(|e| Error::RustError(e.to_string()))?;
+    getrandom::getrandom(&mut b).map_err(|e| anyhow!("{e}"))?;
     Ok(hex::encode(b))
 }
 
@@ -36,8 +36,8 @@ fn hash_password(password: &str, salt: &str) -> String {
     hex::encode(h.finalize())
 }
 
-fn sign_jwt(secret: &str, sub: &str, email: &str) -> Result<String> {
-    let exp = Date::now().as_millis() / 1000 + 7 * 24 * 3600;
+fn sign_jwt(secret: &str, sub: &str, email: &str) -> anyhow::Result<String> {
+    let exp = now_millis() / 1000 + 7 * 24 * 3600;
     let header = b64url(br#"{"alg":"HS256","typ":"JWT"}"#);
     let payload = b64url(
         serde_json::json!({ "sub": sub, "email": email, "exp": exp })
@@ -46,12 +46,15 @@ fn sign_jwt(secret: &str, sub: &str, email: &str) -> Result<String> {
     );
     let msg = format!("{header}.{payload}");
     let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes())
-        .map_err(|e| Error::RustError(e.to_string()))?;
+        .map_err(|e| anyhow!("{e}"))?;
+    use hmac::Mac;
     mac.update(msg.as_bytes());
     Ok(format!("{msg}.{}", b64url(&mac.finalize().into_bytes())))
 }
 
 fn verify_jwt(secret: &str, token: &str) -> Option<String> {
+    use base64::Engine as _;
+    use hmac::Mac;
     let mut parts = token.split('.');
     let (h, p, s) = (parts.next()?, parts.next()?, parts.next()?);
     if parts.next().is_some() {
@@ -65,24 +68,18 @@ fn verify_jwt(secret: &str, token: &str) -> Option<String> {
     let payload: serde_json::Value =
         serde_json::from_slice(&B64.decode(p).ok()?).ok()?;
     let exp = payload.get("exp")?.as_u64()?;
-    if exp < Date::now().as_millis() / 1000 {
+    if exp < now_millis() / 1000 {
         return None;
     }
     Some(payload.get("sub")?.as_str()?.to_string())
 }
 
-/// Returns the user id from `Authorization: Bearer <jwt>`, or None if missing/invalid.
-pub fn bearer_sub(req: &Request, env: &Env) -> Result<Option<String>> {
-    let secret = env.secret("JWT_SECRET")?.to_string();
-    let auth = match req.headers().get("Authorization")? {
-        Some(v) => v,
-        None => return Ok(None),
-    };
-    let token = match auth.strip_prefix("Bearer ") {
-        Some(t) => t,
-        None => return Ok(None),
-    };
-    Ok(verify_jwt(&secret, token))
+/// Returns the user id from an `Authorization: Bearer <jwt>` header value,
+/// or None if missing/invalid.
+pub fn bearer_sub_from_header(secret: &str, auth: Option<&str>) -> Option<String> {
+    let auth = auth?;
+    let token = auth.strip_prefix("Bearer ")?;
+    verify_jwt(secret, token.trim())
 }
 
 fn valid_email(s: &str) -> bool {
@@ -107,7 +104,7 @@ fn user_json(id: &str, email: &str, name: &str, credit: f64) -> serde_json::Valu
 
 /// Core registration (used by the auth.register MCP tool).
 pub async fn register_core(
-    db: &D1Database,
+    db: &Db,
     secret: &str,
     email: &str,
     password: &str,
@@ -123,7 +120,7 @@ pub async fn register_core(
     }
     let existing: Option<UserRow> = db
         .prepare("SELECT id, email, name, password_salt, password_hash, credit_usd FROM users WHERE email = ?")
-        .bind(&[JsValue::from_str(&email)])
+        .bind(&[v_text(&email)])
         .map_err(|e| e.to_string())?
         .first(None)
         .await
@@ -136,11 +133,11 @@ pub async fn register_core(
     let password_hash = hash_password(password, &s);
     db.prepare("INSERT INTO users (id, email, name, password_salt, password_hash) VALUES (?, ?, ?, ?, ?)")
         .bind(&[
-            JsValue::from_str(&id),
-            JsValue::from_str(&email),
-            JsValue::from_str(&name),
-            JsValue::from_str(&s),
-            JsValue::from_str(&password_hash),
+            v_text(&id),
+            v_text(&email),
+            v_text(&name),
+            v_text(&s),
+            v_text(&password_hash),
         ])
         .map_err(|e| e.to_string())?
         .run()
@@ -152,7 +149,7 @@ pub async fn register_core(
 
 /// Core login (used by the auth.login MCP tool).
 pub async fn login_core(
-    db: &D1Database,
+    db: &Db,
     secret: &str,
     email: &str,
     password: &str,
@@ -163,7 +160,7 @@ pub async fn login_core(
     }
     let row: Option<UserRow> = db
         .prepare("SELECT id, email, name, password_salt, password_hash, credit_usd FROM users WHERE email = ?")
-        .bind(&[JsValue::from_str(&email)])
+        .bind(&[v_text(&email)])
         .map_err(|e| e.to_string())?
         .first(None)
         .await
@@ -177,10 +174,10 @@ pub async fn login_core(
 }
 
 /// Core profile fetch (used by the auth.me MCP tool).
-pub async fn me_core(db: &D1Database, user_id: &str) -> Result<serde_json::Value, String> {
+pub async fn me_core(db: &Db, user_id: &str) -> Result<serde_json::Value, String> {
     let row: Option<crate::store::UserRecord> = db
         .prepare("SELECT id, email, name, credit_usd FROM users WHERE id = ?")
-        .bind(&[JsValue::from_str(user_id)])
+        .bind(&[v_text(user_id)])
         .map_err(|e| e.to_string())?
         .first(None)
         .await
@@ -193,7 +190,7 @@ fn uuid() -> String {
     // 128-bit random id, hex-encoded (no extra deps).
     let mut b = [0u8; 16];
     if getrandom::getrandom(&mut b).is_err() {
-        let t = Date::now().as_millis();
+        let t = now_millis();
         b[..8].copy_from_slice(&t.to_be_bytes());
     }
     // version 4 markers

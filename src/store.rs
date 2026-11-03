@@ -1,7 +1,7 @@
+use anyhow::{anyhow, Result};
 use chrono::Datelike;
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::JsValue;
-use worker::*;
+use crate::db::{v_int, v_null, v_real, v_text, Db};
 
 use crate::chat::ChatMessage;
 use crate::pricing;
@@ -63,19 +63,15 @@ pub struct UsageRow {
     pub created_at: String,
 }
 
-fn str_val(s: &str) -> JsValue {
-    JsValue::from_str(s)
-}
-
-pub async fn get_user(db: &D1Database, id: &str) -> Result<Option<UserRecord>> {
+pub async fn get_user(db: &Db, id: &str) -> Result<Option<UserRecord>> {
     db.prepare("SELECT id, email, name, credit_usd FROM users WHERE id = ?")
-        .bind(&[str_val(id)])?
+        .bind(&[v_text(id)])?
         .first(None)
         .await
 }
 
 /// Set a team's AI provider. Only owners and admins may do this.
-pub async fn set_team_provider(db: &D1Database, team_id: &str, actor_id: &str, preset: &str, base_url: &str, api_key: &str) -> Result<(), String> {
+pub async fn set_team_provider(db: &Db, team_id: &str, actor_id: &str, preset: &str, base_url: &str, api_key: &str) -> Result<(), String> {
     match membership(db, team_id, actor_id).await.map_err(|e| e.to_string())? {
         Some(r) if r == "owner" || r == "admin" => {}
         _ => return Err("Only owners and admins can change the team AI provider.".to_string()),
@@ -84,7 +80,7 @@ pub async fn set_team_provider(db: &D1Database, team_id: &str, actor_id: &str, p
     let base_url = crate::provider::normalize_base_url(base_url);
     let api_key = api_key.trim().to_string();
     db.prepare("UPDATE teams SET provider = ?, provider_base_url = ?, provider_api_key = ? WHERE id = ?")
-        .bind(&[str_val(&preset), str_val(&base_url), str_val(&api_key), str_val(team_id)])
+        .bind(&[v_text(&preset), v_text(&base_url), v_text(&api_key), v_text(team_id)])
         .map_err(|e| e.to_string())?
         .run()
         .await
@@ -92,10 +88,10 @@ pub async fn set_team_provider(db: &D1Database, team_id: &str, actor_id: &str, p
     Ok(())
 }
 
-pub async fn bot_count(db: &D1Database, user_id: &str) -> Result<i64> {
+pub async fn bot_count(db: &Db, user_id: &str) -> Result<i64> {
     let row: Option<CountRow> = db
         .prepare("SELECT COUNT(*) AS n FROM slavebots WHERE user_id = ?")
-        .bind(&[str_val(user_id)])?
+        .bind(&[v_text(user_id)])?
         .first(None)
         .await?;
     Ok(row.map(|r| r.n).unwrap_or(0))
@@ -110,13 +106,13 @@ struct CountRow {
 /// the creator belongs to. The bot is partnered with `owner` (a team member;
 /// staff may only pick themselves, owner/admin may pick anyone). The owner
 /// always gets a grant; staff creators get one too.
-pub async fn create_bot(db: &D1Database, user_id: &str, team_id: &str, model: &str, owner: &str) -> Result<BotRow> {
+pub async fn create_bot(db: &Db, user_id: &str, team_id: &str, model: &str, owner: &str) -> Result<BotRow> {
     let team_id = if team_id.is_empty() {
         ensure_personal_team(db, user_id).await?.id
     } else {
         match membership(db, team_id, user_id).await? {
             Some(_) => team_id.to_string(),
-            None => return Err(Error::RustError("You are not on that team.".to_string())),
+            None => return Err(anyhow!("You are not on that team.".to_string())),
         }
     };
     let role = membership(db, &team_id, user_id).await?.unwrap_or_default();
@@ -125,18 +121,18 @@ pub async fn create_bot(db: &D1Database, user_id: &str, team_id: &str, model: &s
         owner = user_id.to_string();
     }
     if membership(db, &team_id, &owner).await?.is_none() {
-        return Err(Error::RustError("The chosen owner is not on this team.".to_string()));
+        return Err(anyhow!("The chosen owner is not on this team.".to_string()));
     }
     let n = bot_count(db, user_id).await? + 1;
     let id = new_id();
     let name = format!("SlaveBot {n}");
     db.prepare("INSERT INTO slavebots (id, user_id, team_id, owner_user_id, name, title, model) VALUES (?, ?, ?, ?, ?, '', ?)")
-        .bind(&[str_val(&id), str_val(user_id), str_val(&team_id), str_val(&owner), str_val(&name), str_val(model)])?
+        .bind(&[v_text(&id), v_text(user_id), v_text(&team_id), v_text(&owner), v_text(&name), v_text(model)])?
         .run()
         .await?;
     for uid in [user_id, owner.as_str()] {
         db.prepare("INSERT OR IGNORE INTO bot_grants (bot_id, user_id) VALUES (?, ?)")
-            .bind(&[str_val(&id), str_val(uid)])?
+            .bind(&[v_text(&id), v_text(uid)])?
             .run()
             .await?;
     }
@@ -146,22 +142,22 @@ pub async fn create_bot(db: &D1Database, user_id: &str, team_id: &str, model: &s
 }
 
 /// One bot by id, no access check (cron/system paths use this, then check access).
-pub async fn get_bot_any(db: &D1Database, id: &str) -> Result<Option<BotRow>> {
+pub async fn get_bot_any(db: &Db, id: &str) -> Result<Option<BotRow>> {
     db.prepare("SELECT id, user_id, team_id, name, title, model, memory, role, parent_id, pinned, pinned_by, owner_user_id, relay, avatar_key, archived, voice, active_days, active_start, active_end, created_at, updated_at FROM slavebots WHERE id = ?")
-        .bind(&[str_val(id)])?
+        .bind(&[v_text(id)])?
         .first(None)
         .await
 }
 
 /// One bot the caller is allowed to see: team owner/admin, granted staff, or
 /// the legacy creator (pre-team rows carry team_id '').
-pub async fn get_bot(db: &D1Database, user_id: &str, id: &str) -> Result<Option<BotRow>> {
+pub async fn get_bot(db: &Db, user_id: &str, id: &str) -> Result<Option<BotRow>> {
     Ok(bot_access(db, user_id, id).await?.map(|(b, _, _)| b))
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn update_bot(
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     id: &str,
     name: Option<&str>,
@@ -181,7 +177,7 @@ pub async fn update_bot(
         let name: String = name.trim().chars().take(40).collect();
         if !name.is_empty() {
             db.prepare("UPDATE slavebots SET name = ? WHERE id = ?")
-                .bind(&[str_val(&name), str_val(id)])?
+                .bind(&[v_text(&name), v_text(id)])?
                 .run()
                 .await?;
         }
@@ -189,14 +185,14 @@ pub async fn update_bot(
     if let Some(memory) = memory {
         let memory: String = memory.chars().take(4000).collect();
         db.prepare("UPDATE slavebots SET memory = ? WHERE id = ?")
-            .bind(&[str_val(&memory), str_val(id)])?
+            .bind(&[v_text(&memory), v_text(id)])?
             .run()
             .await?;
     }
     // The HTTP handler pre-validates the model against the caller's provider.
     if let Some(model) = model.map(str::trim).filter(|m| !m.is_empty()) {
         db.prepare("UPDATE slavebots SET model = ? WHERE id = ?")
-            .bind(&[str_val(model), str_val(id)])?
+            .bind(&[v_text(model), v_text(id)])?
             .run()
             .await?;
     }
@@ -204,7 +200,7 @@ pub async fn update_bot(
         ["luna", "athena", "orion", "zeus", "hera", "perseus", "angus", "stella"].contains(v)
     }) {
         db.prepare("UPDATE slavebots SET voice = ? WHERE id = ?")
-            .bind(&[str_val(voice), str_val(id)])?
+            .bind(&[v_text(voice), v_text(id)])?
             .run()
             .await?;
     }
@@ -224,20 +220,20 @@ pub async fn update_bot(
             .join(",");
         let days = if days.is_empty() { "all".to_string() } else { days };
         db.prepare("UPDATE slavebots SET active_days = ? WHERE id = ?")
-            .bind(&[str_val(&days), str_val(id)])?
+            .bind(&[v_text(&days), v_text(id)])?
             .run()
             .await?;
     }
     if let Some(role) = role {
         let role: String = role.trim().chars().take(120).collect();
         db.prepare("UPDATE slavebots SET role = ? WHERE id = ?")
-            .bind(&[str_val(&role), str_val(id)])?
+            .bind(&[v_text(&role), v_text(id)])?
             .run()
             .await?;
     }
     if let Some(relay) = relay {
         db.prepare("UPDATE slavebots SET relay = ? WHERE id = ?")
-            .bind(&[JsValue::from_f64(if relay { 1.0 } else { 0.0 }), str_val(id)])?
+            .bind(&[v_real(if relay { 1.0 } else { 0.0 }), v_text(id)])?
             .run()
             .await?;
     }
@@ -245,7 +241,7 @@ pub async fn update_bot(
         if let Some(hhmm) = val.map(str::trim).filter(|v| valid_hhmm(v) || v.is_empty()) {
             let sql = format!("UPDATE slavebots SET {col} = ? WHERE id = ?");
             db.prepare(&sql)
-                .bind(&[str_val(hhmm), str_val(id)])?
+                .bind(&[v_text(hhmm), v_text(id)])?
                 .run()
                 .await?;
         }
@@ -267,45 +263,54 @@ pub fn valid_hhmm(v: &str) -> bool {
 }
 
 /// Refresh the title from the first user message (only while still untitled).
-pub async fn maybe_title_bot(db: &D1Database, id: &str, first_message: &str) -> Result<()> {
+pub async fn maybe_title_bot(db: &Db, id: &str, first_message: &str) -> Result<()> {
     let title: String = first_message.chars().take(60).collect();
     if title.is_empty() {
         return Ok(());
     }
     db.prepare("UPDATE slavebots SET title = ? WHERE id = ? AND title = ''")
-        .bind(&[str_val(&title), str_val(id)])?
+        .bind(&[v_text(&title), v_text(id)])?
         .run()
         .await?;
     Ok(())
 }
 
-pub async fn touch_bot(db: &D1Database, slavebot_id: &str) -> Result<()> {
+/// Update a bot's avatar key (ownership already checked by the caller).
+pub async fn set_avatar_key(db: &Db, user_id: &str, bot_id: &str, key: &str) -> Result<()> {
+    db.prepare("UPDATE slavebots SET avatar_key = ? WHERE id = ? AND user_id = ?")
+        .bind(&[v_text(key), v_text(bot_id), v_text(user_id)])?
+        .run()
+        .await?;
+    Ok(())
+}
+
+pub async fn touch_bot(db: &Db, slavebot_id: &str) -> Result<()> {
     db.prepare("UPDATE slavebots SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?")
-        .bind(&[str_val(slavebot_id)])?
+        .bind(&[v_text(slavebot_id)])?
         .run()
         .await?;
     Ok(())
 }
 
-pub async fn insert_message(db: &D1Database, slavebot_id: &str, role: &str, content: &str) -> Result<()> {
+pub async fn insert_message(db: &Db, slavebot_id: &str, role: &str, content: &str) -> Result<()> {
     db.prepare("INSERT INTO messages (slavebot_id, role, content) VALUES (?, ?, ?)")
-        .bind(&[str_val(slavebot_id), str_val(role), str_val(content)])?
+        .bind(&[v_text(slavebot_id), v_text(role), v_text(content)])?
         .run()
         .await?;
     Ok(())
 }
 
-pub async fn recent_messages(db: &D1Database, slavebot_id: &str, limit: i32) -> Result<Vec<ChatMessage>> {
+pub async fn recent_messages(db: &Db, slavebot_id: &str, limit: i32) -> Result<Vec<ChatMessage>> {
     let rows: Vec<MessageRow> = db
         .prepare("SELECT role, content, created_at FROM messages WHERE slavebot_id = ? ORDER BY id DESC LIMIT ?")
-        .bind(&[str_val(slavebot_id), JsValue::from_f64(limit as f64)])?
+        .bind(&[v_text(slavebot_id), v_real(limit as f64)])?
         .all()
         .await?
         .results()?;
     let mut msgs: Vec<ChatMessage> = rows
         .into_iter()
         .rev()
-        .map(|r| ChatMessage { role: r.role, content: r.content })
+        .map(|r| ChatMessage { role: r.role, content: r.content, ..Default::default() })
         .collect();
     // Defensive: keep only valid roles for the upstream call.
     msgs.retain(|m| m.role == "system" || m.role == "user" || m.role == "assistant");
@@ -331,7 +336,7 @@ pub struct UsageInput {
 /// (skipped for BYOK calls — the user's own key pays OpenRouter directly).
 /// Returns (cost_usd, remaining_credit_usd).
 pub async fn record_usage(
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     slavebot_id: Option<&str>,
     input: &UsageInput,
@@ -345,21 +350,21 @@ pub async fn record_usage(
         "INSERT INTO usage_logs (user_id, slavebot_id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, estimated, audio_seconds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&[
-        str_val(user_id),
-        slavebot_id.map(str_val).unwrap_or(JsValue::NULL),
-        str_val(&input.model),
-        JsValue::from_f64(input.prompt_tokens as f64),
-        JsValue::from_f64(input.completion_tokens as f64),
-        JsValue::from_f64(total as f64),
-        JsValue::from_f64(cost),
-        JsValue::from_f64(if input.estimated { 1.0 } else { 0.0 }),
-        JsValue::from_f64(input.audio_seconds),
+        v_text(user_id),
+        slavebot_id.map(v_text).unwrap_or(v_null()),
+        v_text(&input.model),
+        v_real(input.prompt_tokens as f64),
+        v_real(input.completion_tokens as f64),
+        v_real(total as f64),
+        v_real(cost),
+        v_real(if input.estimated { 1.0 } else { 0.0 }),
+        v_real(input.audio_seconds),
     ])?
     .run()
     .await?;
     if !input.own_key {
         db.prepare("UPDATE users SET credit_usd = credit_usd - ? WHERE id = ?")
-            .bind(&[JsValue::from_f64(cost), str_val(user_id)])?
+            .bind(&[v_real(cost), v_text(user_id)])?
             .run()
             .await?;
     }
@@ -369,7 +374,7 @@ pub async fn record_usage(
 
 /// Every bot the caller may use: team owner/admin see all team bots, staff
 /// see granted bots, plus legacy creator-owned rows.
-pub async fn list_bots(db: &D1Database, user_id: &str, include_archived: bool) -> Result<Vec<BotRow>> {
+pub async fn list_bots(db: &Db, user_id: &str, include_archived: bool) -> Result<Vec<BotRow>> {
     let archived = if include_archived { "1 = 1" } else { "b.archived = 0" };
     let sql = format!(
         "SELECT b.id, b.user_id, b.team_id, b.name, b.title, b.model, b.memory, b.role, b.parent_id, b.pinned, b.pinned_by, b.owner_user_id, b.relay, b.avatar_key, b.archived, b.voice, b.active_days, b.active_start, b.active_end, b.created_at, b.updated_at \
@@ -380,7 +385,7 @@ pub async fn list_bots(db: &D1Database, user_id: &str, include_archived: bool) -
          ORDER BY b.updated_at DESC LIMIT 100"
     );
     db.prepare(&sql)
-        .bind(&[str_val(user_id), str_val(user_id), str_val(user_id)])?
+        .bind(&[v_text(user_id), v_text(user_id), v_text(user_id)])?
         .all()
         .await?
         .results()
@@ -388,22 +393,22 @@ pub async fn list_bots(db: &D1Database, user_id: &str, include_archived: bool) -
 
 /// True when the caller may manage the bot (rename, memory, model, archive,
 /// pin): team owner/admin, or the legacy creator.
-pub async fn can_manage(db: &D1Database, user_id: &str, bot_id: &str) -> Result<bool> {
+pub async fn can_manage(db: &Db, user_id: &str, bot_id: &str) -> Result<bool> {
     Ok(matches!(bot_access(db, user_id, bot_id).await?, Some((_, _, role)) if role == "owner" || role == "admin"))
 }
 
-pub async fn set_archived(db: &D1Database, user_id: &str, id: &str, archived: bool) -> Result<Option<BotRow>> {
+pub async fn set_archived(db: &Db, user_id: &str, id: &str, archived: bool) -> Result<Option<BotRow>> {
     if !can_manage(db, user_id, id).await? {
         return Ok(None);
     }
     db.prepare("UPDATE slavebots SET archived = ? WHERE id = ?")
-        .bind(&[JsValue::from_f64(if archived { 1.0 } else { 0.0 }), str_val(id)])?
+        .bind(&[v_real(if archived { 1.0 } else { 0.0 }), v_text(id)])?
         .run()
         .await?;
     if archived {
         // An archived bot can no longer be anyone's auto-opened one.
         db.prepare("UPDATE slavebots SET pinned = 0, pinned_by = '' WHERE id = ?")
-            .bind(&[str_val(id)])?
+            .bind(&[v_text(id)])?
             .run()
             .await?;
     }
@@ -414,7 +419,7 @@ pub async fn set_archived(db: &D1Database, user_id: &str, id: &str, archived: bo
 /// Pin a bot as the caller's auto-open bot. Pins are per user (tracked in
 /// `pinned_by`) so teammates never clobber each other. Archived bots cannot
 /// be pinned; only managers (owner/admin) may pin.
-pub async fn set_pinned(db: &D1Database, user_id: &str, id: &str, pinned: bool) -> Result<Option<BotRow>> {
+pub async fn set_pinned(db: &Db, user_id: &str, id: &str, pinned: bool) -> Result<Option<BotRow>> {
     let bot = match get_bot_any(db, id).await? {
         Some(b) => b,
         None => return Ok(None),
@@ -423,16 +428,16 @@ pub async fn set_pinned(db: &D1Database, user_id: &str, id: &str, pinned: bool) 
         return Ok(None);
     }
     if pinned && bot.archived != 0 {
-        return Err(Error::RustError("Restore the bot before pinning it.".to_string()));
+        return Err(anyhow!("Restore the bot before pinning it.".to_string()));
     }
     if pinned {
         db.prepare("UPDATE slavebots SET pinned = 1, pinned_by = ? WHERE id = ?")
-            .bind(&[str_val(user_id), str_val(id)])?
+            .bind(&[v_text(user_id), v_text(id)])?
             .run()
             .await?;
     } else if bot.pinned_by == user_id {
         db.prepare("UPDATE slavebots SET pinned = 0, pinned_by = '' WHERE id = ?")
-            .bind(&[str_val(id)])?
+            .bind(&[v_text(id)])?
             .run()
             .await?;
     }
@@ -440,34 +445,34 @@ pub async fn set_pinned(db: &D1Database, user_id: &str, id: &str, pinned: bool) 
     get_bot_any(db, id).await
 }
 
-pub async fn bot_messages(db: &D1Database, user_id: &str, slavebot_id: &str) -> Result<Option<(BotRow, Vec<MessageRow>)>> {
+pub async fn bot_messages(db: &Db, user_id: &str, slavebot_id: &str) -> Result<Option<(BotRow, Vec<MessageRow>)>> {
     let bot = match get_bot(db, user_id, slavebot_id).await? {
         Some(b) => b,
         None => return Ok(None),
     };
     let messages: Vec<MessageRow> = db
         .prepare("SELECT role, content, created_at FROM messages WHERE slavebot_id = ? ORDER BY id ASC LIMIT 500")
-        .bind(&[str_val(slavebot_id)])?
+        .bind(&[v_text(slavebot_id)])?
         .all()
         .await?
         .results()?;
     Ok(Some((bot, messages)))
 }
 
-pub async fn list_usage(db: &D1Database, user_id: &str, limit: i32) -> Result<(Vec<UsageRow>, f64)> {
+pub async fn list_usage(db: &Db, user_id: &str, limit: i32) -> Result<(Vec<UsageRow>, f64)> {
     let logs: Vec<UsageRow> = db
         .prepare(
             "SELECT u.id, u.slavebot_id, c.name AS slavebot_name, u.model, u.prompt_tokens, u.completion_tokens, u.total_tokens, u.cost_usd, u.estimated, u.audio_seconds, u.created_at \
              FROM usage_logs u LEFT JOIN slavebots c ON c.id = u.slavebot_id \
              WHERE u.user_id = ? ORDER BY u.id DESC LIMIT ?",
         )
-        .bind(&[str_val(user_id), JsValue::from_f64(limit as f64)])?
+        .bind(&[v_text(user_id), v_real(limit as f64)])?
         .all()
         .await?
         .results()?;
     let spent: Option<UsageSum> = db
         .prepare("SELECT COALESCE(SUM(cost_usd), 0.0) AS total FROM usage_logs WHERE user_id = ?")
-        .bind(&[str_val(user_id)])?
+        .bind(&[v_text(user_id)])?
         .first(None)
         .await?;
     Ok((logs, spent.map(|s| s.total).unwrap_or(0.0)))
@@ -494,31 +499,31 @@ pub struct GroupMessageRow {
 
 /// Groups live on a team: any member may use/rename one, only owner/admin
 /// may delete it. Legacy team-less groups belong to their creator.
-pub async fn create_group(db: &D1Database, user_id: &str, team_id: &str, name: &str) -> Result<GroupRow> {
+pub async fn create_group(db: &Db, user_id: &str, team_id: &str, name: &str) -> Result<GroupRow> {
     let team_id = if team_id.is_empty() {
         ensure_personal_team(db, user_id).await?.id
     } else {
         match membership(db, team_id, user_id).await? {
             Some(_) => team_id.to_string(),
-            None => return Err(Error::RustError("You are not on that team.".to_string())),
+            None => return Err(anyhow!("You are not on that team.".to_string())),
         }
     };
     let id = new_id();
     let name: String = name.trim().chars().take(40).collect();
     let name = if name.is_empty() { "New group".to_string() } else { name };
     db.prepare("INSERT INTO groups (id, user_id, team_id, name) VALUES (?, ?, ?, ?)")
-        .bind(&[str_val(&id), str_val(user_id), str_val(&team_id), str_val(&name)])?
+        .bind(&[v_text(&id), v_text(user_id), v_text(&team_id), v_text(&name)])?
         .run()
         .await?;
     get_group(db, user_id, &id)
         .await?
-        .ok_or_else(|| Error::RustError("group insert failed".to_string()))
+        .ok_or_else(|| anyhow!("group insert failed".to_string()))
 }
 
-pub async fn get_group(db: &D1Database, user_id: &str, id: &str) -> Result<Option<GroupRow>> {
+pub async fn get_group(db: &Db, user_id: &str, id: &str) -> Result<Option<GroupRow>> {
     let row: Option<GroupRow> = db
         .prepare("SELECT id, team_id, name, created_at, updated_at FROM groups WHERE id = ?")
-        .bind(&[str_val(id)])?
+        .bind(&[v_text(id)])?
         .first(None)
         .await?;
     Ok(match row {
@@ -526,7 +531,7 @@ pub async fn get_group(db: &D1Database, user_id: &str, id: &str) -> Result<Optio
             // Legacy group: creator only. Find the creator via user scoping.
             let mine: Option<GroupRow> = db
                 .prepare("SELECT id, team_id, name, created_at, updated_at FROM groups WHERE id = ? AND user_id = ?")
-                .bind(&[str_val(id), str_val(user_id)])?
+                .bind(&[v_text(id), v_text(user_id)])?
                 .first(None)
                 .await?;
             mine
@@ -536,34 +541,34 @@ pub async fn get_group(db: &D1Database, user_id: &str, id: &str) -> Result<Optio
     })
 }
 
-pub async fn list_groups(db: &D1Database, user_id: &str) -> Result<Vec<GroupRow>> {
+pub async fn list_groups(db: &Db, user_id: &str) -> Result<Vec<GroupRow>> {
     db.prepare(
         "SELECT g.id, g.team_id, g.name, g.created_at, g.updated_at FROM groups g \
          WHERE (g.team_id = '' AND g.user_id = ?) \
          OR EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = g.team_id AND m.user_id = ?) \
          ORDER BY g.updated_at DESC LIMIT 100",
     )
-    .bind(&[str_val(user_id), str_val(user_id)])?
+    .bind(&[v_text(user_id), v_text(user_id)])?
     .all()
     .await?
     .results()
 }
 
-pub async fn rename_group(db: &D1Database, user_id: &str, id: &str, name: &str) -> Result<Option<GroupRow>> {
+pub async fn rename_group(db: &Db, user_id: &str, id: &str, name: &str) -> Result<Option<GroupRow>> {
     if get_group(db, user_id, id).await?.is_none() {
         return Ok(None);
     }
     let name: String = name.trim().chars().take(40).collect();
     if !name.is_empty() {
         db.prepare("UPDATE groups SET name = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?")
-            .bind(&[str_val(&name), str_val(id)])?
+            .bind(&[v_text(&name), v_text(id)])?
             .run()
             .await?;
     }
     get_group(db, user_id, id).await
 }
 
-pub async fn delete_group(db: &D1Database, user_id: &str, id: &str) -> Result<bool> {
+pub async fn delete_group(db: &Db, user_id: &str, id: &str) -> Result<bool> {
     let group = match get_group(db, user_id, id).await? {
         Some(g) => g,
         None => return Ok(false),
@@ -575,21 +580,21 @@ pub async fn delete_group(db: &D1Database, user_id: &str, id: &str) -> Result<bo
         }
     }
     db.prepare("DELETE FROM group_messages WHERE group_id = ?")
-        .bind(&[str_val(id)])?
+        .bind(&[v_text(id)])?
         .run()
         .await?;
     db.prepare("DELETE FROM group_members WHERE group_id = ?")
-        .bind(&[str_val(id)])?
+        .bind(&[v_text(id)])?
         .run()
         .await?;
     db.prepare("DELETE FROM groups WHERE id = ?")
-        .bind(&[str_val(id)])?
+        .bind(&[v_text(id)])?
         .run()
         .await?;
     Ok(true)
 }
 
-pub async fn group_members(db: &D1Database, user_id: &str, group_id: &str) -> Result<Vec<BotRow>> {
+pub async fn group_members(db: &Db, user_id: &str, group_id: &str) -> Result<Vec<BotRow>> {
     if get_group(db, user_id, group_id).await?.is_none() {
         return Ok(vec![]);
     }
@@ -598,7 +603,7 @@ pub async fn group_members(db: &D1Database, user_id: &str, group_id: &str) -> Re
          FROM slavebots s JOIN group_members m ON m.slavebot_id = s.id \
          WHERE m.group_id = ? AND s.archived = 0 ORDER BY m.created_at ASC",
     )
-    .bind(&[str_val(group_id)])?
+    .bind(&[v_text(group_id)])?
     .all()
     .await?
     .results()
@@ -607,7 +612,7 @@ pub async fn group_members(db: &D1Database, user_id: &str, group_id: &str) -> Re
 /// Max 8 bots per group — each group message fans out to every member.
 pub const MAX_GROUP_MEMBERS: usize = 8;
 
-pub async fn add_group_member(db: &D1Database, user_id: &str, group_id: &str, bot_id: &str) -> Result<Option<BotRow>> {
+pub async fn add_group_member(db: &Db, user_id: &str, group_id: &str, bot_id: &str) -> Result<Option<BotRow>> {
     let group = match get_group(db, user_id, group_id).await? {
         Some(g) => g,
         None => return Ok(None),
@@ -617,42 +622,42 @@ pub async fn add_group_member(db: &D1Database, user_id: &str, group_id: &str, bo
         None => return Ok(None),
     };
     if bot.team_id != group.team_id {
-        return Err(Error::RustError("That bot is on a different team.".to_string()));
+        return Err(anyhow!("That bot is on a different team.".to_string()));
     }
     let members = group_members(db, user_id, &group.id).await?;
     if members.len() >= MAX_GROUP_MEMBERS && !members.iter().any(|m| m.id == bot_id) {
-        return Err(Error::RustError(format!("Group is full (max {MAX_GROUP_MEMBERS} bots).")));
+        return Err(anyhow!(format!("Group is full (max {MAX_GROUP_MEMBERS} bots).")));
     }
     db.prepare("INSERT OR IGNORE INTO group_members (group_id, slavebot_id) VALUES (?, ?)")
-        .bind(&[str_val(&group.id), str_val(&bot.id)])?
+        .bind(&[v_text(&group.id), v_text(&bot.id)])?
         .run()
         .await?;
     touch_group(db, &group.id).await?;
     Ok(Some(bot))
 }
 
-pub async fn remove_group_member(db: &D1Database, user_id: &str, group_id: &str, bot_id: &str) -> Result<bool> {
+pub async fn remove_group_member(db: &Db, user_id: &str, group_id: &str, bot_id: &str) -> Result<bool> {
     if get_group(db, user_id, group_id).await?.is_none() {
         return Ok(false);
     }
     db.prepare("DELETE FROM group_members WHERE group_id = ? AND slavebot_id = ?")
-        .bind(&[str_val(group_id), str_val(bot_id)])?
+        .bind(&[v_text(group_id), v_text(bot_id)])?
         .run()
         .await?;
     touch_group(db, group_id).await?;
     Ok(true)
 }
 
-pub async fn touch_group(db: &D1Database, group_id: &str) -> Result<()> {
+pub async fn touch_group(db: &Db, group_id: &str) -> Result<()> {
     db.prepare("UPDATE groups SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?")
-        .bind(&[str_val(group_id)])?
+        .bind(&[v_text(group_id)])?
         .run()
         .await?;
     Ok(())
 }
 
 pub async fn insert_group_message(
-    db: &D1Database,
+    db: &Db,
     group_id: &str,
     slavebot_id: Option<&str>,
     role: &str,
@@ -660,23 +665,23 @@ pub async fn insert_group_message(
 ) -> Result<()> {
     db.prepare("INSERT INTO group_messages (group_id, slavebot_id, role, content) VALUES (?, ?, ?, ?)")
         .bind(&[
-            str_val(group_id),
-            slavebot_id.map(str_val).unwrap_or(JsValue::NULL),
-            str_val(role),
-            str_val(content),
+            v_text(group_id),
+        slavebot_id.map(v_text).unwrap_or(v_null()),
+            v_text(role),
+            v_text(content),
         ])?
         .run()
         .await?;
     Ok(())
 }
 
-pub async fn group_history(db: &D1Database, group_id: &str, limit: i32) -> Result<Vec<GroupMessageRow>> {
+pub async fn group_history(db: &Db, group_id: &str, limit: i32) -> Result<Vec<GroupMessageRow>> {
     db.prepare(
         "SELECT g.id, g.slavebot_id, s.name AS bot_name, g.role, g.content, g.created_at \
          FROM group_messages g LEFT JOIN slavebots s ON s.id = g.slavebot_id \
          WHERE g.group_id = ? ORDER BY g.id DESC LIMIT ?",
     )
-    .bind(&[str_val(group_id), JsValue::from_f64(limit as f64)])?
+    .bind(&[v_text(group_id), v_real(limit as f64)])?
     .all()
     .await?
     .results::<GroupMessageRow>()
@@ -687,7 +692,7 @@ pub async fn group_history(db: &D1Database, group_id: &str, limit: i32) -> Resul
 }
 
 /// Append a fact to a bot's memory (capped at 4000 chars, oldest trimmed).
-pub async fn append_memory(db: &D1Database, user_id: &str, bot_id: &str, text: &str) -> Result<Option<String>> {
+pub async fn append_memory(db: &Db, user_id: &str, bot_id: &str, text: &str) -> Result<Option<String>> {
     if !can_manage(db, user_id, bot_id).await? {
         return Ok(None);
     }
@@ -697,7 +702,7 @@ pub async fn append_memory(db: &D1Database, user_id: &str, bot_id: &str, text: &
     };
     let text = text.trim();
     if text.is_empty() || text.len() > 2000 {
-        return Err(Error::RustError("Memory snippet must be 1..2000 characters.".to_string()));
+        return Err(anyhow!("Memory snippet must be 1..2000 characters.".to_string()));
     }
     let mut memory = bot.memory;
     if !memory.is_empty() && !memory.ends_with('\n') {
@@ -714,7 +719,7 @@ pub async fn append_memory(db: &D1Database, user_id: &str, bot_id: &str, text: &
         }
     }
     db.prepare("UPDATE slavebots SET memory = ? WHERE id = ?")
-        .bind(&[str_val(&memory), str_val(bot_id)])?
+        .bind(&[v_text(&memory), v_text(bot_id)])?
         .run()
         .await?;
     touch_bot(db, bot_id).await?;
@@ -732,8 +737,9 @@ pub struct BotScope {
 }
 
 /// Every active bot with its owner — for the scheduled summarizer only.
-pub async fn all_bot_scopes(db: &D1Database) -> Result<Vec<BotScope>> {
+pub async fn all_bot_scopes(db: &Db) -> Result<Vec<BotScope>> {
     db.prepare("SELECT id, user_id FROM slavebots WHERE archived = 0")
+        .bind(&[])?
         .all()
         .await?
         .results()
@@ -741,13 +747,13 @@ pub async fn all_bot_scopes(db: &D1Database) -> Result<Vec<BotScope>> {
 
 /// Messages since a UTC timestamp (ISO-8601), oldest first, capped for prompts.
 pub async fn messages_since(
-    db: &D1Database,
+    db: &Db,
     slavebot_id: &str,
     since_iso: &str,
     limit: i32,
 ) -> Result<Vec<MessageRow>> {
     db.prepare("SELECT role, content, created_at FROM messages WHERE slavebot_id = ? AND created_at >= ? ORDER BY id ASC LIMIT ?")
-        .bind(&[str_val(slavebot_id), str_val(since_iso), JsValue::from_f64(limit as f64)])?
+        .bind(&[v_text(slavebot_id), v_text(since_iso), v_real(limit as f64)])?
         .all()
         .await?
         .results()
@@ -763,7 +769,7 @@ pub struct SummaryRow {
 }
 
 pub async fn upsert_summary(
-    db: &D1Database,
+    db: &Db,
     slavebot_id: &str,
     period: &str,
     period_key: &str,
@@ -773,25 +779,25 @@ pub async fn upsert_summary(
         "INSERT INTO summaries (slavebot_id, period, period_key, content) VALUES (?, ?, ?, ?) \
          ON CONFLICT(slavebot_id, period, period_key) DO UPDATE SET content = excluded.content",
     )
-    .bind(&[str_val(slavebot_id), str_val(period), str_val(period_key), str_val(content)])?
+    .bind(&[v_text(slavebot_id), v_text(period), v_text(period_key), v_text(content)])?
     .run()
     .await?;
     let row: Option<SummaryRow> = db
         .prepare("SELECT id, period, period_key, content, created_at FROM summaries WHERE slavebot_id = ? AND period = ? AND period_key = ?")
-        .bind(&[str_val(slavebot_id), str_val(period), str_val(period_key)])?
+        .bind(&[v_text(slavebot_id), v_text(period), v_text(period_key)])?
         .first(None)
         .await?;
-    row.ok_or_else(|| Error::RustError("summary upsert failed".to_string()))
+    row.ok_or_else(|| anyhow!("summary upsert failed".to_string()))
 }
 
 pub async fn list_summaries(
-    db: &D1Database,
+    db: &Db,
     slavebot_id: &str,
     period: &str,
     limit: i32,
 ) -> Result<Vec<SummaryRow>> {
     db.prepare("SELECT id, period, period_key, content, created_at FROM summaries WHERE slavebot_id = ? AND period = ? ORDER BY period_key DESC LIMIT ?")
-        .bind(&[str_val(slavebot_id), str_val(period), JsValue::from_f64(limit as f64)])?
+        .bind(&[v_text(slavebot_id), v_text(period), v_real(limit as f64)])?
         .all()
         .await?
         .results()
@@ -904,7 +910,7 @@ pub struct ScheduleRow {
 
 #[allow(clippy::too_many_arguments)]
 pub async fn create_schedule(
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     bot_id: &str,
     name: &str,
@@ -920,12 +926,12 @@ pub async fn create_schedule(
     };
     let prompt: String = prompt.trim().chars().take(1000).collect();
     if prompt.is_empty() {
-        return Err(Error::RustError("Schedule prompt must be 1..1000 characters.".to_string()));
+        return Err(anyhow!("Schedule prompt must be 1..1000 characters.".to_string()));
     }
     let days = if days.trim().is_empty() { "all" } else { days.trim() };
     let now = jakarta_now_iso();
     let next = next_run_after(kind, time_hhmm, days, interval_minutes, &now)
-        .ok_or_else(|| Error::RustError("Could not compute the next run time.".to_string()))?;
+        .ok_or_else(|| anyhow!("Could not compute the next run time.".to_string()))?;
     let id = new_id();
     let name: String = if name.trim().is_empty() {
         "Scheduled task".to_string()
@@ -937,36 +943,36 @@ pub async fn create_schedule(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&[
-        str_val(&id),
-        str_val(user_id),
-        str_val(bot_id),
-        str_val(&name),
-        str_val(kind),
-        str_val(time_hhmm),
-        str_val(days),
-        JsValue::from_f64(interval_minutes as f64),
-        str_val(&prompt),
-        str_val(&next),
+        v_text(&id),
+        v_text(user_id),
+        v_text(bot_id),
+        v_text(&name),
+        v_text(kind),
+        v_text(time_hhmm),
+        v_text(days),
+        v_real(interval_minutes as f64),
+        v_text(&prompt),
+        v_text(&next),
     ])?
     .run()
     .await?;
     get_schedule(db, user_id, &id)
         .await?
-        .ok_or_else(|| Error::RustError("schedule insert failed".to_string()))
+        .ok_or_else(|| anyhow!("schedule insert failed".to_string()))
 }
 
-pub async fn get_schedule(db: &D1Database, user_id: &str, id: &str) -> Result<Option<ScheduleRow>> {
+pub async fn get_schedule(db: &Db, user_id: &str, id: &str) -> Result<Option<ScheduleRow>> {
     db.prepare(
         "SELECT id, user_id, slavebot_id, name, kind, time_hhmm, days, interval_minutes, prompt, active, next_run_at, last_run_at, created_at \
          FROM schedules WHERE id = ? AND user_id = ?",
     )
-    .bind(&[str_val(id), str_val(user_id)])?
+    .bind(&[v_text(id), v_text(user_id)])?
     .first(None)
     .await
 }
 
 pub async fn list_schedules(
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     bot_id: Option<&str>,
 ) -> Result<Vec<ScheduleRow>> {
@@ -975,7 +981,7 @@ pub async fn list_schedules(
             "SELECT id, user_id, slavebot_id, name, kind, time_hhmm, days, interval_minutes, prompt, active, next_run_at, last_run_at, created_at \
              FROM schedules WHERE user_id = ? AND slavebot_id = ? ORDER BY next_run_at ASC LIMIT 100",
         )
-        .bind(&[str_val(user_id), str_val(bot)])?
+        .bind(&[v_text(user_id), v_text(bot)])?
         .all()
         .await?
         .results()
@@ -984,7 +990,7 @@ pub async fn list_schedules(
             "SELECT id, user_id, slavebot_id, name, kind, time_hhmm, days, interval_minutes, prompt, active, next_run_at, last_run_at, created_at \
              FROM schedules WHERE user_id = ? ORDER BY next_run_at ASC LIMIT 100",
         )
-        .bind(&[str_val(user_id)])?
+        .bind(&[v_text(user_id)])?
         .all()
         .await?
         .results()
@@ -992,7 +998,7 @@ pub async fn list_schedules(
 }
 
 pub async fn set_schedule_active(
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     id: &str,
     active: bool,
@@ -1009,34 +1015,34 @@ pub async fn set_schedule_active(
     };
     db.prepare("UPDATE schedules SET active = ?, next_run_at = ? WHERE id = ? AND user_id = ?")
         .bind(&[
-            JsValue::from_f64(if active { 1.0 } else { 0.0 }),
-            str_val(&next),
-            str_val(id),
-            str_val(user_id),
+            v_real(if active { 1.0 } else { 0.0 }),
+            v_text(&next),
+            v_text(id),
+            v_text(user_id),
         ])?
         .run()
         .await?;
     get_schedule(db, user_id, id).await
 }
 
-pub async fn delete_schedule(db: &D1Database, user_id: &str, id: &str) -> Result<bool> {
+pub async fn delete_schedule(db: &Db, user_id: &str, id: &str) -> Result<bool> {
     if get_schedule(db, user_id, id).await?.is_none() {
         return Ok(false);
     }
     db.prepare("DELETE FROM schedules WHERE id = ? AND user_id = ?")
-        .bind(&[str_val(id), str_val(user_id)])?
+        .bind(&[v_text(id), v_text(user_id)])?
         .run()
         .await?;
     Ok(true)
 }
 
 /// Schedules ready to fire (active, next_run_at passed). Runner re-checks the bot.
-pub async fn due_schedules(db: &D1Database, now_iso: &str) -> Result<Vec<ScheduleRow>> {
+pub async fn due_schedules(db: &Db, now_iso: &str) -> Result<Vec<ScheduleRow>> {
     db.prepare(
         "SELECT id, user_id, slavebot_id, name, kind, time_hhmm, days, interval_minutes, prompt, active, next_run_at, last_run_at, created_at \
          FROM schedules WHERE active = 1 AND next_run_at <> '' AND next_run_at <= ? ORDER BY next_run_at ASC LIMIT 50",
     )
-    .bind(&[str_val(now_iso)])?
+    .bind(&[v_text(now_iso)])?
     .all()
     .await?
     .results()
@@ -1045,7 +1051,7 @@ pub async fn due_schedules(db: &D1Database, now_iso: &str) -> Result<Vec<Schedul
 /// Spawn a sub-bot under a manager bot. The child inherits the manager's model
 /// unless overridden, and carries the manager link in parent_id.
 pub async fn spawn_bot(
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     manager_id: &str,
     name: &str,
@@ -1054,9 +1060,9 @@ pub async fn spawn_bot(
 ) -> Result<BotRow> {
     let manager = get_bot(db, user_id, manager_id)
         .await?
-        .ok_or_else(|| Error::RustError("Manager bot not found.".to_string()))?;
+        .ok_or_else(|| anyhow!("Manager bot not found.".to_string()))?;
     if manager.archived != 0 {
-        return Err(Error::RustError("That bot is archived — restore it first.".to_string()));
+        return Err(anyhow!("That bot is archived — restore it first.".to_string()));
     }
     let name: String = {
         let n = name.trim().chars().take(40).collect::<String>();
@@ -1069,7 +1075,7 @@ pub async fn spawn_bot(
     let role: String = role.trim().chars().take(120).collect();
     let id = new_id();
     db.prepare("INSERT INTO slavebots (id, user_id, team_id, name, title, model, role, parent_id) VALUES (?, ?, ?, ?, '', ?, ?, ?)")
-        .bind(&[str_val(&id), str_val(user_id), str_val(&manager.team_id), str_val(&name), str_val(model), str_val(&role), str_val(manager_id)])?
+        .bind(&[v_text(&id), v_text(user_id), v_text(&manager.team_id), v_text(&name), v_text(model), v_text(&role), v_text(manager_id)])?
         .run()
         .await?;
     // Staff spawning inside a team get access to their own sub-bot.
@@ -1078,7 +1084,7 @@ pub async fn spawn_bot(
     } else if let Some(role) = membership(db, &manager.team_id, user_id).await? {
         if role == "staff" {
             db.prepare("INSERT OR IGNORE INTO bot_grants (bot_id, user_id) VALUES (?, ?)")
-                .bind(&[str_val(&id), str_val(user_id)])?
+                .bind(&[v_text(&id), v_text(user_id)])?
                 .run()
                 .await?;
         }
@@ -1089,7 +1095,7 @@ pub async fn spawn_bot(
 }
 
 /// Direct sub-bots of one manager (access filtered by the caller).
-pub async fn children_of(db: &D1Database, user_id: &str, manager_id: &str) -> Result<Vec<BotRow>> {
+pub async fn children_of(db: &Db, user_id: &str, manager_id: &str) -> Result<Vec<BotRow>> {
     if bot_access(db, user_id, manager_id).await?.is_none() {
         return Ok(vec![]);
     }
@@ -1098,7 +1104,7 @@ pub async fn children_of(db: &D1Database, user_id: &str, manager_id: &str) -> Re
             "SELECT id, user_id, team_id, name, title, model, memory, role, parent_id, pinned, pinned_by, owner_user_id, relay, avatar_key, archived, voice, active_days, active_start, active_end, created_at, updated_at \
              FROM slavebots WHERE parent_id = ? ORDER BY created_at ASC LIMIT 50",
         )
-        .bind(&[str_val(manager_id)])?
+        .bind(&[v_text(manager_id)])?
         .all()
         .await?
         .results()?;
@@ -1143,40 +1149,40 @@ pub struct HuddleMessageRow {
     pub created_at: String,
 }
 
-pub async fn create_huddle(db: &D1Database, user_id: &str, team_id: &str, topic: &str) -> Result<HuddleRow> {
+pub async fn create_huddle(db: &Db, user_id: &str, team_id: &str, topic: &str) -> Result<HuddleRow> {
     let team_id = if team_id.is_empty() {
         ensure_personal_team(db, user_id).await?.id
     } else {
         match membership(db, team_id, user_id).await? {
             Some(_) => team_id.to_string(),
-            None => return Err(Error::RustError("You are not on that team.".to_string())),
+            None => return Err(anyhow!("You are not on that team.".to_string())),
         }
     };
     let topic: String = topic.trim().chars().take(500).collect();
     if topic.is_empty() {
-        return Err(Error::RustError("Huddle topic must be 1..500 characters.".to_string()));
+        return Err(anyhow!("Huddle topic must be 1..500 characters.".to_string()));
     }
     let id = new_id();
     db.prepare("INSERT INTO huddles (id, user_id, team_id, topic) VALUES (?, ?, ?, ?)")
-        .bind(&[str_val(&id), str_val(user_id), str_val(&team_id), str_val(&topic)])?
+        .bind(&[v_text(&id), v_text(user_id), v_text(&team_id), v_text(&topic)])?
         .run()
         .await?;
     get_huddle(db, user_id, &id)
         .await?
-        .ok_or_else(|| Error::RustError("huddle insert failed".to_string()))
+        .ok_or_else(|| anyhow!("huddle insert failed".to_string()))
 }
 
-pub async fn get_huddle(db: &D1Database, user_id: &str, id: &str) -> Result<Option<HuddleRow>> {
+pub async fn get_huddle(db: &Db, user_id: &str, id: &str) -> Result<Option<HuddleRow>> {
     let row: Option<HuddleRow> = db
         .prepare("SELECT id, user_id, team_id, topic, status, created_at, updated_at FROM huddles WHERE id = ?")
-        .bind(&[str_val(id)])?
+        .bind(&[v_text(id)])?
         .first(None)
         .await?;
     Ok(match row {
         Some(h) if h.team_id.is_empty() => {
             let mine: Option<HuddleRow> = db
                 .prepare("SELECT id, user_id, team_id, topic, status, created_at, updated_at FROM huddles WHERE id = ? AND user_id = ?")
-                .bind(&[str_val(id), str_val(user_id)])?
+                .bind(&[v_text(id), v_text(user_id)])?
                 .first(None)
                 .await?;
             mine
@@ -1186,28 +1192,28 @@ pub async fn get_huddle(db: &D1Database, user_id: &str, id: &str) -> Result<Opti
     })
 }
 
-pub async fn list_huddles(db: &D1Database, user_id: &str) -> Result<Vec<HuddleRow>> {
+pub async fn list_huddles(db: &Db, user_id: &str) -> Result<Vec<HuddleRow>> {
     db.prepare(
         "SELECT h.id, h.user_id, h.team_id, h.topic, h.status, h.created_at, h.updated_at FROM huddles h \
          WHERE (h.team_id = '' AND h.user_id = ?) \
          OR EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = h.team_id AND m.user_id = ?) \
          ORDER BY h.updated_at DESC LIMIT 50",
     )
-    .bind(&[str_val(user_id), str_val(user_id)])?
+    .bind(&[v_text(user_id), v_text(user_id)])?
     .all()
     .await?
     .results()
 }
 
-pub async fn touch_huddle(db: &D1Database, id: &str) -> Result<()> {
+pub async fn touch_huddle(db: &Db, id: &str) -> Result<()> {
     db.prepare("UPDATE huddles SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?")
-        .bind(&[str_val(id)])?
+        .bind(&[v_text(id)])?
         .run()
         .await?;
     Ok(())
 }
 
-pub async fn delete_huddle(db: &D1Database, user_id: &str, id: &str) -> Result<bool> {
+pub async fn delete_huddle(db: &Db, user_id: &str, id: &str) -> Result<bool> {
     let huddle = match get_huddle(db, user_id, id).await? {
         Some(h) => h,
         None => return Ok(false),
@@ -1220,22 +1226,22 @@ pub async fn delete_huddle(db: &D1Database, user_id: &str, id: &str) -> Result<b
     }
     // Child tables carry no user_id: they are scoped by the ownership check above.
     db.prepare("DELETE FROM huddle_messages WHERE huddle_id = ?")
-        .bind(&[str_val(id)])?
+        .bind(&[v_text(id)])?
         .run()
         .await?;
     db.prepare("DELETE FROM huddle_participants WHERE huddle_id = ?")
-        .bind(&[str_val(id)])?
+        .bind(&[v_text(id)])?
         .run()
         .await?;
     db.prepare("DELETE FROM huddles WHERE id = ?")
-        .bind(&[str_val(id)])?
+        .bind(&[v_text(id)])?
         .run()
         .await?;
     Ok(true)
 }
 
 pub async fn set_participant(
-    db: &D1Database,
+    db: &Db,
     huddle_id: &str,
     bot_id: &str,
     decision: &str,
@@ -1246,26 +1252,26 @@ pub async fn set_participant(
         "INSERT INTO huddle_participants (huddle_id, slavebot_id, decision, reason) VALUES (?, ?, ?, ?) \
          ON CONFLICT(huddle_id, slavebot_id) DO UPDATE SET decision = excluded.decision, reason = excluded.reason",
     )
-    .bind(&[str_val(huddle_id), str_val(bot_id), str_val(decision), str_val(&reason)])?
+    .bind(&[v_text(huddle_id), v_text(bot_id), v_text(decision), v_text(&reason)])?
     .run()
     .await?;
     Ok(())
 }
 
-pub async fn huddle_participants(db: &D1Database, huddle_id: &str) -> Result<Vec<HuddleParticipant>> {
+pub async fn huddle_participants(db: &Db, huddle_id: &str) -> Result<Vec<HuddleParticipant>> {
     db.prepare(
         "SELECT p.huddle_id, p.slavebot_id, s.name AS bot_name, p.decision, p.reason, p.created_at \
          FROM huddle_participants p LEFT JOIN slavebots s ON s.id = p.slavebot_id \
          WHERE p.huddle_id = ? ORDER BY p.created_at ASC",
     )
-    .bind(&[str_val(huddle_id)])?
+    .bind(&[v_text(huddle_id)])?
     .all()
     .await?
     .results()
 }
 
 pub async fn insert_huddle_message(
-    db: &D1Database,
+    db: &Db,
     huddle_id: &str,
     bot: Option<&BotRow>,
     role: &str,
@@ -1275,32 +1281,32 @@ pub async fn insert_huddle_message(
         Some(b) => (Some(b.id.clone()), Some(b.name.clone())),
         None => (None, None),
     };
-    let none = JsValue::NULL;
-    let id_val = bot_id.map(|s| str_val(&s)).unwrap_or(none.clone());
-    let name_val = bot_name.map(|s| str_val(&s)).unwrap_or(none);
+    let none = v_null();
+    let id_val = bot_id.map(|s| v_text(&s)).unwrap_or(none.clone());
+    let name_val = bot_name.map(|s| v_text(&s)).unwrap_or(none);
     db.prepare("INSERT INTO huddle_messages (huddle_id, slavebot_id, bot_name, role, content) VALUES (?, ?, ?, ?, ?)")
-        .bind(&[str_val(huddle_id), id_val, name_val, str_val(role), str_val(content)])?
+        .bind(&[v_text(huddle_id), id_val, name_val, v_text(role), v_text(content)])?
         .run()
         .await?;
     Ok(())
 }
 
-pub async fn huddle_history(db: &D1Database, huddle_id: &str, limit: i32) -> Result<Vec<HuddleMessageRow>> {
+pub async fn huddle_history(db: &Db, huddle_id: &str, limit: i32) -> Result<Vec<HuddleMessageRow>> {
     let rows: Vec<HuddleMessageRow> = db
         .prepare("SELECT id, huddle_id, slavebot_id, bot_name, role, content, created_at FROM huddle_messages WHERE huddle_id = ? ORDER BY id DESC LIMIT ?")
-        .bind(&[str_val(huddle_id), JsValue::from_f64(limit as f64)])?
+        .bind(&[v_text(huddle_id), v_real(limit as f64)])?
         .all()
         .await?
         .results()?;
     Ok(rows.into_iter().rev().collect())
 }
 
-pub async fn mark_schedule_run(db: &D1Database, id: &str, next_run_at: &str) -> Result<()> {
+pub async fn mark_schedule_run(db: &Db, id: &str, next_run_at: &str) -> Result<()> {
     db.prepare("UPDATE schedules SET last_run_at = ?, next_run_at = ? WHERE id = ?")
         .bind(&[
-            str_val(&jakarta_now_iso()),
-            str_val(next_run_at),
-            str_val(id),
+            v_text(&jakarta_now_iso()),
+            v_text(next_run_at),
+            v_text(id),
         ])?
         .run()
         .await?;
@@ -1342,27 +1348,27 @@ pub struct TeamWithRole {
     pub created_at: String,
 }
 
-pub async fn create_team(db: &D1Database, owner_id: &str, name: &str, personal: bool) -> Result<TeamRow> {
+pub async fn create_team(db: &Db, owner_id: &str, name: &str, personal: bool) -> Result<TeamRow> {
     let name: String = name.trim().chars().take(60).collect();
     let name = if name.is_empty() { "Team".to_string() } else { name };
     let id = new_id();
     db.prepare("INSERT INTO teams (id, name, owner_user_id, personal) VALUES (?, ?, ?, ?)")
-        .bind(&[str_val(&id), str_val(&name), str_val(owner_id), JsValue::from_f64(if personal { 1.0 } else { 0.0 })])?
+        .bind(&[v_text(&id), v_text(&name), v_text(owner_id), v_real(if personal { 1.0 } else { 0.0 })])?
         .run()
         .await?;
     db.prepare("INSERT INTO team_members (team_id, user_id, role) VALUES (?, ?, 'owner')")
-        .bind(&[str_val(&id), str_val(owner_id)])?
+        .bind(&[v_text(&id), v_text(owner_id)])?
         .run()
         .await?;
-    get_team(db, &id).await?.ok_or_else(|| Error::RustError("team insert failed".to_string()))
+    get_team(db, &id).await?.ok_or_else(|| anyhow!("team insert failed".to_string()))
 }
 
 /// Delete a team and everything in it. Only the owner (or an admin) may do this.
 /// Personal teams cannot be deleted.
-pub async fn delete_team(db: &D1Database, team_id: &str, actor_id: &str) -> Result<(), String> {
+pub async fn delete_team(db: &Db, team_id: &str, actor_id: &str) -> Result<(), String> {
     let team: Option<TeamRow> = db
         .prepare("SELECT id, name, owner_user_id, personal, provider, provider_base_url, provider_api_key, created_at FROM teams WHERE id = ?")
-        .bind(&[str_val(team_id)])
+        .bind(&[v_text(team_id)])
         .map_err(|e| e.to_string())?
         .first(None)
         .await
@@ -1391,7 +1397,7 @@ pub async fn delete_team(db: &D1Database, team_id: &str, actor_id: &str) -> Resu
         "DELETE FROM teams WHERE id = ?",
     ] {
         db.prepare(sql)
-            .bind(&[str_val(team_id)])
+            .bind(&[v_text(team_id)])
             .map_err(|e| e.to_string())?
             .run()
             .await
@@ -1402,7 +1408,7 @@ pub async fn delete_team(db: &D1Database, team_id: &str, actor_id: &str) -> Resu
 
 /// Transfer a bot's partnership to another team member. Only the team's
 /// owner/admin may do this; the new owner gets a grant automatically.
-pub async fn set_bot_owner(db: &D1Database, actor_id: &str, bot_id: &str, owner_id: &str) -> Result<BotRow, String> {
+pub async fn set_bot_owner(db: &Db, actor_id: &str, bot_id: &str, owner_id: &str) -> Result<BotRow, String> {
     let bot = get_bot_any(db, bot_id).await.map_err(|e| e.to_string())?;
     let bot = bot.ok_or_else(|| "SlaveBot not found.".to_string())?;
     if bot.team_id.is_empty() {
@@ -1419,13 +1425,13 @@ pub async fn set_bot_owner(db: &D1Database, actor_id: &str, bot_id: &str, owner_
         }
     }
     db.prepare("UPDATE slavebots SET owner_user_id = ? WHERE id = ?")
-        .bind(&[str_val(owner_id), str_val(bot_id)])
+        .bind(&[v_text(owner_id), v_text(bot_id)])
         .map_err(|e| e.to_string())?
         .run()
         .await
         .map_err(|e| e.to_string())?;
     db.prepare("INSERT OR IGNORE INTO bot_grants (bot_id, user_id) VALUES (?, ?)")
-        .bind(&[str_val(bot_id), str_val(owner_id)])
+        .bind(&[v_text(bot_id), v_text(owner_id)])
         .map_err(|e| e.to_string())?
         .run()
         .await
@@ -1444,7 +1450,7 @@ pub struct ActivityItem {
     pub created_at: String,
 }
 
-pub async fn team_activity(db: &D1Database, team_id: &str, limit: i64) -> Result<Vec<ActivityItem>> {
+pub async fn team_activity(db: &Db, team_id: &str, limit: i64) -> Result<Vec<ActivityItem>> {
     let limit = limit.clamp(1, 200);
     db.prepare(
         "SELECT m.slavebot_id AS slavebot_id, b.name AS bot_name, m.role AS role, m.content AS content, m.created_at AS created_at \
@@ -1452,35 +1458,35 @@ pub async fn team_activity(db: &D1Database, team_id: &str, limit: i64) -> Result
          WHERE b.team_id = ? AND b.archived = 0 \
          ORDER BY m.id DESC LIMIT ?",
     )
-    .bind(&[str_val(team_id), JsValue::from_f64(limit as f64)])?
+    .bind(&[v_text(team_id), v_real(limit as f64)])?
     .all()
     .await?
     .results()
 }
 
-pub async fn get_team(db: &D1Database, team_id: &str) -> Result<Option<TeamRow>> {
+pub async fn get_team(db: &Db, team_id: &str) -> Result<Option<TeamRow>> {
     db.prepare("SELECT id, name, owner_user_id, personal, provider, provider_base_url, provider_api_key, created_at FROM teams WHERE id = ?")
-        .bind(&[str_val(team_id)])?
+        .bind(&[v_text(team_id)])?
         .first(None)
         .await
 }
 
-pub async fn list_user_teams(db: &D1Database, user_id: &str) -> Result<Vec<TeamWithRole>> {
+pub async fn list_user_teams(db: &Db, user_id: &str) -> Result<Vec<TeamWithRole>> {
     db.prepare(
         "SELECT t.id, t.name, t.owner_user_id, t.personal, m.role, t.provider, t.provider_base_url, (t.provider_api_key <> '') AS provider_key_set, t.created_at \
          FROM teams t JOIN team_members m ON m.team_id = t.id \
          WHERE m.user_id = ? ORDER BY t.personal DESC, t.created_at ASC",
     )
-    .bind(&[str_val(user_id)])?
+    .bind(&[v_text(user_id)])?
     .all()
     .await?
     .results()
 }
 
-pub async fn membership(db: &D1Database, team_id: &str, user_id: &str) -> Result<Option<String>> {
+pub async fn membership(db: &Db, team_id: &str, user_id: &str) -> Result<Option<String>> {
     let row: Option<TeamRole> = db
         .prepare("SELECT role FROM team_members WHERE team_id = ? AND user_id = ?")
-        .bind(&[str_val(team_id), str_val(user_id)])?
+        .bind(&[v_text(team_id), v_text(user_id)])?
         .first(None)
         .await?;
     Ok(row.map(|r| r.role))
@@ -1493,10 +1499,10 @@ struct TeamRole {
 
 /// The user's explicit personal team, creating it (and adopting legacy
 /// team-less rows) on first use.
-pub async fn ensure_personal_team(db: &D1Database, user_id: &str) -> Result<TeamRow> {
+pub async fn ensure_personal_team(db: &Db, user_id: &str) -> Result<TeamRow> {
     let existing: Option<TeamRow> = db
         .prepare("SELECT id, name, owner_user_id, personal, provider, provider_base_url, provider_api_key, created_at FROM teams WHERE owner_user_id = ? AND personal = 1")
-        .bind(&[str_val(user_id)])?
+        .bind(&[v_text(user_id)])?
         .first(None)
         .await?;
     if let Some(t) = existing {
@@ -1509,25 +1515,25 @@ pub async fn ensure_personal_team(db: &D1Database, user_id: &str) -> Result<Team
     let team = create_team(db, user_id, &name, true).await?;
     for (table, col) in [("slavebots", "user_id"), ("groups", "user_id"), ("huddles", "user_id")] {
         let sql = format!("UPDATE {table} SET team_id = ? WHERE team_id = '' AND {col} = ?");
-        db.prepare(&sql).bind(&[str_val(&team.id), str_val(user_id)])?.run().await?;
+        db.prepare(&sql).bind(&[v_text(&team.id), v_text(user_id)])?.run().await?;
     }
     Ok(team)
 }
 
-pub async fn team_members(db: &D1Database, team_id: &str) -> Result<Vec<MemberRow>> {
+pub async fn team_members(db: &Db, team_id: &str) -> Result<Vec<MemberRow>> {
     db.prepare(
         "SELECT m.team_id, m.user_id, u.email AS email, u.name AS name, m.role, m.created_at \
          FROM team_members m LEFT JOIN users u ON u.id = m.user_id \
          WHERE m.team_id = ? ORDER BY m.created_at ASC",
     )
-    .bind(&[str_val(team_id)])?
+    .bind(&[v_text(team_id)])?
     .all()
     .await?
     .results()
 }
 
 pub async fn add_member_by_email(
-    db: &D1Database,
+    db: &Db,
     team_id: &str,
     adder_id: &str,
     email: &str,
@@ -1551,7 +1557,7 @@ pub async fn add_member_by_email(
     }
     let target: Option<UserId> = db
         .prepare("SELECT id FROM users WHERE email = ?")
-        .bind(&[str_val(&email)])
+        .bind(&[v_text(&email)])
         .map_err(|e| e.to_string())?
         .first(None)
         .await
@@ -1561,7 +1567,7 @@ pub async fn add_member_by_email(
         return Err("That user is already on the team.".to_string());
     }
     db.prepare("INSERT INTO team_members (team_id, user_id, role) VALUES (?, ?, ?)")
-        .bind(&[str_val(team_id), str_val(&target.id), str_val(&role)])
+        .bind(&[v_text(team_id), v_text(&target.id), v_text(&role)])
         .map_err(|e| e.to_string())?
         .run()
         .await
@@ -1574,7 +1580,7 @@ struct UserId {
     id: String,
 }
 
-pub async fn remove_member(db: &D1Database, team_id: &str, actor_id: &str, target_id: &str) -> Result<(), String> {
+pub async fn remove_member(db: &Db, team_id: &str, actor_id: &str, target_id: &str) -> Result<(), String> {
     let actor_role = membership(db, team_id, actor_id).await.map_err(|e| e.to_string())?;
     let actor_role = actor_role.ok_or_else(|| "You are not a member of this team.".to_string())?;
     let target_role = membership(db, team_id, target_id).await.map_err(|e| e.to_string())?
@@ -1589,13 +1595,13 @@ pub async fn remove_member(db: &D1Database, team_id: &str, actor_id: &str, targe
         return Err("Leave the team by deleting it — members cannot remove themselves.".to_string());
     }
     db.prepare("DELETE FROM bot_grants WHERE user_id = ? AND bot_id IN (SELECT id FROM slavebots WHERE team_id = ?)")
-        .bind(&[str_val(target_id), str_val(team_id)])
+        .bind(&[v_text(target_id), v_text(team_id)])
         .map_err(|e| e.to_string())?
         .run()
         .await
         .map_err(|e| e.to_string())?;
     db.prepare("DELETE FROM team_members WHERE team_id = ? AND user_id = ?")
-        .bind(&[str_val(team_id), str_val(target_id)])
+        .bind(&[v_text(team_id), v_text(target_id)])
         .map_err(|e| e.to_string())?
         .run()
         .await
@@ -1603,7 +1609,7 @@ pub async fn remove_member(db: &D1Database, team_id: &str, actor_id: &str, targe
     Ok(())
 }
 
-pub async fn set_member_role(db: &D1Database, team_id: &str, actor_id: &str, target_id: &str, role: &str) -> Result<(), String> {
+pub async fn set_member_role(db: &Db, team_id: &str, actor_id: &str, target_id: &str, role: &str) -> Result<(), String> {
     let actor_role = membership(db, team_id, actor_id).await.map_err(|e| e.to_string())?;
     if actor_role.as_deref() != Some("owner") {
         return Err("Only the team owner can change roles.".to_string());
@@ -1617,7 +1623,7 @@ pub async fn set_member_role(db: &D1Database, team_id: &str, actor_id: &str, tar
         return Err("The team owner keeps the owner role.".to_string());
     }
     db.prepare("UPDATE team_members SET role = ? WHERE team_id = ? AND user_id = ?")
-        .bind(&[str_val(role), str_val(team_id), str_val(target_id)])
+        .bind(&[v_text(role), v_text(team_id), v_text(target_id)])
         .map_err(|e| e.to_string())?
         .run()
         .await
@@ -1626,10 +1632,10 @@ pub async fn set_member_role(db: &D1Database, team_id: &str, actor_id: &str, tar
 }
 
 /// Bot ids a staff member may use inside one team.
-pub async fn member_grants(db: &D1Database, team_id: &str, user_id: &str) -> Result<Vec<String>, String> {
+pub async fn member_grants(db: &Db, team_id: &str, user_id: &str) -> Result<Vec<String>, String> {
     let rows: Vec<GrantBot> = db
         .prepare("SELECT g.bot_id AS bot_id FROM bot_grants g JOIN slavebots b ON b.id = g.bot_id WHERE g.user_id = ? AND b.team_id = ?")
-        .bind(&[str_val(user_id), str_val(team_id)])
+        .bind(&[v_text(user_id), v_text(team_id)])
         .map_err(|e| e.to_string())?
         .all()
         .await
@@ -1644,7 +1650,7 @@ struct GrantBot {
     bot_id: String,
 }
 
-pub async fn set_grants(db: &D1Database, team_id: &str, actor_id: &str, target_id: &str, bot_ids: &[String]) -> Result<(), String> {
+pub async fn set_grants(db: &Db, team_id: &str, actor_id: &str, target_id: &str, bot_ids: &[String]) -> Result<(), String> {
     let actor_role = membership(db, team_id, actor_id).await.map_err(|e| e.to_string())?;
     let actor_role = actor_role.ok_or_else(|| "You are not a member of this team.".to_string())?;
     if actor_role != "owner" && actor_role != "admin" {
@@ -1664,14 +1670,14 @@ pub async fn set_grants(db: &D1Database, team_id: &str, actor_id: &str, target_i
         }
     }
     db.prepare("DELETE FROM bot_grants WHERE user_id = ? AND bot_id IN (SELECT id FROM slavebots WHERE team_id = ?)")
-        .bind(&[str_val(target_id), str_val(team_id)])
+        .bind(&[v_text(target_id), v_text(team_id)])
         .map_err(|e| e.to_string())?
         .run()
         .await
         .map_err(|e| e.to_string())?;
     for id in bot_ids.iter().take(100) {
         db.prepare("INSERT OR IGNORE INTO bot_grants (bot_id, user_id) VALUES (?, ?)")
-            .bind(&[str_val(id), str_val(target_id)])
+            .bind(&[v_text(id), v_text(target_id)])
             .map_err(|e| e.to_string())?
             .run()
             .await
@@ -1682,7 +1688,7 @@ pub async fn set_grants(db: &D1Database, team_id: &str, actor_id: &str, target_i
 
 /// (bot, team_id, role): team owner/admin see every team bot; staff see
 /// granted bots; legacy team-less rows belong to their creator.
-pub async fn bot_access(db: &D1Database, user_id: &str, bot_id: &str) -> Result<Option<(BotRow, String, String)>> {
+pub async fn bot_access(db: &Db, user_id: &str, bot_id: &str) -> Result<Option<(BotRow, String, String)>> {
     let bot = match get_bot_any(db, bot_id).await? {
         Some(b) => b,
         None => return Ok(None),
@@ -1703,7 +1709,7 @@ pub async fn bot_access(db: &D1Database, user_id: &str, bot_id: &str) -> Result<
     }
     let grant: Option<GrantBot> = db
         .prepare("SELECT bot_id AS bot_id FROM bot_grants WHERE bot_id = ? AND user_id = ?")
-        .bind(&[str_val(bot_id), str_val(user_id)])?
+        .bind(&[v_text(bot_id), v_text(user_id)])?
         .first(None)
         .await?;
     if grant.is_some() {
@@ -1714,10 +1720,94 @@ pub async fn bot_access(db: &D1Database, user_id: &str, bot_id: &str) -> Result<
     }
 }
 
+#[derive(Deserialize, Serialize, Clone)]
+pub struct RunRow {
+    pub id: String,
+    pub team_id: String,
+    pub model: String,
+    pub prompt: String,
+    pub status: String,
+    pub created_at: String,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct RunStepRow {
+    pub kind: String,
+    pub name: String,
+    pub output: String,
+    pub created_at: String,
+}
+
+pub async fn insert_run(
+    db: &Db,
+    id: &str,
+    user_id: &str,
+    team_id: &str,
+    model: &str,
+    prompt: &str,
+) -> Result<()> {
+    db.prepare("INSERT INTO runs (id, user_id, team_id, model, prompt, status) VALUES (?, ?, ?, ?, ?, 'running')")
+        .bind(&[v_text(id), v_text(user_id), v_text(team_id), v_text(model), v_text(prompt)])?
+        .run()
+        .await?;
+    Ok(())
+}
+
+pub async fn set_run_status(db: &Db, id: &str, status: &str) -> Result<()> {
+    db.prepare("UPDATE runs SET status = ? WHERE id = ?")
+        .bind(&[v_text(status), v_text(id)])?
+        .run()
+        .await?;
+    Ok(())
+}
+
+pub async fn insert_run_step(db: &Db, run_id: &str, kind: &str, name: &str, output: &str) -> Result<()> {
+    db.prepare("INSERT INTO run_steps (run_id, kind, name, output) VALUES (?, ?, ?, ?)")
+        .bind(&[v_text(run_id), v_text(kind), v_text(name), v_text(output)])?
+        .run()
+        .await?;
+    Ok(())
+}
+
+pub async fn list_runs(db: &Db, user_id: &str, team_id: &str) -> Result<Vec<RunRow>> {
+    if team_id.is_empty() {
+        db.prepare("SELECT id, team_id, model, substr(prompt,1,120) AS prompt, status, created_at FROM runs WHERE user_id = ? ORDER BY rowid DESC LIMIT 20")
+            .bind(&[v_text(user_id)])?
+            .all()
+            .await?
+            .results()
+    } else {
+        db.prepare("SELECT id, team_id, model, substr(prompt,1,120) AS prompt, status, created_at FROM runs WHERE user_id = ? AND team_id = ? ORDER BY rowid DESC LIMIT 20")
+            .bind(&[v_text(user_id), v_text(team_id)])?
+            .all()
+            .await?
+            .results()
+    }
+}
+
+pub async fn get_run(db: &Db, user_id: &str, run_id: &str) -> Result<Option<(RunRow, Vec<RunStepRow>)>> {
+    let run: Option<RunRow> = db
+        .prepare("SELECT id, team_id, model, prompt, status, created_at FROM runs WHERE id = ? AND user_id = ?")
+        .bind(&[v_text(run_id), v_text(user_id)])?
+        .first(None)
+        .await?;
+    let run = match run {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let steps: Vec<RunStepRow> = db
+        .prepare("SELECT kind, name, output, created_at FROM run_steps WHERE run_id = ? ORDER BY id ASC LIMIT 200")
+        .bind(&[v_text(run_id)])?
+        .all()
+        .await?
+        .results()?;
+    Ok(Some((run, steps)))
+}
+
 fn new_id() -> String {
     let mut b = [0u8; 16];
     if getrandom::getrandom(&mut b).is_err() {
-        let t = Date::now().as_millis();
+        let t = crate::db::now_millis();
         b[..8].copy_from_slice(&t.to_be_bytes());
     }
     b[6] = (b[6] & 0x0f) | 0x40;

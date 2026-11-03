@@ -1,0 +1,28 @@
+# Fly.io deployment for Slaver (self-hosted, no Cloudflare).
+# 1. fly launch --no-deploy (reuse this file)  2. fly volumes create slaver_data --size 3 -r sin
+# 3. fly secrets set JWT_SECRET=$(openssl rand -hex 32)  4. fly deploy
+app = "slaver"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[mounts]]
+  source = "slaver_data"
+  destination = "/data"
+
+[env]
+  PORT = "8080"
+  DB_PATH = "/data/slaver.db"
+  AVATAR_DIR = "/data/avatars"
+  WORK_DIR = "/data/workspaces"
+  MIGRATIONS_DIR = "./migrations"
+  FRONTEND_DIR = "./frontend/dist"

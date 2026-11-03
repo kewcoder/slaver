@@ -1,7 +1,66 @@
-use wasm_bindgen::JsValue;
-use worker::*;
+use anyhow::anyhow;
+use std::sync::LazyLock;
 
-use crate::{chat::ChatMessage, store};
+use crate::{chat::ChatMessage, db::Db, store};
+
+static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .expect("http client builds")
+});
+
+/// Eager upstream response with the old worker::Response call shape
+/// (`status_code()`, `text()`, `json()`), backed by reqwest.
+pub struct Upstream {
+    status: u16,
+    text: String,
+}
+
+impl Upstream {
+    async fn from_reqwest(resp: reqwest::Response) -> anyhow::Result<Self> {
+        let status = resp.status().as_u16();
+        let text = resp.text().await?;
+        Ok(Self { status, text })
+    }
+
+    pub fn status_code(&self) -> u16 {
+        self.status
+    }
+
+    pub fn text(&self) -> String {
+        self.text.clone()
+    }
+
+    pub fn json<T: serde::de::DeserializeOwned>(&self) -> anyhow::Result<T> {
+        Ok(serde_json::from_str(&self.text)?)
+    }
+}
+
+fn upstream_headers(prov: &Provider, session: Option<&str>) -> reqwest::header::HeaderMap {
+    let mut h = reqwest::header::HeaderMap::new();
+    h.insert(
+        reqwest::header::CONTENT_TYPE,
+        reqwest::header::HeaderValue::from_static("application/json"),
+    );
+    if !prov.api_key.trim().is_empty() {
+        if let Ok(v) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", prov.api_key.trim())) {
+            h.insert(reqwest::header::AUTHORIZATION, v);
+        }
+    }
+    h.insert("http-referer", reqwest::header::HeaderValue::from_static("https://slaver.app"));
+    h.insert("x-title", reqwest::header::HeaderValue::from_static("Slaver"));
+    // OpenCode Go routes on a stable per-conversation session id; without it
+    // the gateway rejects the request (400). Only OpenCode reads this header.
+    if normalize_base_url(&prov.base_url).contains("opencode.ai") {
+        if let Some(s) = session.map(str::trim).filter(|s| !s.is_empty()) {
+            if let Ok(v) = reqwest::header::HeaderValue::from_str(&s.chars().take(128).collect::<String>()) {
+                h.insert("x-opencode-session", v);
+            }
+        }
+    }
+    h
+}
 
 /// Pluggable AI providers. Every supported backend speaks OpenAI-compatible
 /// chat completions, so only the base URL, key, and model list change.
@@ -198,7 +257,7 @@ pub fn key_prefix_ok(preset: &str, key: &str) -> bool {
 
 /// Resolve the preset id for a team without needing its key (used for
 /// default-model selection when creating bots).
-pub async fn preset_for_team(db: &D1Database, team_id: &str) -> String {
+pub async fn preset_for_team(db: &Db, team_id: &str) -> String {
     match store::get_team(db, team_id).await {
         Ok(Some(t)) if !t.provider.trim().is_empty() => t.provider.trim().to_string(),
         _ => "meta".to_string(),
@@ -209,10 +268,10 @@ pub async fn preset_for_team(db: &D1Database, team_id: &str) -> String {
 /// pays (own: true), so team usage is logged but never touches demo credit.
 /// There is no server fallback — every team configures its key in team settings.
 /// Keyless local servers (Ollama / OpenCode gateway on localhost) may omit the key.
-pub async fn provider_for(db: &D1Database, team_id: &str) -> Result<Provider, Error> {
+pub async fn provider_for(db: &Db, team_id: &str) -> anyhow::Result<Provider> {
     let team = store::get_team(db, team_id)
         .await?
-        .ok_or_else(|| Error::RustError("Team not found.".to_string()))?;
+        .ok_or_else(|| anyhow!("Team not found."))?;
     let def = preset_of(if team.provider.trim().is_empty() { "meta" } else { team.provider.trim() });
     let raw_base = team.provider_base_url.trim();
     let base_url = if raw_base.is_empty() {
@@ -222,10 +281,10 @@ pub async fn provider_for(db: &D1Database, team_id: &str) -> Result<Provider, Er
     };
     let key = team.provider_api_key.trim().to_string();
     if key.is_empty() && !key_optional_for(def.id, &base_url) {
-        return Err(Error::RustError(format!(
+        return Err(anyhow!(
             "No model key is set for this team: an owner or admin must add the {} key in Teams settings.",
             def.label,
-        )));
+        ));
     }
     Ok(Provider { preset: def.id.to_string(), base_url, api_key: key, own: true })
 }
@@ -256,18 +315,18 @@ pub async fn post_chat_completions(
     messages: &[ChatMessage],
     stream: bool,
     session: Option<&str>,
-) -> Result<Response, Error> {
+) -> anyhow::Result<Upstream> {
     if !prov.api_key.trim().is_empty() {
         // ok
     } else if !key_optional_for(&prov.preset, &prov.base_url) {
-        return Err(Error::RustError("No model key is set.".to_string()));
+        return Err(anyhow!("No model key is set."));
     }
     let base = normalize_base_url(&prov.base_url);
     if base.is_empty() {
-        return Err(Error::RustError("This provider needs a base URL — an owner or admin must set it in Teams settings.".to_string()));
+        return Err(anyhow!("This provider needs a base URL — an owner or admin must set it in Teams settings."));
     }
     if model.trim().is_empty() {
-        return Err(Error::RustError(require_model(&prov.preset, model).unwrap_err()));
+        return Err(anyhow!(require_model(&prov.preset, model).unwrap_err()));
     }
     let url = format!("{base}/chat/completions");
     // usage.include makes usage-reporting providers (OpenRouter) attach exact
@@ -277,28 +336,13 @@ pub async fn post_chat_completions(
         payload["usage"] = serde_json::json!({ "include": true });
     }
 
-    let headers = Headers::new();
-    headers.set("Content-Type", "application/json")?;
-    if !prov.api_key.trim().is_empty() {
-        headers.set("Authorization", &format!("Bearer {}", prov.api_key.trim()))?;
-    }
-    headers.set("HTTP-Referer", "https://slaver.app")?;
-    headers.set("X-Title", "Slaver")?;
-    // OpenCode Go routes on a stable per-conversation session id; without it
-    // the gateway rejects the request (400). Only OpenCode reads this header.
-    if normalize_base_url(&prov.base_url).contains("opencode.ai") {
-        if let Some(s) = session.map(str::trim).filter(|s| !s.is_empty()) {
-            headers.set("x-opencode-session", &s.chars().take(128).collect::<String>())?;
-        }
-    }
-
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post);
-    init.with_headers(headers);
-    init.with_body(Some(JsValue::from_str(&payload.to_string())));
-
-    let req = Request::new_with_init(&url, &init)?;
-    let upstream = Fetch::Request(req).send().await?;
+    let resp = CLIENT
+        .post(&url)
+        .headers(upstream_headers(prov, session))
+        .json(&payload)
+        .send()
+        .await?;
+    let upstream = Upstream::from_reqwest(resp).await?;
     // Some OpenCode models (e.g. muse-spark-*) are only served via the
     // Responses API — a 400/404 on chat/completions means "wrong API for this
     // model", so retry there transparently. Other providers are untouched.
@@ -319,7 +363,7 @@ async fn post_responses(
     model: &str,
     messages: &[ChatMessage],
     session: Option<&str>,
-) -> Result<Response, Error> {
+) -> anyhow::Result<Upstream> {
     let base = normalize_base_url(&prov.base_url);
     let url = format!("{base}/responses");
     let input: Vec<serde_json::Value> = messages
@@ -328,26 +372,252 @@ async fn post_responses(
         .collect();
     let payload = serde_json::json!({ "model": model, "input": input });
 
-    let headers = Headers::new();
-    headers.set("Content-Type", "application/json")?;
-    if !prov.api_key.trim().is_empty() {
-        headers.set("Authorization", &format!("Bearer {}", prov.api_key.trim()))?;
+    let resp = CLIENT
+        .post(&url)
+        .headers(upstream_headers(prov, session))
+        .json(&payload)
+        .send()
+        .await?;
+    Upstream::from_reqwest(resp).await
+}
+
+/// Tool call in a normalized shape across both OpenAI APIs.
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub args: String,
+}
+
+pub struct ToolCompletion {
+    pub text: String,
+    pub tool_calls: Vec<ToolCall>,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+}
+
+/// Which OpenAI API shapes a model supports, from the server's /models
+/// catalogue (`api` object). Empty when the catalogue is unreachable.
+pub async fn model_apis(prov: &Provider, model: &str) -> Vec<String> {
+    let base = normalize_base_url(&prov.base_url);
+    let url = if base.contains("opencode.ai/inference") {
+        if base.contains("/inference/go") {
+            "https://opencode.ai/inference/go/v1/models".to_string()
+        } else {
+            "https://opencode.ai/inference/v1/models".to_string()
+        }
+    } else {
+        format!("{base}/models")
+    };
+    let mut headers = upstream_headers(prov, Some("slaver-harness-models"));
+    headers.remove(reqwest::header::CONTENT_TYPE);
+    let resp = match CLIENT.get(&url).headers(headers).send().await {
+        Ok(r) => r,
+        Err(_) => return vec![],
+    };
+    if resp.status().as_u16() != 200 {
+        return vec![];
     }
-    headers.set("HTTP-Referer", "https://slaver.app")?;
-    headers.set("X-Title", "Slaver")?;
-    if base.contains("opencode.ai") {
-        if let Some(s) = session.map(str::trim).filter(|s| !s.is_empty()) {
-            headers.set("x-opencode-session", &s.chars().take(128).collect::<String>())?;
+    let v: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+    v.get("data")
+        .and_then(|d| d.as_array())
+        .and_then(|arr| {
+            arr.iter().find(|m| {
+                m.get("id").and_then(|x| x.as_str()) == Some(model)
+                    || m.get("canonical_id").and_then(|x| x.as_str()) == Some(model)
+            })
+        })
+        .and_then(|m| m.get("api"))
+        .and_then(|a| a.as_object())
+        .map(|o| o.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// Chat/completions call with tools. Returns normalized text + tool calls.
+/// Responses-only models are NOT retried here — use `post_tools_responses`
+/// for those (see `model_apis`).
+pub async fn post_chat_tools(
+    prov: &Provider,
+    model: &str,
+    messages: &[ChatMessage],
+    tools: &serde_json::Value,
+    session: Option<&str>,
+) -> anyhow::Result<ToolCompletion> {
+    require_model(&prov.preset, model).map_err(anyhow::Error::msg)?;
+    let base = normalize_base_url(&prov.base_url);
+    if base.is_empty() {
+        anyhow::bail!("This provider needs a base URL.");
+    }
+    let payload = serde_json::json!({
+        "model": model.trim(),
+        "messages": messages,
+        "tools": tools,
+        "tool_choice": "auto",
+    });
+    let resp = CLIENT
+        .post(format!("{base}/chat/completions"))
+        .headers(upstream_headers(prov, session))
+        .json(&payload)
+        .send()
+        .await?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await?;
+    if status != 200 {
+        anyhow::bail!("{}", crate::chat::describe_upstream_error(status, &text));
+    }
+    let v: serde_json::Value = serde_json::from_str(&text)?;
+    parse_chat_tools(&v)
+}
+
+fn parse_chat_tools(v: &serde_json::Value) -> anyhow::Result<ToolCompletion> {
+    let msg = v.pointer("/choices/0/message");
+    let text = msg
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+    let mut tool_calls = Vec::new();
+    if let Some(tcs) = msg.and_then(|m| m.get("tool_calls")).and_then(|t| t.as_array()) {
+        for tc in tcs {
+            let id = tc.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let name = tc
+                .pointer("/function/name")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let args = tc
+                .pointer("/function/arguments")
+                .and_then(|x| x.as_str())
+                .unwrap_or("{}")
+                .to_string();
+            if !name.is_empty() {
+                tool_calls.push(ToolCall { id, name, args });
+            }
         }
     }
+    let usage = v.get("usage");
+    Ok(ToolCompletion {
+        text,
+        tool_calls,
+        prompt_tokens: usage
+            .and_then(|u| u.get("prompt_tokens"))
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0),
+        completion_tokens: usage
+            .and_then(|u| u.get("completion_tokens"))
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0),
+    })
+}
 
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post);
-    init.with_headers(headers);
-    init.with_body(Some(JsValue::from_str(&payload.to_string())));
+/// Responses-API call with function tools. `input` is the full input array
+/// (caller carries prior outputs + function_call_output items across turns).
+/// Returns the completion plus the raw `output` items to append to `input`.
+pub async fn post_tools_responses(
+    prov: &Provider,
+    model: &str,
+    input: &serde_json::Value,
+    tools: &serde_json::Value,
+    session: Option<&str>,
+) -> anyhow::Result<(ToolCompletion, serde_json::Value)> {
+    require_model(&prov.preset, model).map_err(anyhow::Error::msg)?;
+    let base = normalize_base_url(&prov.base_url);
+    if base.is_empty() {
+        anyhow::bail!("This provider needs a base URL.");
+    }
+    let fn_tools: Vec<serde_json::Value> = tools
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|t| {
+            let f = t.get("function")?;
+            Some(serde_json::json!({
+                "type": "function",
+                "name": f.get("name"),
+                "description": f.get("description"),
+                "parameters": f.get("parameters"),
+            }))
+        })
+        .collect();
+    let payload = serde_json::json!({ "model": model.trim(), "input": input, "tools": fn_tools });
+    let resp = CLIENT
+        .post(format!("{base}/responses"))
+        .headers(upstream_headers(prov, session))
+        .json(&payload)
+        .send()
+        .await?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await?;
+    if status != 200 {
+        anyhow::bail!("{}", crate::chat::describe_upstream_error(status, &text));
+    }
+    let v: serde_json::Value = serde_json::from_str(&text)?;
+    let mut completion_text = String::new();
+    let mut tool_calls = Vec::new();
+    let mut outputs = Vec::new();
+    if let Some(items) = v.get("output").and_then(|o| o.as_array()) {
+        for item in items {
+            outputs.push(item.clone());
+            let kind = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            if kind == "message" {
+                if let Some(s) = extract_responses_text_item(item) {
+                    if !completion_text.is_empty() {
+                        completion_text.push('\n');
+                    }
+                    completion_text.push_str(&s);
+                }
+            } else if kind == "function_call" {
+                let name = item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                if !name.is_empty() {
+                    tool_calls.push(ToolCall {
+                        id: item.get("call_id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                        name,
+                        args: item.get("arguments").and_then(|x| x.as_str()).unwrap_or("{}").to_string(),
+                    });
+                }
+            }
+        }
+    }
+    let usage = v.get("usage");
+    Ok((
+        ToolCompletion {
+            text: completion_text,
+            tool_calls,
+            prompt_tokens: usage
+                .and_then(|u| u.get("input_tokens"))
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0),
+            completion_tokens: usage
+                .and_then(|u| u.get("output_tokens"))
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0),
+        },
+        serde_json::Value::Array(outputs),
+    ))
+}
 
-    let req = Request::new_with_init(&url, &init)?;
-    Fetch::Request(req).send().await
+fn extract_responses_text_item(item: &serde_json::Value) -> Option<String> {
+    let contents = item.get("content")?.as_array()?;
+    let mut out = String::new();
+    for c in contents {
+        let kind = c.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if kind == "output_text" || kind == "text" {
+            if let Some(t) = c.get("text").and_then(|x| x.as_str()) {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(t);
+            }
+        }
+    }
+    if out.trim().is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 /// Connectivity check used by `teams_test_provider`: lists `/models` (when the
@@ -360,24 +630,8 @@ pub async fn test_provider(prov: &Provider, model: &str) -> serde_json::Value {
         return serde_json::json!({ "ok": false, "error": "Base URL is empty — set it in Teams settings.", "endpoint": "", "model": model });
     }
     let endpoint = format!("{base}/chat/completions");
-    let headers = || {
-        let h = Headers::new();
-        if h.set("Content-Type", "application/json").is_err() {
-            return None;
-        }
-        if !prov.api_key.trim().is_empty()
-            && h.set("Authorization", &format!("Bearer {}", prov.api_key.trim())).is_err()
-        {
-            return None;
-        }
-        if base.contains("opencode.ai") {
-            // The connection test is its own stable session.
-            if h.set("x-opencode-session", "slaver-connection-test").is_err() {
-                return None;
-            }
-        }
-        Some(h)
-    };
+    // The connection test is its own stable session.
+    let headers = upstream_headers(prov, Some("slaver-connection-test"));
 
     // 1) Optional: GET /models — supported by Ollama, vLLM, LM Studio
     // and most OpenAI-compatible servers. OpenCode hosts its catalogue at
@@ -393,30 +647,25 @@ pub async fn test_provider(prov: &Provider, model: &str) -> serde_json::Value {
     };
     let mut listed_models: Vec<String> = Vec::new();
     {
-        let url = models_url;
         let mut ok = false;
-        if let Some(h) = headers() {
-            let mut init = RequestInit::new();
-            init.with_method(Method::Get);
-            init.with_headers(h);
-            if let Ok(r) = Request::new_with_init(&url, &init) {
-                if let Ok(mut resp) = Fetch::Request(r).send().await {
-                    if resp.status_code() == 200 {
-                        if let Ok(v) = resp.json::<serde_json::Value>().await {
-                            if let Some(arr) = v.get("data").and_then(|d| d.as_array()) {
-                                for m in arr.iter().take(50) {
-                                    if let Some(id) = m.get("id").and_then(|x| x.as_str()) {
-                                        listed_models.push(id.to_string());
-                                    }
+        match CLIENT.get(&models_url).headers(headers.clone()).send().await {
+            Err(_) => {}
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let text = resp.text().await.unwrap_or_default();
+                if status == 200 {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if let Some(arr) = v.get("data").and_then(|d| d.as_array()) {
+                            for m in arr.iter().take(50) {
+                                if let Some(id) = m.get("id").and_then(|x| x.as_str()) {
+                                    listed_models.push(id.to_string());
                                 }
                             }
-                            ok = true;
                         }
-                    } else {
-                        let s = resp.status_code();
-                        let t = resp.text().await.unwrap_or_default();
-                        notes.push(format!("/models returned {s}{}.", if t.trim().is_empty() { String::new() } else { format!(": {}", t.trim().chars().take(160).collect::<String>()) }));
+                        ok = true;
                     }
+                } else {
+                    notes.push(format!("/models returned {status}{}.", if text.trim().is_empty() { String::new() } else { format!(": {}", text.trim().chars().take(160).collect::<String>()) }));
                 }
             }
         }
@@ -443,33 +692,23 @@ pub async fn test_provider(prov: &Provider, model: &str) -> serde_json::Value {
         "messages": [{ "role": "user", "content": "ping" }],
         "max_tokens": 1,
     });
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post);
-    let Some(h) = headers() else {
-        return serde_json::json!({ "ok": false, "error": "Could not build request headers.", "endpoint": endpoint });
-    };
-    init.with_headers(h);
-    init.with_body(Some(JsValue::from_str(&payload.to_string())));
-    let reply_text: Result<String, String> = match Request::new_with_init(&endpoint, &init) {
+    let reply_text: Result<String, String> = match CLIENT.post(&endpoint).headers(headers).json(&payload).send().await {
         Err(e) => Err(format!("Could not reach {endpoint}: {e}")),
-        Ok(r) => match Fetch::Request(r).send().await {
-            Err(e) => Err(format!("Could not reach {endpoint}: {e}")),
-            Ok(mut resp) => {
-                let status = resp.status_code();
-                let text = resp.text().await.unwrap_or_default();
-                if status == 200 {
-                    Ok(text.chars().take(200).collect())
-                } else if (status == 400 || status == 404) && base.contains("opencode.ai") {
-                    // Responses-only models (e.g. muse-spark-*) need /responses.
-                    match post_responses_ping(&base, prov, &ping_model).await {
-                        Ok(t) => Ok(t),
-                        Err(_) => Err(crate::chat::describe_upstream_error(status, &text)),
-                    }
-                } else {
-                    Err(crate::chat::describe_upstream_error(status, &text))
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap_or_default();
+            if status == 200 {
+                Ok(text.chars().take(200).collect())
+            } else if (status == 400 || status == 404) && base.contains("opencode.ai") {
+                // Responses-only models (e.g. muse-spark-*) need /responses.
+                match post_responses_ping(&base, prov, &ping_model).await {
+                    Ok(t) => Ok(t),
+                    Err(_) => Err(crate::chat::describe_upstream_error(status, &text)),
                 }
+            } else {
+                Err(crate::chat::describe_upstream_error(status, &text))
             }
-        },
+        }
     };
     match reply_text {
         Ok(_) => serde_json::json!({ "ok": true, "endpoint": endpoint, "model": ping_model, "models": listed_models, "notes": notes }),
@@ -485,27 +724,18 @@ async fn post_responses_ping(base: &str, prov: &Provider, model: &str) -> Result
         "model": model,
         "input": [{ "role": "user", "content": "ping" }],
     });
-    let h = Headers::new();
-    h.set("Content-Type", "application/json")
-        .map_err(|e| e.to_string())?;
-    if !prov.api_key.trim().is_empty() {
-        h.set("Authorization", &format!("Bearer {}", prov.api_key.trim()))
-            .map_err(|e| e.to_string())?;
-    }
-    if base.contains("opencode.ai") {
-        h.set("x-opencode-session", "slaver-connection-test")
-            .map_err(|e| e.to_string())?;
-    }
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post);
-    init.with_headers(h);
-    init.with_body(Some(JsValue::from_str(&payload.to_string())));
-    let req = Request::new_with_init(&url, &init).map_err(|e| e.to_string())?;
-    let mut resp = Fetch::Request(req).send().await.map_err(|e| {
-        console_error!("responses ping failed: {e}");
-        e.to_string()
-    })?;
-    let status = resp.status_code();
+    let headers = upstream_headers(prov, Some("slaver-connection-test"));
+    let resp = CLIENT
+        .post(&url)
+        .headers(headers)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| {
+            eprintln!("responses ping failed: {e}");
+            e.to_string()
+        })?;
+    let status = resp.status().as_u16();
     let text = resp.text().await.unwrap_or_default();
     if status != 200 {
         return Err(crate::chat::describe_upstream_error(status, &text));

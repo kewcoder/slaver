@@ -1,6 +1,4 @@
-use worker::*;
-
-use crate::{chat, provider, store};
+use crate::{chat, db::Db, provider, store};
 
 pub fn parse_remind(text: &str) -> Result<(String, String, String, i64, String), String> {
     let rest = text.strip_prefix("/remind").unwrap_or("").trim();
@@ -53,12 +51,12 @@ pub fn parse_remind(text: &str) -> Result<(String, String, String, i64, String),
 }
 
 /// Cron entry point: fire every due schedule as a bot message in its history.
-pub async fn run_due(env: &Env, db: &D1Database) -> usize {
+pub async fn run_due(db: &Db) -> usize {
     let now = store::jakarta_now_iso();
     let due = match store::due_schedules(db, &now).await {
         Ok(d) => d,
         Err(e) => {
-            console_error!("schedules: list due failed: {e}");
+            eprintln!("schedules: list due failed: {e}");
             return 0;
         }
     };
@@ -76,8 +74,8 @@ pub async fn run_due(env: &Env, db: &D1Database) -> usize {
         if store::mark_schedule_run(db, &sched.id, &next).await.is_err() {
             continue;
         }
-        if let Err(e) = fire_one(env, db, &sched).await {
-            console_error!("schedules: fire {} failed: {e}", sched.id);
+        if let Err(e) = fire_one(db, &sched).await {
+            eprintln!("schedules: fire {} failed: {e}", sched.id);
             continue;
         }
         fired += 1;
@@ -85,7 +83,7 @@ pub async fn run_due(env: &Env, db: &D1Database) -> usize {
     fired
 }
 
-async fn fire_one(_env: &Env, db: &D1Database, sched: &store::ScheduleRow) -> Result<(), String> {
+async fn fire_one(db: &Db, sched: &store::ScheduleRow) -> Result<(), String> {
     let bot = store::get_bot(db, &sched.user_id, &sched.slavebot_id)
         .await
         .map_err(|e| e.to_string())?
@@ -113,15 +111,16 @@ async fn fire_one(_env: &Env, db: &D1Database, sched: &store::ScheduleRow) -> Re
         history.push(chat::ChatMessage {
             role: "system".to_string(),
             content: format!("Bot memory set by the owner (treat as persistent facts):\n{}", bot.memory.trim()),
+        ..Default::default()
         });
     }
     if !recaps.trim().is_empty() {
-        history.push(chat::ChatMessage { role: "system".to_string(), content: recaps });
+        history.push(chat::ChatMessage { role: "system".to_string(), content: recaps, ..Default::default() });
     }
     for m in store::recent_messages(db, &bot.id, 10).await.map_err(|e| e.to_string())? {
         history.push(m);
     }
-    history.push(chat::ChatMessage { role: "user".to_string(), content: task.clone() });
+    history.push(chat::ChatMessage { role: "user".to_string(), content: task.clone(), ..Default::default() });
     let model = provider::effective_model(&prov.preset, &bot.model);
     let done = chat::complete_with_usage(&prov, &model, &history, Some(&bot.id))
         .await

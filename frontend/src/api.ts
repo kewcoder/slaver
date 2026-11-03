@@ -698,7 +698,7 @@ export interface HarnessStep {
 
 let harnessBaseCache: string | null = null;
 
-/** Base URL of the harness worker (from the Rust worker's HARNESS_URL var). */
+/** Base URL of the harness server. Empty string = same origin (self-hosted). */
 export async function fetchHarnessBase(): Promise<string> {
   if (harnessBaseCache !== null) return harnessBaseCache;
   try {
@@ -712,7 +712,6 @@ export async function fetchHarnessBase(): Promise<string> {
 
 async function harnessFetch(path: string, init?: RequestInit): Promise<Response> {
   const base = await fetchHarnessBase();
-  if (!base) throw new Error("Harness worker is not configured yet (HARNESS_URL is empty).");
   const token = getToken();
   const res = await fetch(`${base}${path}`, {
     ...init,

@@ -1,6 +1,4 @@
-use worker::*;
-
-use crate::{chat, provider, store};
+use crate::{chat, db::Db, provider, store};
 
 /// Slack-style huddles: one topic is pushed to bots, and each bot decides by
 /// itself (from its role + memory) whether to join. Joined bots then discuss
@@ -13,7 +11,7 @@ const MAX_HUDDLE_BOTS: usize = 8;
 /// Returns (joined, reason) and bills the short decision call.
 async fn ask_to_join(
     prov: &provider::Provider,
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     bot: &store::BotRow,
     topic: &str,
@@ -31,19 +29,21 @@ async fn ask_to_join(
                 name = bot.name,
                 memory = bot.memory.trim(),
             ),
+            ..Default::default()
         },
         chat::ChatMessage {
             role: "user".to_string(),
             content: format!(
                 "Huddle topic: \"{topic}\"\nReply with exactly one line: either `JOIN: <short reason>` or `DECLINE: <short reason>`.",
             ),
+            ..Default::default()
         },
     ];
     let model = provider::effective_model(&prov.preset, &bot.model);
     let done = match chat::complete_with_usage(prov, &model, &messages, Some(&bot.id)).await {
         Ok(d) => d,
         Err(e) => {
-            console_error!("huddle ask {} failed: {e}", bot.id);
+            eprintln!("huddle ask {} failed: {e}", bot.id);
             return (false, "could not be reached".to_string());
         }
     };
@@ -89,8 +89,7 @@ async fn ask_to_join(
 /// Core huddle start, shared by the HTTP route and the MCP tool.
 /// Returns the huddle plus every bot's join/decline decision.
 pub async fn start_huddle(
-    _env: &Env,
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     team_id: &str,
     topic: &str,
@@ -163,8 +162,7 @@ pub struct HuddleChatResult {
 
 /// Core huddle fan-out, shared by the HTTP route and the MCP tool.
 pub async fn post_message(
-    _env: &Env,
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     huddle_id: &str,
     message: &str,
@@ -229,6 +227,7 @@ pub async fn post_message(
                 "You are {name}, in a live huddle about the topic above.{role_line} Reply as yourself, briefly.",
                 name = bot.name,
             ),
+            ..Default::default()
         }];
         for row in &thread {
             let content = match (&row.slavebot_id, &row.bot_name) {
@@ -237,7 +236,7 @@ pub async fn post_message(
                 _ => row.content.clone(),
             };
             let role = if row.role == "assistant" { "assistant" } else { "user" };
-            history.push(chat::ChatMessage { role: role.to_string(), content });
+            history.push(chat::ChatMessage { role: role.to_string(), content, ..Default::default() });
         }
         let recaps = crate::summarize::context_block(db, &bot.id).await.unwrap_or_default();
         let mut with_context = Vec::with_capacity(history.len() + 2);
@@ -249,17 +248,17 @@ pub async fn post_message(
             context_head.push_str(&format!("Owner notes about you:\n{}\n", bot.memory.trim()));
         }
         if !context_head.is_empty() {
-            with_context.push(chat::ChatMessage { role: "system".to_string(), content: context_head });
+            with_context.push(chat::ChatMessage { role: "system".to_string(), content: context_head, ..Default::default() });
         }
         if !recaps.trim().is_empty() {
-            with_context.push(chat::ChatMessage { role: "system".to_string(), content: recaps });
+            with_context.push(chat::ChatMessage { role: "system".to_string(), content: recaps, ..Default::default() });
         }
         with_context.extend(history);
 
         let done = match chat::complete_with_usage(&prov, &model, &with_context, Some(huddle_id)).await {
             Ok(d) => d,
             Err(e) => {
-                console_error!("huddle chat bot {} failed: {e}", bot.id);
+                eprintln!("huddle chat bot {} failed: {e}", bot.id);
                 let msg = if e.starts_with("No model") || e.starts_with("No model key") || e.starts_with("This provider") {
                     e
                 } else {

@@ -1,13 +1,11 @@
-use worker::*;
-
-use crate::{chat, provider, store};
+use crate::{chat, db::Db, provider, store};
 
 /// Group missions: one task fans out to many slaveBots, and info can be
 /// broadcast into the shared thread and saved into bot memories.
 /// Core group chat: one message fans out to every member bot (each billed).
 /// Returns the payload value the app renders as the round of replies.
 pub(crate) async fn post_chat(
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     group_id: &str,
     message: &str,
@@ -59,6 +57,7 @@ pub(crate) async fn post_chat(
         let mut history = vec![chat::ChatMessage {
             role: "user".to_string(),
             content: format!("You are {name}, one of several slaveBots discussing a shared task. Reply as yourself.", name = bot.name),
+            ..Default::default()
         }];
         for row in &thread {
             let content = match (&row.slavebot_id, &row.bot_name) {
@@ -67,7 +66,7 @@ pub(crate) async fn post_chat(
                 _ => row.content.clone(),
             };
             let role = if row.role == "assistant" { "assistant" } else { "user" };
-            history.push(chat::ChatMessage { role: role.to_string(), content });
+            history.push(chat::ChatMessage { role: role.to_string(), content, ..Default::default() });
         }
         let recaps = crate::summarize::context_block(db, &bot.id).await.unwrap_or_default();
         let memory_block = bot.memory.trim();
@@ -76,10 +75,11 @@ pub(crate) async fn post_chat(
             with_context.push(chat::ChatMessage {
                 role: "system".to_string(),
                 content: format!("Bot memory set by the owner (treat as persistent facts):\n{memory_block}"),
+                ..Default::default()
             });
         }
         if !recaps.trim().is_empty() {
-            with_context.push(chat::ChatMessage { role: "system".to_string(), content: recaps });
+            with_context.push(chat::ChatMessage { role: "system".to_string(), content: recaps, ..Default::default() });
         }
         with_context.extend(history);
         let done = match chat::complete_with_usage(&prov, &model, &with_context, Some(group_id)).await {
@@ -142,7 +142,7 @@ pub(crate) async fn post_chat(
 /// Core broadcast: post one info message to the shared thread, optionally
 /// appending it to every member's memory.
 pub(crate) async fn post_broadcast(
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     group_id: &str,
     text: &str,

@@ -1,18 +1,29 @@
+use axum::{
+    body::Bytes,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    Json,
+};
 use serde_json::{json, Value};
-use worker::*;
 
-use crate::{auth, chat, provider, store, util};
+use crate::{auth, chat, db::Db, provider, store, util, AppState};
 
 
-fn rpc_ok(id: Value, result: Value) -> Result<Response> {
-    util::json(200, &json!({ "jsonrpc": "2.0", "id": id, "result": result }))
+fn rpc_ok(id: Value, result: Value) -> Response {
+    (
+        StatusCode::OK,
+        Json(json!({ "jsonrpc": "2.0", "id": id, "result": result })),
+    )
+        .into_response()
 }
 
-fn rpc_err(id: Value, code: i32, message: &str) -> Result<Response> {
-    util::json(
-        200,
-        &json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }),
+fn rpc_err(id: Value, code: i32, message: &str) -> Response {
+    (
+        StatusCode::OK,
+        Json(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })),
     )
+        .into_response()
 }
 
 fn chat_tool_def() -> Value {
@@ -244,8 +255,8 @@ fn schedule_delete_tool_def() -> Value {
 }
 
 /// POST /mcp — JSON-RPC 2.0 over Streamable HTTP (plain JSON responses).
-pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let body: Value = match req.json().await {
+pub async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+    let body: Value = match serde_json::from_slice(&body) {
         Ok(b) => b,
         Err(_) => return rpc_err(Value::Null, -32700, "Parse error: body must be JSON."),
     };
@@ -262,7 +273,7 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
             }),
         ),
         "notifications/initialized" | "notifications/cancelled" => {
-            Ok(Response::empty()?.with_status(202))
+            return (StatusCode::ACCEPTED, "").into_response();
         }
         "ping" => rpc_ok(id, json!({})),
         "tools/list" => rpc_ok(id, json!({ "tools": [auth_register_tool_def(), auth_login_tool_def(), auth_me_tool_def(), models_tool_def(), chat_tool_def(), chat_send_tool_def(), bots_list_tool_def(), bots_create_tool_def(), bots_get_tool_def(), bots_update_tool_def(), bots_children_tool_def(), bots_transfer_tool_def(), bots_append_memory_tool_def(), bots_set_avatar_tool_def(), bots_get_avatar_tool_def(), bot_archive_tool_def(), bot_pin_tool_def(), bot_set_role_tool_def(), bot_spawn_tool_def(), bot_send_tool_def(), groups_list_tool_def(), groups_create_tool_def(), groups_get_tool_def(), groups_rename_tool_def(), groups_delete_tool_def(), groups_add_member_tool_def(), groups_remove_member_tool_def(), groups_chat_tool_def(), groups_broadcast_tool_def(), huddle_list_tool_def(), huddle_get_tool_def(), huddle_start_tool_def(), huddle_chat_tool_def(), huddle_delete_tool_def(), schedules_update_tool_def(), schedule_create_tool_def(), schedule_list_tool_def(), schedule_delete_tool_def(), summaries_get_tool_def(), summaries_run_tool_def(), team_create_tool_def(), team_list_tool_def(), teams_get_tool_def(), teams_delete_tool_def(), team_invite_tool_def(), teams_set_member_tool_def(), teams_remove_member_tool_def(), teams_set_provider_tool_def(), teams_test_provider_tool_def(), teams_clear_provider_tool_def(), teams_activity_tool_def(), usage_get_tool_def(), harness_config_tool_def(), voice_transcribe_tool_def(), voice_speak_tool_def()] })),
@@ -271,21 +282,23 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
             let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(Value::Null);
             if name == "auth_register" {
-                return call_auth_register(id, &ctx.env, &args).await;
+                return call_auth_register(id, &state, &args).await;
             }
             if name == "auth_login" {
-                return call_auth_login(id, &ctx.env, &args).await;
+                return call_auth_login(id, &state, &args).await;
             }
-            let user_id = match auth::bearer_sub(&req, &ctx.env)? {
+            let auth_header = headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+            let user_id = match auth::bearer_sub_from_header(&state.jwt_secret, Some(&auth_header)) {
                 Some(uid) => uid,
                 None => return rpc_err(id, -32000, "Unauthorized: send an Authorization: Bearer <jwt> header from the auth_login tool."),
             };
             match name {
                 "models" => {
-                    let db = match ctx.env.d1("DB") {
-                        Ok(db) => db,
-                        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-                    };
+                    let db = &state.db;
                     let requested = args.get("team_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let preset = if requested.trim().is_empty() {
                         let team = store::ensure_personal_team(&db, &user_id).await.ok();
@@ -299,58 +312,58 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
                     let list = provider::model_list(&preset);
                     mcp_data(id, format!("{} model(s) on {preset}.", list.get("models").and_then(|m| m.as_array()).map(|a| a.len()).unwrap_or(0)), list)
                 }
-                "chat" => call_chat(id, &ctx.env, &user_id, &args).await,
-                "bot_archive" => call_bot_archive(id, &ctx.env, &user_id, &args).await,
-                "bot_pin" => call_bot_pin(id, &ctx.env, &user_id, &args).await,
-                "bot_set_role" => call_bot_set_role(id, &ctx.env, &user_id, &args).await,
-                "bot_spawn" => call_bot_spawn(id, &ctx.env, &user_id, &args).await,
-                "bot_send" => call_bot_send(id, &ctx.env, &user_id, &args).await,
-                "schedule_create" => call_schedule_create(id, &ctx.env, &user_id, &args).await,
-                "schedule_list" => call_schedule_list(id, &ctx.env, &user_id, &args).await,
-                "schedule_delete" => call_schedule_delete(id, &ctx.env, &user_id, &args).await,
-                "huddle_start" => call_huddle_start(id, &ctx.env, &user_id, &args).await,
-                "team_create" => call_team_create(id, &ctx.env, &user_id, &args).await,
-                "team_list" => call_team_list(id, &ctx.env, &user_id, &args).await,
-                "team_invite" => call_team_invite(id, &ctx.env, &user_id, &args).await,
-                "huddle_list" => call_huddle_list(id, &ctx.env, &user_id, &args).await,
-                "huddle_chat" => call_huddle_chat(id, &ctx.env, &user_id, &args).await,
-                "auth_me" => call_auth_me(id, &ctx.env, &user_id).await,
-                "chat_send" => call_chat_send(id, &ctx.env, &user_id, &args).await,
-                "bots_list" => call_bots_list(id, &ctx.env, &user_id).await,
-                "bots_create" => call_bots_create(id, &ctx.env, &user_id, &args).await,
-                "bots_get" => call_bots_get(id, &ctx.env, &user_id, &args).await,
-                "bots_update" => call_bots_update(id, &ctx.env, &user_id, &args).await,
-                "bots_children" => call_bots_children(id, &ctx.env, &user_id, &args).await,
-                "bots_transfer" => call_bots_transfer(id, &ctx.env, &user_id, &args).await,
-                "bots_append_memory" => call_bots_append_memory(id, &ctx.env, &user_id, &args).await,
-                "bots_set_avatar" => call_bots_set_avatar(id, &ctx.env, &user_id, &args).await,
-                "bots_get_avatar" => call_bots_get_avatar(id, &ctx.env, &user_id, &args).await,
-                "groups_list" => call_groups_list(id, &ctx.env, &user_id).await,
-                "groups_create" => call_groups_create(id, &ctx.env, &user_id, &args).await,
-                "groups_get" => call_groups_get(id, &ctx.env, &user_id, &args).await,
-                "groups_rename" => call_groups_rename(id, &ctx.env, &user_id, &args).await,
-                "groups_delete" => call_groups_delete(id, &ctx.env, &user_id, &args).await,
-                "groups_add_member" => call_groups_add_member(id, &ctx.env, &user_id, &args).await,
-                "groups_remove_member" => call_groups_remove_member(id, &ctx.env, &user_id, &args).await,
-                "groups_chat" => call_groups_chat(id, &ctx.env, &user_id, &args).await,
-                "groups_broadcast" => call_groups_broadcast(id, &ctx.env, &user_id, &args).await,
-                "huddle_get" => call_huddle_get(id, &ctx.env, &user_id, &args).await,
-                "huddle_delete" => call_huddle_delete(id, &ctx.env, &user_id, &args).await,
-                "schedules_update" => call_schedules_update(id, &ctx.env, &user_id, &args).await,
-                "summaries_get" => call_summaries_get(id, &ctx.env, &user_id, &args).await,
-                "summaries_run" => call_summaries_run(id, &ctx.env, &user_id, &args).await,
-                "teams_get" => call_teams_get(id, &ctx.env, &user_id, &args).await,
-                "teams_delete" => call_teams_delete(id, &ctx.env, &user_id, &args).await,
-                "teams_set_member" => call_teams_set_member(id, &ctx.env, &user_id, &args).await,
-                "teams_remove_member" => call_teams_remove_member(id, &ctx.env, &user_id, &args).await,
-                "teams_set_provider" => call_teams_set_provider(id, &ctx.env, &user_id, &args).await,
-                "teams_test_provider" => call_teams_test_provider(id, &ctx.env, &user_id, &args).await,
-                "teams_clear_provider" => call_teams_clear_provider(id, &ctx.env, &user_id, &args).await,
-                "teams_activity" => call_teams_activity(id, &ctx.env, &user_id, &args).await,
-                "usage_get" => call_usage_get(id, &ctx.env, &user_id).await,
-                "harness_config" => call_harness_config(id, &ctx.env),
-                "voice_transcribe" => call_voice_transcribe(id, &ctx.env, &user_id, &args).await,
-                "voice_speak" => call_voice_speak(id, &ctx.env, &user_id, &args).await,
+                "chat" => call_chat(id, &state, &user_id, &args).await,
+                "bot_archive" => call_bot_archive(id, &state, &user_id, &args).await,
+                "bot_pin" => call_bot_pin(id, &state, &user_id, &args).await,
+                "bot_set_role" => call_bot_set_role(id, &state, &user_id, &args).await,
+                "bot_spawn" => call_bot_spawn(id, &state, &user_id, &args).await,
+                "bot_send" => call_bot_send(id, &state, &user_id, &args).await,
+                "schedule_create" => call_schedule_create(id, &state, &user_id, &args).await,
+                "schedule_list" => call_schedule_list(id, &state, &user_id, &args).await,
+                "schedule_delete" => call_schedule_delete(id, &state, &user_id, &args).await,
+                "huddle_start" => call_huddle_start(id, &state, &user_id, &args).await,
+                "team_create" => call_team_create(id, &state, &user_id, &args).await,
+                "team_list" => call_team_list(id, &state, &user_id, &args).await,
+                "team_invite" => call_team_invite(id, &state, &user_id, &args).await,
+                "huddle_list" => call_huddle_list(id, &state, &user_id, &args).await,
+                "huddle_chat" => call_huddle_chat(id, &state, &user_id, &args).await,
+                "auth_me" => call_auth_me(id, &state, &user_id).await,
+                "chat_send" => call_chat_send(id, &state, &user_id, &args).await,
+                "bots_list" => call_bots_list(id, &state, &user_id).await,
+                "bots_create" => call_bots_create(id, &state, &user_id, &args).await,
+                "bots_get" => call_bots_get(id, &state, &user_id, &args).await,
+                "bots_update" => call_bots_update(id, &state, &user_id, &args).await,
+                "bots_children" => call_bots_children(id, &state, &user_id, &args).await,
+                "bots_transfer" => call_bots_transfer(id, &state, &user_id, &args).await,
+                "bots_append_memory" => call_bots_append_memory(id, &state, &user_id, &args).await,
+                "bots_set_avatar" => call_bots_set_avatar(id, &state, &user_id, &args).await,
+                "bots_get_avatar" => call_bots_get_avatar(id, &state, &user_id, &args).await,
+                "groups_list" => call_groups_list(id, &state, &user_id).await,
+                "groups_create" => call_groups_create(id, &state, &user_id, &args).await,
+                "groups_get" => call_groups_get(id, &state, &user_id, &args).await,
+                "groups_rename" => call_groups_rename(id, &state, &user_id, &args).await,
+                "groups_delete" => call_groups_delete(id, &state, &user_id, &args).await,
+                "groups_add_member" => call_groups_add_member(id, &state, &user_id, &args).await,
+                "groups_remove_member" => call_groups_remove_member(id, &state, &user_id, &args).await,
+                "groups_chat" => call_groups_chat(id, &state, &user_id, &args).await,
+                "groups_broadcast" => call_groups_broadcast(id, &state, &user_id, &args).await,
+                "huddle_get" => call_huddle_get(id, &state, &user_id, &args).await,
+                "huddle_delete" => call_huddle_delete(id, &state, &user_id, &args).await,
+                "schedules_update" => call_schedules_update(id, &state, &user_id, &args).await,
+                "summaries_get" => call_summaries_get(id, &state, &user_id, &args).await,
+                "summaries_run" => call_summaries_run(id, &state, &user_id, &args).await,
+                "teams_get" => call_teams_get(id, &state, &user_id, &args).await,
+                "teams_delete" => call_teams_delete(id, &state, &user_id, &args).await,
+                "teams_set_member" => call_teams_set_member(id, &state, &user_id, &args).await,
+                "teams_remove_member" => call_teams_remove_member(id, &state, &user_id, &args).await,
+                "teams_set_provider" => call_teams_set_provider(id, &state, &user_id, &args).await,
+                "teams_test_provider" => call_teams_test_provider(id, &state, &user_id, &args).await,
+                "teams_clear_provider" => call_teams_clear_provider(id, &state, &user_id, &args).await,
+                "teams_activity" => call_teams_activity(id, &state, &user_id, &args).await,
+                "usage_get" => call_usage_get(id, &state, &user_id).await,
+                "harness_config" => call_harness_config(id, &state),
+                "voice_transcribe" => call_voice_transcribe(id, &state, &user_id, &args).await,
+                "voice_speak" => call_voice_speak(id, &state, &user_id, &args).await,
                 _ => rpc_err(id, -32602, "Unknown tool. Run tools/list for the current catalogue."),
             }
         }
@@ -359,20 +372,17 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     }
 }
 
-fn mcp_text(id: Value, text: String) -> Result<Response> {
+fn mcp_text(id: Value, text: String) -> Response {
     rpc_ok(id, json!({ "content": [{ "type": "text", "text": text }] }))
 }
 
-async fn call_bot_pin(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_bot_pin(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let bot_id = args.get("slavebot_id").and_then(|v| v.as_str()).unwrap_or("");
     let pinned = args.get("pinned").and_then(|v| v.as_bool()).unwrap_or(true);
     if bot_id.is_empty() {
         return rpc_err(id, -32602, "The slavebot_id argument is required.");
     }
-    let db = match env.d1("DB") {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-    };
+    let db = &state.db;
     match store::set_pinned(&db, user_id, bot_id, pinned).await {
         Ok(Some(bot)) => mcp_text(id, format!("{} is now {}.", bot.name, if pinned { "pinned" } else { "unpinned" })),
         Ok(None) => rpc_err(id, -32602, "SlaveBot not found."),
@@ -380,16 +390,13 @@ async fn call_bot_pin(id: Value, env: &Env, user_id: &str, args: &Value) -> Resu
     }
 }
 
-async fn call_bot_set_role(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_bot_set_role(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let bot_id = args.get("slavebot_id").and_then(|v| v.as_str()).unwrap_or("");
     let role = args.get("role").and_then(|v| v.as_str()).unwrap_or("");
     if bot_id.is_empty() {
         return rpc_err(id, -32602, "The slavebot_id argument is required.");
     }
-    let db = match env.d1("DB") {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-    };
+    let db = &state.db;
     match store::update_bot(&db, user_id, bot_id, None, None, None, None, None, None, None, Some(role), None).await {
         Ok(Some(bot)) => mcp_text(id, format!("{} is now: {}.", bot.name, if bot.role.is_empty() { "no role" } else { &bot.role })),
         Ok(None) => rpc_err(id, -32602, "SlaveBot not found."),
@@ -397,15 +404,12 @@ async fn call_bot_set_role(id: Value, env: &Env, user_id: &str, args: &Value) ->
     }
 }
 
-async fn call_bot_spawn(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_bot_spawn(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let manager_id = args.get("manager_id").and_then(|v| v.as_str()).unwrap_or("");
     if manager_id.is_empty() {
         return rpc_err(id, -32602, "The manager_id argument is required.");
     }
-    let db = match env.d1("DB") {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-    };
+    let db = &state.db;
     let manager = match store::get_bot(&db, user_id, manager_id).await {
         Ok(Some(m)) => m,
         Ok(None) => return rpc_err(id, -32602, "Manager bot not found."),
@@ -444,17 +448,14 @@ async fn call_bot_spawn(id: Value, env: &Env, user_id: &str, args: &Value) -> Re
     }
 }
 
-async fn call_bot_send(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_bot_send(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let from_id = args.get("from_bot_id").and_then(|v| v.as_str()).unwrap_or("");
     let to_id = args.get("to_bot_id").and_then(|v| v.as_str()).unwrap_or("");
     let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
     if from_id.is_empty() || to_id.is_empty() || message.is_empty() {
         return rpc_err(id, -32602, "from_bot_id, to_bot_id, and message are required.");
     }
-    let db = match env.d1("DB") {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-    };
+    let db = &state.db;
     match crate::chat::deliver_as(&db, user_id, from_id, to_id, message).await {
         Ok(r) => mcp_data(
             id,
@@ -465,12 +466,9 @@ async fn call_bot_send(id: Value, env: &Env, user_id: &str, args: &Value) -> Res
     }
 }
 
-async fn call_team_create(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_team_create(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("Team");
-    let db = match env.d1("DB") {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-    };
+    let db = &state.db;
     match store::create_team(&db, user_id, name, false).await {
         Ok(t) => {
             let mut team = crate::teams::safe_team(&t);
@@ -481,35 +479,29 @@ async fn call_team_create(id: Value, env: &Env, user_id: &str, args: &Value) -> 
     }
 }
 
-async fn call_team_list(id: Value, env: &Env, user_id: &str, _args: &Value) -> Result<Response> {
-    let db = match env.d1("DB") {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-    };
+async fn call_team_list(id: Value, state: &AppState, user_id: &str, _args: &Value) -> Response {
+    let db = &state.db;
     match store::list_user_teams(&db, user_id).await {
         Ok(list) => mcp_data(id, format!("{} team(s).", list.len()), json!({ "teams": list })),
         Err(e) => rpc_err(id, -32000, &format!("List failed: {e}")),
     }
 }
 
-async fn call_team_invite(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_team_invite(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let team_id = args.get("team_id").and_then(|v| v.as_str()).unwrap_or("");
     let email = args.get("email").and_then(|v| v.as_str()).unwrap_or("");
     let role = args.get("role").and_then(|v| v.as_str()).unwrap_or("staff");
     if team_id.is_empty() || email.is_empty() {
         return rpc_err(id, -32602, "The team_id and email arguments are required.");
     }
-    let db = match env.d1("DB") {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-    };
+    let db = &state.db;
     match store::add_member_by_email(&db, team_id, user_id, email, role).await {
         Ok(m) => mcp_data(id, format!("{} joined as {}.", m.user_id, m.role), json!({ "member": m })),
         Err(e) => rpc_err(id, -32602, &e),
     }
 }
 
-async fn call_huddle_start(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_huddle_start(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let topic = args.get("topic").and_then(|v| v.as_str()).unwrap_or("");
     let team_id = args.get("team_id").and_then(|v| v.as_str()).unwrap_or("");
     let ids: Option<Vec<String>> = args.get("slavebot_ids").and_then(|v| {
@@ -517,11 +509,8 @@ async fn call_huddle_start(id: Value, env: &Env, user_id: &str, args: &Value) ->
             a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect()
         })
     });
-    let db = match env.d1("DB") {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-    };
-    match crate::huddle::start_huddle(env, &db, user_id, team_id, topic, ids).await {
+    let db = &state.db;
+    match crate::huddle::start_huddle(db, user_id, team_id, topic, ids).await {
         Ok((huddle, participants)) => mcp_data(
             id,
             format!("Huddle started on \"{}\".", huddle.topic),
@@ -531,28 +520,22 @@ async fn call_huddle_start(id: Value, env: &Env, user_id: &str, args: &Value) ->
     }
 }
 
-async fn call_huddle_list(id: Value, env: &Env, user_id: &str, _args: &Value) -> Result<Response> {
-    let db = match env.d1("DB") {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-    };
+async fn call_huddle_list(id: Value, state: &AppState, user_id: &str, _args: &Value) -> Response {
+    let db = &state.db;
     match store::list_huddles(&db, user_id).await {
         Ok(list) => mcp_data(id, format!("{} huddle(s).", list.len()), json!({ "huddles": list })),
         Err(e) => rpc_err(id, -32000, &format!("List failed: {e}")),
     }
 }
 
-async fn call_huddle_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_huddle_chat(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let huddle_id = args.get("huddle_id").and_then(|v| v.as_str()).unwrap_or("");
     let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
     if huddle_id.is_empty() || message.is_empty() {
         return rpc_err(id, -32602, "The huddle_id and message arguments are required.");
     }
-    let db = match env.d1("DB") {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-    };
-    match crate::huddle::post_message(env, &db, user_id, huddle_id, message, None).await {
+    let db = &state.db;
+    match crate::huddle::post_message(db, user_id, huddle_id, message, None).await {
         Ok(r) => mcp_data(
             id,
             format!("{} replie(s), total ${:.6}.", r.replies.len(), r.total_cost),
@@ -560,10 +543,6 @@ async fn call_huddle_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> 
         ),
         Err(e) => rpc_err(id, -32000, &e),
     }
-}
-
-fn need_db(env: &Env) -> Result<D1Database, String> {
-    env.d1("DB").map_err(|e| format!("Database unavailable: {e}"))
 }
 
 fn arg_str(args: &Value, key: &str) -> String {
@@ -579,7 +558,7 @@ fn arg_bool(args: &Value, key: &str) -> Option<bool> {
 
 /// Tool result carrying a short human summary plus the full JSON payload.
 /// The app reads `data`; other MCP clients read the content text.
-fn mcp_data(id: Value, summary: String, data: Value) -> Result<Response> {
+fn mcp_data(id: Value, summary: String, data: Value) -> Response {
     rpc_ok(
         id,
         json!({ "content": [{ "type": "text", "text": summary }], "data": data }),
@@ -875,16 +854,13 @@ fn voice_speak_tool_def() -> Value {
     json!({ "name": "voice_speak", "description": "Speak text via the Workers AI voice (base64 MP3 out). Billed per character against demo credit.", "inputSchema": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string" }, "voice": { "type": "string" } } } })
 }
 
-async fn call_bot_archive(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_bot_archive(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let bot_id = args.get("slavebot_id").and_then(|v| v.as_str()).unwrap_or("");
     let archived = args.get("archived").and_then(|v| v.as_bool()).unwrap_or(true);
     if bot_id.is_empty() {
         return rpc_err(id, -32602, "The slavebot_id argument is required.");
     }
-    let db = match env.d1("DB") {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-    };
+    let db = &state.db;
     match store::set_archived(&db, user_id, bot_id, archived).await {
         Ok(Some(bot)) => mcp_text(id, format!("{} is now {}.", bot.name, if archived { "archived" } else { "active" })),
         Ok(None) => rpc_err(id, -32602, "SlaveBot not found."),
@@ -892,16 +868,13 @@ async fn call_bot_archive(id: Value, env: &Env, user_id: &str, args: &Value) -> 
     }
 }
 
-async fn call_schedule_create(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_schedule_create(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let bot_id = args.get("slavebot_id").and_then(|v| v.as_str()).unwrap_or("");
     let prompt = args.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
     if bot_id.is_empty() || prompt.is_empty() {
         return rpc_err(id, -32602, "The slavebot_id and prompt arguments are required.");
     }
-    let db = match env.d1("DB") {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-    };
+    let db = &state.db;
     if store::get_bot(&db, user_id, bot_id).await.map(|b| b.is_none()).unwrap_or(true) {
         return rpc_err(id, -32602, "SlaveBot not found.");
     }
@@ -916,30 +889,24 @@ async fn call_schedule_create(id: Value, env: &Env, user_id: &str, args: &Value)
     }
 }
 
-async fn call_schedule_list(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_schedule_list(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let bot_id = args.get("slavebot_id").and_then(|v| v.as_str()).unwrap_or("");
     if bot_id.is_empty() {
         return rpc_err(id, -32602, "The slavebot_id argument is required.");
     }
-    let db = match env.d1("DB") {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-    };
+    let db = &state.db;
     match store::list_schedules(&db, user_id, Some(bot_id)).await {
         Ok(list) => mcp_data(id, format!("{} schedule(s).", list.len()), json!({ "schedules": list })),
         Err(e) => rpc_err(id, -32000, &format!("List failed: {e}")),
     }
 }
 
-async fn call_schedule_delete(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_schedule_delete(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let sid = args.get("schedule_id").and_then(|v| v.as_str()).unwrap_or("");
     if sid.is_empty() {
         return rpc_err(id, -32602, "The schedule_id argument is required.");
     }
-    let db = match env.d1("DB") {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
-    };
+    let db = &state.db;
     match store::delete_schedule(&db, user_id, sid).await {
         Ok(true) => mcp_text(id, "Schedule deleted.".to_string()),
         Ok(false) => rpc_err(id, -32602, "Schedule not found."),
@@ -947,7 +914,7 @@ async fn call_schedule_delete(id: Value, env: &Env, user_id: &str, args: &Value)
     }
 }
 
-async fn call_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_chat(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let requested = args.get("model").and_then(|m| m.as_str()).unwrap_or("");
     let messages: Vec<chat::ChatMessage> = match args.get("messages") {
         Some(v) => match serde_json::from_value(v.clone()) {
@@ -959,7 +926,7 @@ async fn call_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<
     if messages.is_empty() || messages.len() > 30 {
         return rpc_err(id, -32602, "messages must have 1..30 items.");
     }
-    let db = env.d1("DB")?;
+    let db = &state.db;
     let team_id = store::ensure_personal_team(&db, user_id)
         .await
         .map(|t| t.id)
@@ -1011,64 +978,46 @@ async fn call_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<
     }
 }
 
-async fn call_auth_register(id: Value, env: &Env, args: &Value) -> Result<Response> {
+async fn call_auth_register(id: Value, state: &AppState, args: &Value) -> Response {
     let (email, password, name) = (arg_str(args, "email"), arg_str(args, "password"), arg_str(args, "name"));
     if email.is_empty() || password.is_empty() {
         return rpc_err(id, -32602, "email and password are required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
-    let secret = match env.secret("JWT_SECRET") {
-        Ok(s) => s.to_string(),
-        Err(_) => return rpc_err(id, -32000, "Server is missing JWT_SECRET."),
-    };
+    let db = &state.db;
+    let secret = state.jwt_secret.clone();
     match crate::auth::register_core(&db, &secret, &email, &password, &name).await {
         Ok(u) => mcp_data(id, format!("Registered {}.", email), json!({ "token": u.token, "user": u.user })),
         Err(e) => rpc_err(id, -32602, &e),
     }
 }
 
-async fn call_auth_login(id: Value, env: &Env, args: &Value) -> Result<Response> {
+async fn call_auth_login(id: Value, state: &AppState, args: &Value) -> Response {
     let (email, password) = (arg_str(args, "email"), arg_str(args, "password"));
     if email.is_empty() || password.is_empty() {
         return rpc_err(id, -32602, "email and password are required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
-    let secret = match env.secret("JWT_SECRET") {
-        Ok(s) => s.to_string(),
-        Err(_) => return rpc_err(id, -32000, "Server is missing JWT_SECRET."),
-    };
+    let db = &state.db;
+    let secret = state.jwt_secret.clone();
     match crate::auth::login_core(&db, &secret, &email, &password).await {
         Ok(u) => mcp_data(id, format!("Logged in as {}.", email), json!({ "token": u.token, "user": u.user })),
         Err(e) => rpc_err(id, -32602, &e),
     }
 }
 
-async fn call_auth_me(id: Value, env: &Env, user_id: &str) -> Result<Response> {
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+async fn call_auth_me(id: Value, state: &AppState, user_id: &str) -> Response {
+    let db = &state.db;
     match crate::auth::me_core(&db, user_id).await {
         Ok(user) => mcp_data(id, "Profile.".to_string(), json!({ "user": user })),
         Err(e) => rpc_err(id, -32602, &e),
     }
 }
 
-async fn call_chat_send(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_chat_send(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let (bot_id, message, model) = (arg_str(args, "slavebot_id"), arg_str(args, "message"), arg_str(args, "model"));
     if bot_id.is_empty() || message.is_empty() {
         return rpc_err(id, -32602, "slavebot_id and message are required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     let model_opt = if model.is_empty() { None } else { Some(model.as_str()) };
     match crate::chat::send_message(&db, user_id, &bot_id, &message, model_opt).await {
         Ok(v) => mcp_data(id, v.get("reply").and_then(|r| r.as_str()).unwrap_or("Done.").to_string(), v),
@@ -1076,23 +1025,17 @@ async fn call_chat_send(id: Value, env: &Env, user_id: &str, args: &Value) -> Re
     }
 }
 
-async fn call_bots_list(id: Value, env: &Env, user_id: &str) -> Result<Response> {
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+async fn call_bots_list(id: Value, state: &AppState, user_id: &str) -> Response {
+    let db = &state.db;
     match store::list_bots(&db, user_id, false).await {
         Ok(bots) => mcp_data(id, format!("{} slaveBot(s).", bots.len()), json!({ "slavebots": bots })),
         Err(e) => rpc_err(id, -32000, &format!("List failed: {e}")),
     }
 }
 
-async fn call_bots_create(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_bots_create(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let (model, team_id, owner) = (arg_str(args, "model"), arg_str(args, "team_id"), arg_str(args, "owner_user_id"));
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     let team_id = if team_id.trim().is_empty() {
         match store::ensure_personal_team(&db, user_id).await {
             Ok(t) => t.id,
@@ -1127,15 +1070,12 @@ async fn call_bots_create(id: Value, env: &Env, user_id: &str, args: &Value) -> 
     }
 }
 
-async fn call_bots_get(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_bots_get(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let bot_id = arg_str(args, "slavebot_id");
     if bot_id.is_empty() {
         return rpc_err(id, -32602, "The slavebot_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match store::bot_messages(&db, user_id, &bot_id).await {
         Ok(Some((bot, messages))) => mcp_data(id, format!("{} ({} messages).", bot.name, messages.len()), json!({ "slavebot": bot, "messages": messages })),
         Ok(None) => rpc_err(id, -32602, "SlaveBot not found."),
@@ -1143,15 +1083,12 @@ async fn call_bots_get(id: Value, env: &Env, user_id: &str, args: &Value) -> Res
     }
 }
 
-async fn call_bots_update(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_bots_update(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let bot_id = arg_str(args, "slavebot_id");
     if bot_id.is_empty() {
         return rpc_err(id, -32602, "The slavebot_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     if let Some(archived) = arg_bool(args, "archived") {
         return match store::set_archived(&db, user_id, &bot_id, archived).await {
             Ok(Some(bot)) => mcp_data(id, format!("{} is now {}.", bot.name, if archived { "archived" } else { "active" }), json!({ "slavebot": bot })),
@@ -1191,45 +1128,36 @@ async fn call_bots_update(id: Value, env: &Env, user_id: &str, args: &Value) -> 
     }
 }
 
-async fn call_bots_children(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_bots_children(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let bot_id = arg_str(args, "slavebot_id");
     if bot_id.is_empty() {
         return rpc_err(id, -32602, "The slavebot_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match store::children_of(&db, user_id, &bot_id).await {
         Ok(kids) => mcp_data(id, format!("{} sub-bot(s).", kids.len()), json!({ "children": kids })),
         Err(e) => rpc_err(id, -32000, &format!("Database error: {e}")),
     }
 }
 
-async fn call_bots_transfer(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_bots_transfer(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let (bot_id, owner) = (arg_str(args, "slavebot_id"), arg_str(args, "owner_user_id"));
     if bot_id.is_empty() || owner.is_empty() {
         return rpc_err(id, -32602, "slavebot_id and owner_user_id are required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match store::set_bot_owner(&db, user_id, &bot_id, &owner).await {
         Ok(bot) => mcp_data(id, format!("{} is now partnered with a teammate.", bot.name), json!({ "slavebot": bot })),
         Err(e) => rpc_err(id, -32602, &e),
     }
 }
 
-async fn call_bots_append_memory(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_bots_append_memory(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let (bot_id, text) = (arg_str(args, "slavebot_id"), arg_str(args, "text"));
     if bot_id.is_empty() || text.trim().is_empty() {
         return rpc_err(id, -32602, "slavebot_id and text are required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match store::append_memory(&db, user_id, &bot_id, text.trim()).await {
         Ok(Some(bot)) => mcp_data(id, "Memory saved.".to_string(), json!({ "slavebot": bot })),
         Ok(None) => rpc_err(id, -32602, "SlaveBot not found or not editable."),
@@ -1237,7 +1165,7 @@ async fn call_bots_append_memory(id: Value, env: &Env, user_id: &str, args: &Val
     }
 }
 
-async fn call_bots_set_avatar(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_bots_set_avatar(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     use base64::Engine;
     let (bot_id, image_b64, content_type) = (arg_str(args, "slavebot_id"), arg_str(args, "image_base64"), arg_str(args, "content_type"));
     if bot_id.is_empty() || image_b64.is_empty() {
@@ -1248,26 +1176,20 @@ async fn call_bots_set_avatar(id: Value, env: &Env, user_id: &str, args: &Value)
         Err(_) => return rpc_err(id, -32602, "image_base64 is not valid base64."),
     };
     let ct = if content_type.trim().is_empty() { "image/png" } else { content_type.trim() };
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
-    match crate::avatar::upload_core(env, &db, user_id, &bot_id, bytes, ct).await {
+    let db = &state.db;
+    match crate::avatar::upload_core(&state.avatar_dir, db, user_id, &bot_id, bytes, ct).await {
         Ok(v) => mcp_data(id, "Avatar updated.".to_string(), v),
         Err(e) => rpc_err(id, -32602, &e),
     }
 }
 
-async fn call_bots_get_avatar(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_bots_get_avatar(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let bot_id = arg_str(args, "slavebot_id");
     if bot_id.is_empty() {
         return rpc_err(id, -32602, "The slavebot_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
-    match crate::avatar::read_core(env, &db, user_id, &bot_id).await {
+    let db = &state.db;
+    match crate::avatar::read_core(&state.avatar_dir, db, user_id, &bot_id).await {
         Ok(mut v) => {
             let summary = "Avatar below as a data: URL.".to_string();
             if let Some(ct) = v.get("content_type").and_then(|c| c.as_str()).map(|s| s.to_string()) {
@@ -1281,23 +1203,17 @@ async fn call_bots_get_avatar(id: Value, env: &Env, user_id: &str, args: &Value)
     }
 }
 
-async fn call_groups_list(id: Value, env: &Env, user_id: &str) -> Result<Response> {
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+async fn call_groups_list(id: Value, state: &AppState, user_id: &str) -> Response {
+    let db = &state.db;
     match store::list_groups(&db, user_id).await {
         Ok(groups) => mcp_data(id, format!("{} group(s).", groups.len()), json!({ "groups": groups })),
         Err(e) => rpc_err(id, -32000, &format!("List failed: {e}")),
     }
 }
 
-async fn call_groups_create(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_groups_create(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let (name, team_id) = (arg_str(args, "name"), arg_str(args, "team_id"));
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     let name = if name.trim().is_empty() { "Group".to_string() } else { name.trim().chars().take(60).collect() };
     match store::create_group(&db, user_id, &team_id, &name).await {
         Ok(group) => mcp_data(id, format!("Created group {}.", name), json!({ "group": group })),
@@ -1305,15 +1221,12 @@ async fn call_groups_create(id: Value, env: &Env, user_id: &str, args: &Value) -
     }
 }
 
-async fn call_groups_get(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_groups_get(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let group_id = arg_str(args, "group_id");
     if group_id.is_empty() {
         return rpc_err(id, -32602, "The group_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     let group = match store::get_group(&db, user_id, &group_id).await {
         Ok(Some(g)) => g,
         Ok(None) => return rpc_err(id, -32602, "Group not found."),
@@ -1330,15 +1243,12 @@ async fn call_groups_get(id: Value, env: &Env, user_id: &str, args: &Value) -> R
     mcp_data(id, format!("Group {}.", group.name), json!({ "group": group, "members": members, "messages": messages }))
 }
 
-async fn call_groups_rename(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_groups_rename(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let (group_id, name) = (arg_str(args, "group_id"), arg_str(args, "name"));
     if group_id.is_empty() || name.trim().is_empty() {
         return rpc_err(id, -32602, "group_id and name are required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match store::rename_group(&db, user_id, &group_id, name.trim()).await {
         Ok(Some(group)) => mcp_data(id, format!("Renamed to {}.", group.name), json!({ "group": group })),
         Ok(None) => rpc_err(id, -32602, "Group not found."),
@@ -1346,15 +1256,12 @@ async fn call_groups_rename(id: Value, env: &Env, user_id: &str, args: &Value) -
     }
 }
 
-async fn call_groups_delete(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_groups_delete(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let group_id = arg_str(args, "group_id");
     if group_id.is_empty() {
         return rpc_err(id, -32602, "The group_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match store::delete_group(&db, user_id, &group_id).await {
         Ok(true) => mcp_data(id, "Group deleted.".to_string(), json!({ "deleted": true })),
         Ok(false) => rpc_err(id, -32602, "Group not found."),
@@ -1362,7 +1269,7 @@ async fn call_groups_delete(id: Value, env: &Env, user_id: &str, args: &Value) -
     }
 }
 
-async fn do_groups_add(db: &D1Database, user_id: &str, group_id: &str, bot_ids: &[String]) -> Result<Vec<String>, String> {
+async fn do_groups_add(db: &crate::db::Db, user_id: &str, group_id: &str, bot_ids: &[String]) -> Result<Vec<String>, String> {
     let mut added = Vec::new();
     for bot_id in bot_ids {
         if store::bot_access(db, user_id, bot_id).await.map_err(|e| e.to_string())?.is_none() {
@@ -1376,7 +1283,7 @@ async fn do_groups_add(db: &D1Database, user_id: &str, group_id: &str, bot_ids: 
     Ok(added)
 }
 
-async fn call_groups_add_member(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_groups_add_member(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let group_id = arg_str(args, "group_id");
     let single = arg_str(args, "slavebot_id");
     let mut bot_ids: Vec<String> = args
@@ -1390,25 +1297,19 @@ async fn call_groups_add_member(id: Value, env: &Env, user_id: &str, args: &Valu
     if group_id.is_empty() || bot_ids.is_empty() {
         return rpc_err(id, -32602, "group_id and slavebot_id (or slavebot_ids) are required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match do_groups_add(&db, user_id, &group_id, &bot_ids).await {
         Ok(added) => mcp_data(id, format!("Added {} bot(s).", added.len()), json!({ "added": added })),
         Err(e) => rpc_err(id, -32602, &e),
     }
 }
 
-async fn call_groups_remove_member(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_groups_remove_member(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let (group_id, bot_id) = (arg_str(args, "group_id"), arg_str(args, "slavebot_id"));
     if group_id.is_empty() || bot_id.is_empty() {
         return rpc_err(id, -32602, "group_id and slavebot_id are required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match store::remove_group_member(&db, user_id, &group_id, &bot_id).await {
         Ok(true) => mcp_data(id, "Member removed.".to_string(), json!({ "removed": true })),
         Ok(false) => rpc_err(id, -32602, "Group not found."),
@@ -1416,16 +1317,13 @@ async fn call_groups_remove_member(id: Value, env: &Env, user_id: &str, args: &V
     }
 }
 
-async fn call_groups_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_groups_chat(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let (group_id, message, model) = (arg_str(args, "group_id"), arg_str(args, "message"), arg_str(args, "model"));
     let save_memory = args.get("save_memory").and_then(|v| v.as_bool()).unwrap_or(false);
     if group_id.is_empty() || message.trim().is_empty() {
         return rpc_err(id, -32602, "group_id and message are required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     let model_opt = if model.is_empty() { None } else { Some(model.as_str()) };
     match crate::group::post_chat(&db, user_id, &group_id, &message, model_opt, save_memory).await {
         Ok(v) => {
@@ -1436,31 +1334,25 @@ async fn call_groups_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> 
     }
 }
 
-async fn call_groups_broadcast(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_groups_broadcast(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let (group_id, text) = (arg_str(args, "group_id"), arg_str(args, "text"));
     let save = args.get("save_to_memory").and_then(|v| v.as_bool()).unwrap_or(false);
     if group_id.is_empty() || text.trim().is_empty() {
         return rpc_err(id, -32602, "group_id and text are required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match crate::group::post_broadcast(&db, user_id, &group_id, &text, save).await {
         Ok(v) => mcp_data(id, "Posted to the group.".to_string(), v),
         Err(e) => rpc_err(id, -32602, &e),
     }
 }
 
-async fn call_huddle_get(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_huddle_get(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let huddle_id = arg_str(args, "huddle_id");
     if huddle_id.is_empty() {
         return rpc_err(id, -32602, "The huddle_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     let huddle = match store::get_huddle(&db, user_id, &huddle_id).await {
         Ok(Some(h)) => h,
         Ok(None) => return rpc_err(id, -32602, "Huddle not found."),
@@ -1475,15 +1367,12 @@ async fn call_huddle_get(id: Value, env: &Env, user_id: &str, args: &Value) -> R
     )
 }
 
-async fn call_huddle_delete(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_huddle_delete(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let huddle_id = arg_str(args, "huddle_id");
     if huddle_id.is_empty() {
         return rpc_err(id, -32602, "The huddle_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match store::delete_huddle(&db, user_id, &huddle_id).await {
         Ok(true) => mcp_data(id, "Huddle deleted.".to_string(), json!({ "deleted": true })),
         Ok(false) => rpc_err(id, -32602, "Huddle not found."),
@@ -1491,15 +1380,12 @@ async fn call_huddle_delete(id: Value, env: &Env, user_id: &str, args: &Value) -
     }
 }
 
-async fn call_schedules_update(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_schedules_update(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let schedule_id = arg_str(args, "schedule_id");
     if schedule_id.is_empty() {
         return rpc_err(id, -32602, "The schedule_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     if let Some(active) = arg_bool(args, "active") {
         return match store::set_schedule_active(&db, user_id, &schedule_id, active).await {
             Ok(Some(row)) => mcp_data(id, format!("Schedule {}.", if active { "enabled" } else { "disabled" }), json!({ "schedule": row })),
@@ -1510,17 +1396,16 @@ async fn call_schedules_update(id: Value, env: &Env, user_id: &str, args: &Value
     rpc_err(id, -32602, "Nothing to update (pass active).")
 }
 
-async fn call_summaries_get(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_summaries_get(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let bot_id = arg_str(args, "slavebot_id");
     if bot_id.is_empty() {
         return rpc_err(id, -32602, "The slavebot_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
-    if store::get_bot(&db, user_id, &bot_id).await.map_err(|e| format!("Database error: {e}"))?.is_none() {
-        return rpc_err(id, -32602, "SlaveBot not found.");
+    let db = &state.db;
+    match store::get_bot(&db, user_id, &bot_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return rpc_err(id, -32602, "SlaveBot not found."),
+        Err(e) => return rpc_err(id, -32000, &format!("Database error: {e}")),
     }
     let mut grouped = serde_json::Map::new();
     let mut total = 0usize;
@@ -1536,66 +1421,54 @@ async fn call_summaries_get(id: Value, env: &Env, user_id: &str, args: &Value) -
     mcp_data(id, format!("{total} summarie(s)."), serde_json::Value::Object(grouped))
 }
 
-async fn call_summaries_run(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_summaries_run(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let bot_id = arg_str(args, "slavebot_id");
     if bot_id.is_empty() {
         return rpc_err(id, -32602, "The slavebot_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     let bot = match store::get_bot(&db, user_id, &bot_id).await {
         Ok(Some(b)) => b,
         Ok(None) => return rpc_err(id, -32602, "SlaveBot not found."),
         Err(e) => return rpc_err(id, -32000, &format!("Database error: {e}")),
     };
-    match crate::summarize::run_daily(env, &db, &bot, user_id).await {
+    match crate::summarize::run_daily(&db, &bot, user_id).await {
         Ok(Some(row)) => mcp_data(id, "Daily summary generated.".to_string(), json!({ "summary": row })),
         Ok(None) => mcp_data(id, "Nothing new to summarize.".to_string(), json!({ "summary": null })),
         Err(e) => rpc_err(id, -32000, &format!("Summarize failed: {e}")),
     }
 }
 
-async fn call_teams_get(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_teams_get(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let team_id = arg_str(args, "team_id");
     if team_id.is_empty() {
         return rpc_err(id, -32602, "The team_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match crate::teams::team_detail(&db, user_id, &team_id).await {
         Ok(v) => mcp_data(id, "Team.".to_string(), v),
         Err(e) => rpc_err(id, -32602, &e),
     }
 }
 
-async fn call_teams_delete(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_teams_delete(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let team_id = arg_str(args, "team_id");
     if team_id.is_empty() {
         return rpc_err(id, -32602, "The team_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match store::delete_team(&db, &team_id, user_id).await {
         Ok(()) => mcp_data(id, "Team deleted.".to_string(), json!({ "deleted": true })),
         Err(e) => rpc_err(id, -32602, &e),
     }
 }
 
-async fn call_teams_set_member(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_teams_set_member(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let (team_id, target) = (arg_str(args, "team_id"), arg_str(args, "user_id"));
     if team_id.is_empty() || target.is_empty() {
         return rpc_err(id, -32602, "team_id and user_id are required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     if let Some(role) = args.get("role").and_then(|v| v.as_str()) {
         if let Err(e) = store::set_member_role(&db, &team_id, user_id, &target, role).await {
             return rpc_err(id, -32602, &e);
@@ -1610,22 +1483,19 @@ async fn call_teams_set_member(id: Value, env: &Env, user_id: &str, args: &Value
     mcp_data(id, "Member updated.".to_string(), json!({ "updated": true }))
 }
 
-async fn call_teams_remove_member(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_teams_remove_member(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let (team_id, target) = (arg_str(args, "team_id"), arg_str(args, "user_id"));
     if team_id.is_empty() || target.is_empty() {
         return rpc_err(id, -32602, "team_id and user_id are required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match store::remove_member(&db, &team_id, user_id, &target).await {
         Ok(()) => mcp_data(id, "Member removed.".to_string(), json!({ "removed": true })),
         Err(e) => rpc_err(id, -32602, &e),
     }
 }
 
-async fn call_teams_set_provider(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_teams_set_provider(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let team_id = arg_str(args, "team_id");
     let preset = arg_str(args, "preset").trim().to_lowercase();
     if team_id.is_empty() || preset.is_empty() {
@@ -1636,10 +1506,7 @@ async fn call_teams_set_provider(id: Value, env: &Env, user_id: &str, args: &Val
     }
     let (base_url_raw, api_key) = (arg_str(args, "base_url"), arg_str(args, "api_key"));
     let needs_url = matches!(preset.as_str(), "modal" | "custom" | "opencode" | "ollama" | "baseten");
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     let stored = store::get_team(&db, &team_id).await.map(|t| t.map(|x| (x.provider_base_url, x.provider_api_key)).unwrap_or_default()).unwrap_or_default();
     let (stored_base, stored_key) = stored;
     // Switching to a hosted preset clears a stale custom URL; switching to a
@@ -1674,16 +1541,13 @@ async fn call_teams_set_provider(id: Value, env: &Env, user_id: &str, args: &Val
     }
 }
 
-async fn call_teams_test_provider(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_teams_test_provider(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let team_id = arg_str(args, "team_id");
     let model = arg_str(args, "model");
     if team_id.is_empty() {
         return rpc_err(id, -32602, "team_id is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     // Owner/admin only — same rule as set_team_provider.
     match store::membership(&db, &team_id, user_id).await {
         Ok(Some(r)) if r == "owner" || r == "admin" => {}
@@ -1704,15 +1568,12 @@ async fn call_teams_test_provider(id: Value, env: &Env, user_id: &str, args: &Va
     mcp_data(id, summary, diag)
 }
 
-async fn call_teams_clear_provider(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_teams_clear_provider(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let team_id = arg_str(args, "team_id");
     if team_id.is_empty() {
         return rpc_err(id, -32602, "The team_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     let preset = store::get_team(&db, &team_id).await.map(|t| t.map(|x| x.provider).unwrap_or_else(|| "meta".to_string())).unwrap_or_else(|_| "meta".to_string());
     match store::set_team_provider(&db, &team_id, user_id, &preset, "", "").await {
         Ok(()) => mcp_data(id, "Team key removed.".to_string(), json!({ "cleared": true })),
@@ -1720,15 +1581,12 @@ async fn call_teams_clear_provider(id: Value, env: &Env, user_id: &str, args: &V
     }
 }
 
-async fn call_teams_activity(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_teams_activity(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let team_id = arg_str(args, "team_id");
     if team_id.is_empty() {
         return rpc_err(id, -32602, "The team_id argument is required.");
     }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match store::membership(&db, &team_id, user_id).await {
         Ok(Some(r)) if r == "owner" || r == "admin" => {}
         _ => return rpc_err(id, -32602, "Only owners and admins can view team activity."),
@@ -1739,11 +1597,8 @@ async fn call_teams_activity(id: Value, env: &Env, user_id: &str, args: &Value) 
     }
 }
 
-async fn call_usage_get(id: Value, env: &Env, user_id: &str) -> Result<Response> {
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+async fn call_usage_get(id: Value, state: &AppState, user_id: &str) -> Response {
+    let db = &state.db;
     let credit = store::get_user(&db, user_id).await.map(|u| u.map(|x| x.credit_usd).unwrap_or(0.0)).unwrap_or(0.0);
     match store::list_usage(&db, user_id, 100).await {
         Ok((logs, spent)) => mcp_data(id, format!("Spent ${spent:.4}."), json!({ "credit_usd": credit, "spent_usd": spent, "logs": logs })),
@@ -1751,12 +1606,12 @@ async fn call_usage_get(id: Value, env: &Env, user_id: &str) -> Result<Response>
     }
 }
 
-fn call_harness_config(id: Value, env: &Env) -> Result<Response> {
-    let url = env.var("HARNESS_URL").map(|v| v.to_string()).unwrap_or_default();
-    mcp_data(id, if url.trim().is_empty() { "Harness worker not configured yet.".to_string() } else { format!("Harness at {url}.") }, json!({ "url": url }))
+fn call_harness_config(id: Value, _state: &AppState) -> Response {
+    // Self-hosted: the harness lives on this same server under /api.
+    mcp_data(id, "Harness runs on this server.".to_string(), json!({ "url": "" }))
 }
 
-async fn call_voice_transcribe(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+async fn call_voice_transcribe(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     use base64::Engine;
     let (audio_b64, team_id) = (arg_str(args, "audio_base64"), arg_str(args, "team_id"));
     if audio_b64.trim().is_empty() {
@@ -1766,27 +1621,15 @@ async fn call_voice_transcribe(id: Value, env: &Env, user_id: &str, args: &Value
         Ok(b) => b,
         Err(_) => return rpc_err(id, -32602, "audio_base64 is not valid base64."),
     };
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
+    let db = &state.db;
     match crate::voice::transcribe_core(&db, user_id, &team_id, bytes).await {
         Ok(v) => mcp_data(id, v.get("transcript").and_then(|t| t.as_str()).unwrap_or("Transcribed.").to_string(), v),
         Err(e) => rpc_err(id, -32000, &e),
     }
 }
 
-async fn call_voice_speak(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
-    let (text, voice) = (arg_str(args, "text"), arg_str(args, "voice"));
-    if text.trim().is_empty() {
-        return rpc_err(id, -32602, "text is required.");
-    }
-    let db = match need_db(env) {
-        Ok(db) => db,
-        Err(e) => return rpc_err(id, -32000, &e),
-    };
-    match crate::voice::speak_core(env, &db, user_id, &text, &voice).await {
-        Ok(v) => mcp_data(id, "Spoken reply below as base64 audio.".to_string(), v),
-        Err(e) => rpc_err(id, -32000, &e),
-    }
+async fn call_voice_speak(id: Value, _state: &AppState, _user_id: &str, _args: &Value) -> Response {
+    // No server TTS voice on self-hosted builds; the app falls back to the
+    // built-in browser voice automatically.
+    rpc_err(id, -32000, "Server voice is not configured (no TTS provider) — using the built-in browser voice instead.")
 }

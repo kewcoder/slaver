@@ -1,7 +1,6 @@
 use chrono::{Datelike, Utc};
-use worker::*;
-
-use crate::{chat, store};
+use anyhow::Result;
+use crate::{chat, db::Db, store};
 
 // Conversation rollups: a daily cron summarizes yesterday's messages, a
 // weekly cron rolls up the week's dailies, a monthly cron rolls up the
@@ -23,8 +22,7 @@ fn truncate_chars(s: &str, n: usize) -> String {
 }
 
 async fn summarize_text(
-    _env: &Env,
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     bot_id: &str,
     _period: &str,
@@ -33,6 +31,7 @@ async fn summarize_text(
     let messages = vec![chat::ChatMessage {
         role: "user".to_string(),
         content: prompt.to_string(),
+        ..Default::default()
     }];
     // Summaries always use the provider default model; `model` here is the period name.
     // They run on the owner's key when set (cron included), else the server key.
@@ -47,13 +46,13 @@ async fn summarize_text(
     };
     let prov = crate::provider::provider_for(db, &team_id)
         .await
-        .map_err(|e| Error::RustError(e.to_string()))?;
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     let summary_model = crate::provider::effective_model(&prov.preset, "");
     match chat::complete_with_usage(&prov, &summary_model, &messages, Some(bot_id)).await {
         Ok(done) => {
             let text = done.text.trim().to_string();
             if text.is_empty() {
-                return Err(Error::RustError("empty summary".to_string()));
+                return Err(anyhow::anyhow!("empty summary".to_string()));
             }
             let _ = store::record_usage(
                 db,
@@ -73,12 +72,12 @@ async fn summarize_text(
             .await;
             Ok(text)
         }
-        Err(e) => Err(Error::RustError(e)),
+        Err(e) => Err(anyhow::anyhow!(e)),
     }
 }
 
 /// Summarize one bot's yesterday. Returns None when there is nothing to do.
-pub async fn run_daily(env: &Env, db: &D1Database, bot: &store::BotRow, owner_id: &str) -> Result<Option<store::SummaryRow>> {
+pub async fn run_daily(db: &Db, bot: &store::BotRow, owner_id: &str) -> Result<Option<store::SummaryRow>> {
     let day = yesterday_utc();
     let key = day.format("%Y-%m-%d").to_string();
     let messages = store::messages_since(db, &bot.id, &day_start_iso(&day), 200).await?;
@@ -100,12 +99,12 @@ pub async fn run_daily(env: &Env, db: &D1Database, bot: &store::BotRow, owner_id
          Capture: key facts about the user, decisions made, preferences stated, and open items. \
          Plain text, no flattery, no preamble.\n\n{transcript}"
     );
-    let content = summarize_text(env, db, owner_id, &bot.id, "daily", &prompt).await?;
+    let content = summarize_text(db, owner_id, &bot.id, "daily", &prompt).await?;
     Ok(Some(store::upsert_summary(db, &bot.id, "daily", &key, &content).await?))
 }
 
 /// Roll up the last 7 daily summaries into a weekly one.
-pub async fn run_weekly(env: &Env, db: &D1Database, bot: &store::BotRow, owner_id: &str) -> Result<Option<store::SummaryRow>> {
+pub async fn run_weekly(db: &Db, bot: &store::BotRow, owner_id: &str) -> Result<Option<store::SummaryRow>> {
     let dailies = store::list_summaries(db, &bot.id, "daily", 7).await?;
     if dailies.is_empty() {
         return Ok(None);
@@ -120,12 +119,12 @@ pub async fn run_weekly(env: &Env, db: &D1Database, bot: &store::BotRow, owner_i
         "Combine these daily conversation summaries into one weekly recap of at most 15 lines. \
          Keep durable facts, decisions, and preferences; drop small talk.\n\n{combined}"
     );
-    let content = summarize_text(env, db, owner_id, &bot.id, "weekly", &prompt).await?;
+    let content = summarize_text(db, owner_id, &bot.id, "weekly", &prompt).await?;
     Ok(Some(store::upsert_summary(db, &bot.id, "weekly", &key, &content).await?))
 }
 
 /// Roll up the last 4 weekly summaries (fallback: dailies) into a monthly one.
-pub async fn run_monthly(env: &Env, db: &D1Database, bot: &store::BotRow, owner_id: &str) -> Result<Option<store::SummaryRow>> {
+pub async fn run_monthly(db: &Db, bot: &store::BotRow, owner_id: &str) -> Result<Option<store::SummaryRow>> {
     let day = yesterday_utc();
     let key = if day.month() == 1 {
         format!("{:04}-12", day.year() - 1)
@@ -150,13 +149,13 @@ pub async fn run_monthly(env: &Env, db: &D1Database, bot: &store::BotRow, owner_
         "Combine these conversation summaries into one monthly recap of at most 20 lines. \
          Keep durable facts, decisions, and preferences; drop small talk.\n\n{combined}"
     );
-    let content = summarize_text(env, db, owner_id, &bot.id, "monthly", &prompt).await?;
+    let content = summarize_text(db, owner_id, &bot.id, "monthly", &prompt).await?;
     Ok(Some(store::upsert_summary(db, &bot.id, "monthly", &key, &content).await?))
 }
 
 /// Build the "past conversations" context block: latest weekly + monthly and
 /// the last 7 daily summaries, newest last. Empty when the bot has no history.
-pub async fn context_block(db: &D1Database, bot_id: &str) -> Result<String> {
+pub async fn context_block(db: &Db, bot_id: &str) -> Result<String> {
     let mut parts: Vec<String> = Vec::new();
     let push_capped = |parts: &mut Vec<String>, label: &str, rows: Vec<store::SummaryRow>| {
         for r in rows.into_iter().rev() {

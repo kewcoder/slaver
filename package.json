@@ -6,21 +6,18 @@
     "frontend"
   ],
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "docker compose up --build",
     "dev:frontend": "npm --workspace frontend run dev",
+    "dev:server": "cargo run",
     "build:frontend": "npm --workspace frontend run build",
-    "build:worker": "worker-build --release",
-    "build": "npm run build:frontend && npm run build:worker",
-    "deploy": "npm run build && wrangler deploy",
-    "deploy:dry-run": "npm run build && wrangler deploy --dry-run",
+    "build:server": "cargo build --release",
+    "build": "npm run build:frontend && npm run build:server",
+    "deploy": "fly deploy",
     "typecheck:frontend": "npm --workspace frontend run typecheck",
-    "db:migrate:local": "wrangler d1 migrations apply slaver_db --local",
-    "db:migrate:remote": "wrangler d1 migrations apply slaver_db --remote",
-    "cf:types": "wrangler types"
+    "typecheck:server": "cargo check"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.4",
-    "tailwindcss": "^4.3.4",
-    "wrangler": "^4.156.2"
+    "tailwindcss": "^4.3.4"
   }
 }

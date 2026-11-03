@@ -1,12 +1,40 @@
 use serde::{Deserialize, Serialize};
-use worker::*;
+use crate::{db::Db, pricing, provider, schedule, store};
 
-use crate::{pricing, provider, schedule, store};
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct FunctionCall {
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ToolCallMsg {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: FunctionCall,
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCallMsg>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+impl Default for ChatMessage {
+    fn default() -> Self {
+        Self { role: String::new(), content: String::new(), tool_calls: None, tool_call_id: None }
+    }
+}
+
+impl ChatMessage {
+    pub fn text(role: &str, content: String) -> Self {
+        Self { role: role.to_string(), content, tool_calls: None, tool_call_id: None }
+    }
 }
 
 
@@ -21,6 +49,7 @@ fn with_memory(memory: &str, recaps: &str, history: Vec<ChatMessage>) -> Vec<Cha
         msgs.push(ChatMessage {
             role: "system".to_string(),
             content: format!("Bot memory set by the owner (treat as persistent facts about the user and past conversations):\n{memory}"),
+        ..Default::default()
         });
     }
     let recaps = recaps.trim();
@@ -28,6 +57,7 @@ fn with_memory(memory: &str, recaps: &str, history: Vec<ChatMessage>) -> Vec<Cha
         msgs.push(ChatMessage {
             role: "system".to_string(),
             content: recaps.to_string(),
+        ..Default::default()
         });
     }
     msgs.extend(history);
@@ -43,7 +73,7 @@ pub struct SendAsResult {
 /// Shared core: the acting user directs bot A to message bot B as a partner.
 /// Recorded in both histories (labeled), billed to B's team provider.
 pub async fn deliver_as(
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     from_id: &str,
     to_id: &str,
@@ -154,7 +184,7 @@ fn parse_consults(text: &str) -> Vec<Consult> {
 /// ephemeral context notes; `deliver_as` already records both sides and bills
 /// the target's team. Disabled per bot via the relay flag.
 async fn consult_peers(
-    db: &D1Database,
+    db: &Db,
     prov: &provider::Provider,
     model: &str,
     bot: &store::BotRow,
@@ -190,7 +220,7 @@ async fn consult_peers(
     let decision = match complete_with_usage(
         prov,
         model,
-        &[ChatMessage { role: "user".to_string(), content: prompt }],
+        &[ChatMessage { role: "user".to_string(), content: prompt, ..Default::default() }],
         Some(&bot.id),
     )
     .await
@@ -228,6 +258,7 @@ async fn consult_peers(
             notes.push(ChatMessage {
                 role: "user".to_string(),
                 content: format!("[{peer}'s answer for you]: {}", r.reply),
+                ..Default::default()
             });
         }
     }
@@ -236,7 +267,7 @@ async fn consult_peers(
 
 /// Slash commands handled without calling the model. Returns the same shape
 pub(crate) async fn send_message(
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     bot_id: &str,
     message: &str,
@@ -320,11 +351,11 @@ pub(crate) async fn send_message(
 /// Slash commands without a model call. Returns the reply payload value
 /// (same shape the app renders as a bot message).
 pub(crate) async fn command_reply(
-    db: &D1Database,
+    db: &Db,
     user_id: &str,
     bot: &store::BotRow,
     message: &str,
-) -> Result<serde_json::Value, Error> {
+) -> anyhow::Result<serde_json::Value> {
     let credit = store::get_user(db, user_id)
         .await?
         .map(|u| u.credit_usd)
@@ -462,18 +493,17 @@ pub async fn complete_with_usage(
     session: Option<&str>,
 ) -> Result<Completion, String> {
     provider::require_model(&prov.preset, model)?;
-    let mut upstream =
+    let upstream =
         provider::post_chat_completions(prov, model.trim(), messages, false, session)
             .await
             .map_err(|e| format!("fetch failed: {e}"))?;
     if upstream.status_code() != 200 {
         let status = upstream.status_code();
-        let text = upstream.text().await.unwrap_or_default();
+        let text = upstream.text();
         return Err(describe_upstream_error(status, &text));
     }
     let data: serde_json::Value = upstream
         .json()
-        .await
         .map_err(|e| format!("bad json: {e}"))?;
     // Chat Completions shape first, Responses-API shape as fallback
     // (OpenCode serves some models, e.g. muse-spark-*, only via /responses).

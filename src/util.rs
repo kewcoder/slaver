@@ -1,21 +1,10 @@
-use worker::*;
+use axum::{http::StatusCode, response::{IntoResponse, Response}, Json};
+use serde_json::Value;
 
-/// JSON response with permissive CORS headers (same-origin SPA, harmless to keep).
-pub fn json(status: u16, value: &serde_json::Value) -> Result<Response> {
-    let mut r = Response::from_json(value)?.with_status(status);
-    cors(&mut r)?;
-    Ok(r)
-}
-
-pub fn cors(r: &mut Response) -> Result<()> {
-    let h = r.headers_mut();
-    h.set("Access-Control-Allow-Origin", "*")?;
-    h.set(
-        "Access-Control-Allow-Headers",
-        "Content-Type, Authorization",
-    )?;
-    h.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")?;
-    Ok(())
+/// JSON response.
+pub fn json(status: u16, value: &Value) -> Response {
+    let code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
+    (code, Json(value.clone())).into_response()
 }
 
 pub fn truncate(s: &str, n: usize) -> String {
