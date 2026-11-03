@@ -1,29 +1,57 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  addGroupMember,
+  appendMemory,
   avatarUrl,
+  broadcast,
   createBot,
+  createGroup,
+  createSchedule,
+  deleteGroup,
+  deleteSchedule,
   fetchBotDetail,
   fetchBots,
+  fetchGroupDetail,
+  fetchGroups,
   fetchMe,
   fetchModels,
+  fetchSchedules,
   fetchSummaries,
   fetchUsage,
   finishChat,
   formatUsd,
+  groupChat,
   login,
+  plainChat,
   register,
+  removeGroupMember,
   runSummary,
   setToken,
+  speakVoice,
   streamChat,
   transcribeVoice,
   updateBot,
+  updateSchedule,
   uploadAvatar,
+  type BotSchedule,
+  type Group,
+  type GroupDetail,
   type SlaveBot,
   type Summaries,
   type UsageSummary,
   type User,
 } from "./api";
-import { speak, startRecording, stopSpeaking, warmUpVoices, type Recorder } from "./voice";
+import {
+  playAudioBlob,
+  recordConversationTurn,
+  speak,
+  startRecording,
+  stopSpeaking,
+  warmUpVoices,
+  type Recorder,
+} from "./voice";
+
+const AURA_VOICES = ["luna", "athena", "orion", "zeus", "hera", "perseus", "angus", "stella"];
 
 const AVATAR_COLORS = [
   "bg-emerald-600",
@@ -224,6 +252,397 @@ function LogsView({ summary }: { summary: UsageSummary | null }) {
   );
 }
 
+function GroupView({
+  groupId,
+  bots,
+  onCredit,
+  onDeleted,
+}: {
+  groupId: string;
+  bots: SlaveBot[];
+  onCredit: () => void;
+  onDeleted: () => void;
+}) {
+  const [detail, setDetail] = useState<GroupDetail | null>(null);
+  const [task, setTask] = useState("");
+  const [info, setInfo] = useState("");
+  const [saveInfo, setSaveInfo] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [savedNote, setSavedNote] = useState("");
+  const [addId, setAddId] = useState("");
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setDetail(await fetchGroupDetail(groupId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load group.");
+    }
+  }, [groupId]);
+
+  useEffect(() => {
+    setDetail(null);
+    setError("");
+    refresh();
+  }, [groupId, refresh]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+  }, [detail?.messages.length]);
+
+  async function sendTask(e?: React.FormEvent) {
+    e?.preventDefault();
+    const text = task.trim();
+    if (!text || busy) return;
+    setError("");
+    setSavedNote("");
+    setTask("");
+    setBusy(true);
+    try {
+      await groupChat(groupId, text);
+      await refresh();
+      onCredit();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Group chat failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function postInfo(e?: React.FormEvent) {
+    e?.preventDefault();
+    const text = info.trim();
+    if (!text || busy) return;
+    setError("");
+    setSavedNote("");
+    setBusy(true);
+    try {
+      const res = await broadcast(groupId, text, saveInfo);
+      setInfo("");
+      await refresh();
+      onCredit();
+      setSavedNote(
+        res.saved_to_memory.length > 0
+          ? `Saved to memory of: ${res.saved_to_memory.join(", ")}`
+          : "Posted to the group thread.",
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Broadcast failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveReply(botId: string | null | undefined, botName: string | null | undefined, content: string) {
+    if (!botId) return;
+    setError("");
+    setSavedNote("");
+    try {
+      await appendMemory(botId, content.slice(0, 2000));
+      setSavedNote(`Saved to ${botName ?? "bot"}'s memory.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save to memory.");
+    }
+  }
+
+  async function doAdd() {
+    if (!addId) return;
+    setError("");
+    try {
+      await addGroupMember(groupId, addId);
+      setAddId("");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add member.");
+    }
+  }
+
+  async function doRemove(botId: string) {
+    setError("");
+    try {
+      await removeGroupMember(groupId, botId);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove member.");
+    }
+  }
+
+  async function doDelete() {
+    if (!window.confirm("Delete this group? Its discussion history will be gone.")) return;
+    try {
+      await deleteGroup(groupId);
+      onDeleted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete group.");
+    }
+  }
+
+  if (!detail) return <div className="p-8 text-center text-zinc-400">Loading group...</div>;
+  const outsiders = bots.filter((b) => !b.archived && !detail.members.some((m) => m.id === b.id));
+
+  return (
+    <div className="mx-auto flex h-full w-full max-w-3xl flex-col px-4 py-4">
+      <div className="mb-3 rounded-lg border border-zinc-800 bg-zinc-900 p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="font-bold text-zinc-100">{detail.group.name}</h2>
+          <button type="button" onClick={doDelete} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400">
+            Delete group
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {detail.members.map((m) => (
+            <span key={m.id} className="flex items-center gap-1.5 rounded-full bg-zinc-800 py-1 pl-1 pr-2 text-sm">
+              <BotAvatar bot={m} size="sm" />
+              <span className="text-zinc-200">{m.name}</span>
+              <button type="button" onClick={() => doRemove(m.id)} title={`Remove ${m.name}`} className="text-zinc-500 hover:text-red-400">
+                ×
+              </button>
+            </span>
+          ))}
+          {outsiders.length > 0 && (
+            <span className="flex items-center gap-1">
+              <select value={addId} onChange={(e) => setAddId(e.target.value)} aria-label="Add slaveBot" className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-zinc-200">
+                <option value="">+ Add</option>
+                {outsiders.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+              {addId && (
+                <button type="button" onClick={doAdd} className="rounded-md bg-emerald-600 px-2 py-1 text-sm font-bold text-white hover:bg-emerald-500">
+                  Add
+                </button>
+              )}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {detail.messages.length === 0 && (
+          <p className="py-8 text-center text-zinc-500">No discussion yet. Give the team a task below.</p>
+        )}
+        {detail.messages.map((m) => (
+          <div key={m.id} className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
+            {m.slavebot_id ? (
+              <BotAvatar bot={({ id: m.slavebot_id, name: m.bot_name ?? "?", title: "", model: "", memory: "", avatar_key: bots.find((b) => b.id === m.slavebot_id)?.avatar_key ?? "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" }) as SlaveBot} size="sm" />
+            ) : (
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-600 text-sm font-bold text-white">Y</div>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline gap-2">
+                <span className="text-sm font-bold">{m.slavebot_id ? (m.bot_name ?? "SlaveBot") : "You"}</span>
+                <span className="text-xs text-zinc-500">{new Date(m.created_at).toLocaleString()}</span>
+                {m.slavebot_id && (
+                  <button
+                    type="button"
+                    onClick={() => saveReply(m.slavebot_id, m.bot_name, m.content)}
+                    title="Save this reply into the bot's memory"
+                    className="rounded px-1 text-xs text-zinc-500 hover:bg-zinc-700 hover:text-emerald-400"
+                  >
+                    Save to memory
+                  </button>
+                )}
+              </div>
+              <div className="whitespace-pre-wrap break-words text-[15px] text-zinc-200">{m.content}</div>
+            </div>
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+
+      {error && <p className="py-1 text-sm text-red-400">{error}</p>}
+      {savedNote && <p className="py-1 text-sm text-emerald-400">{savedNote}</p>}
+
+      <form onSubmit={postInfo} className="mt-2 flex items-center gap-2 rounded-lg bg-zinc-800 p-2">
+        <input
+          value={info}
+          onChange={(e) => setInfo(e.target.value)}
+          placeholder="Share info with the team..."
+          disabled={busy}
+          className="min-w-0 flex-1 bg-transparent px-1 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
+        />
+        <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs text-zinc-400" title="Append this info to every member's memory">
+          <input type="checkbox" checked={saveInfo} onChange={(e) => setSaveInfo(e.target.checked)} className="accent-emerald-500" />
+          +memory
+        </label>
+        <button type="submit" disabled={!info.trim() || busy} className="shrink-0 rounded-md bg-zinc-700 px-3 py-2 text-sm font-bold text-white hover:bg-zinc-600 disabled:opacity-40">
+          Post
+        </button>
+      </form>
+
+      <form onSubmit={sendTask} className="mt-2 flex items-end gap-2 rounded-lg bg-zinc-800 p-2">
+        <textarea
+          value={task}
+          onChange={(e) => setTask(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              sendTask();
+            }
+          }}
+          placeholder="Give the team a task... (every bot replies, each billed)"
+          rows={1}
+          disabled={busy}
+          className="max-h-40 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
+        />
+        <button type="submit" disabled={!task.trim() || busy} className="shrink-0 rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
+          {busy ? "..." : "Send"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function SchedulesView({ botId }: { botId: string }) {
+  const [schedules, setSchedules] = useState<BotSchedule[]>([]);
+  const [kind, setKind] = useState("daily");
+  const [time, setTime] = useState("07:00");
+  const [days, setDays] = useState("all");
+  const [interval, setInterval] = useState("60");
+  const [prompt, setPrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      setSchedules(await fetchSchedules(botId));
+    } catch {
+      /* keep old list on transient failure */
+    }
+  }, [botId]);
+
+  useEffect(() => {
+    setSchedules([]);
+    setError("");
+    void load();
+  }, [botId, load]);
+
+  async function create(e: React.FormEvent) {
+    e.preventDefault();
+    if (!prompt.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      await createSchedule(botId, {
+        kind,
+        time_hhmm: time,
+        days,
+        interval_minutes: Number(interval) || 60,
+        prompt: prompt.trim(),
+      });
+      setPrompt("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create schedule.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggle(s: BotSchedule) {
+    setError("");
+    try {
+      await updateSchedule(s.id, !s.active);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update schedule.");
+    }
+  }
+
+  async function remove(s: BotSchedule) {
+    if (!window.confirm(`Delete schedule "${s.name}"?`)) return;
+    setError("");
+    try {
+      await deleteSchedule(s.id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete schedule.");
+    }
+  }
+
+  const inputCls =
+    "mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none";
+
+  return (
+    <div className="mb-8 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
+      <h3 className="font-semibold text-zinc-200">Schedules</h3>
+      <p className="mb-3 mt-1 text-xs text-zinc-500">
+        The bot runs these by itself on Jakarta time — e.g. a morning briefing posted into its history.
+        You can also type <span className="text-zinc-300">/remind daily 07:00 ...</span> in chat, or <span className="text-zinc-300">/schedules</span> to list.
+      </p>
+      {schedules.length === 0 ? (
+        <p className="mb-3 text-sm text-zinc-500">No schedules yet.</p>
+      ) : (
+        <ul className="mb-4 flex flex-col gap-2">
+          {schedules.map((s) => (
+            <li key={s.id} className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${s.active ? "bg-emerald-500" : "bg-zinc-600"}`} title={s.active ? "On" : "Off"} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-semibold text-zinc-200">{s.name}</span>
+                <span className="block truncate text-xs text-zinc-500">
+                  {s.kind === "interval" ? `every ${s.interval_minutes}m` : `${s.kind} ${s.time_hhmm} (${s.days})`}
+                  {" · next "}{s.next_run_at || "—"}
+                  {" · "}{s.prompt}
+                </span>
+              </span>
+              <button type="button" onClick={() => toggle(s)} className="rounded px-2 py-1 text-xs font-semibold text-zinc-300 hover:bg-zinc-800">
+                {s.active ? "Pause" : "Resume"}
+              </button>
+              <button type="button" onClick={() => remove(s)} className="rounded px-2 py-1 text-xs font-semibold text-zinc-500 hover:bg-zinc-800 hover:text-red-400">
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form onSubmit={create} className="grid grid-cols-2 gap-2">
+        <label className="col-span-2 text-sm font-semibold text-zinc-300">
+          Task for the bot
+          <input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. Post a morning briefing" maxLength={1000} className={inputCls} />
+        </label>
+        <label className="text-sm font-semibold text-zinc-300">
+          Repeat
+          <select value={kind} onChange={(e) => setKind(e.target.value)} className={inputCls}>
+            <option value="daily">Daily</option>
+            <option value="once">Once</option>
+            <option value="interval">Every N minutes</option>
+          </select>
+        </label>
+        {kind === "interval" ? (
+          <label className="text-sm font-semibold text-zinc-300">
+            Minutes (5 or more)
+            <input value={interval} onChange={(e) => setInterval(e.target.value)} inputMode="numeric" className={inputCls} />
+          </label>
+        ) : (
+          <label className="text-sm font-semibold text-zinc-300">
+            Time (Jakarta)
+            <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputCls} />
+          </label>
+        )}
+        {kind === "daily" && (
+          <label className="col-span-2 text-sm font-semibold text-zinc-300">
+            Days
+            <select value={days} onChange={(e) => setDays(e.target.value)} className={inputCls}>
+              <option value="all">Every day</option>
+              <option value="weekdays">Weekdays</option>
+              <option value="weekends">Weekends</option>
+            </select>
+          </label>
+        )}
+        <div className="col-span-2">
+          <button type="submit" disabled={busy || !prompt.trim()} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
+            {busy ? "Adding..." : "Add schedule"}
+          </button>
+        </div>
+      </form>
+      {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
+    </div>
+  );
+}
+
 function BotView({
   bot,
   models,
@@ -236,6 +655,10 @@ function BotView({
   const [name, setName] = useState(bot.name);
   const [memory, setMemory] = useState(bot.memory);
   const [model, setModel] = useState(bot.model);
+  const [voice, setVoice] = useState(bot.voice || "luna");
+  const [activeDays, setActiveDays] = useState(bot.active_days || "all");
+  const [activeStart, setActiveStart] = useState(bot.active_start || "");
+  const [activeEnd, setActiveEnd] = useState(bot.active_end || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -248,10 +671,14 @@ function BotView({
     setName(bot.name);
     setMemory(bot.memory);
     setModel(bot.model);
+    setVoice(bot.voice || "luna");
+    setActiveDays(bot.active_days || "all");
+    setActiveStart(bot.active_start || "");
+    setActiveEnd(bot.active_end || "");
     setError("");
     setSummaries(null);
     fetchSummaries(bot.id).then(setSummaries).catch(() => {});
-  }, [bot.id, bot.name, bot.memory, bot.model]);
+  }, [bot.id, bot.name, bot.memory, bot.model, bot.voice, bot.active_days, bot.active_start, bot.active_end]);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -259,11 +686,33 @@ function BotView({
     setError("");
     setSaved(false);
     try {
-      const updated = await updateBot(bot.id, { name, memory, model });
+      const updated = await updateBot(bot.id, {
+        name,
+        memory,
+        model,
+        voice,
+        active_days: activeDays,
+        active_start: activeStart,
+        active_end: activeEnd,
+      });
       onSaved(updated);
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleArchive() {
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await updateBot(bot.id, { archived: !bot.archived });
+      onSaved(updated);
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update archive state.");
     } finally {
       setBusy(false);
     }
@@ -343,6 +792,36 @@ function BotView({
           </select>
         </label>
         <label className="text-sm font-semibold text-zinc-300">
+          Voice (spoken replies)
+          <select value={voice} onChange={(e) => { setVoice(e.target.value); setSaved(false); }} className={inputCls}>
+            {AURA_VOICES.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="-mt-2 text-xs text-zinc-500">Per-message Speak buttons and hands-free chat use this Aura voice via server TTS (billed per character); the Voice on toggle stays on the free built-in browser voice.</p>
+        <div className="grid grid-cols-3 gap-2">
+          <label className="text-sm font-semibold text-zinc-300">
+            Active days
+            <select value={activeDays} onChange={(e) => { setActiveDays(e.target.value); setSaved(false); }} className={inputCls}>
+              <option value="all">Every day</option>
+              <option value="weekdays">Weekdays</option>
+              <option value="weekends">Weekends</option>
+            </select>
+          </label>
+          <label className="text-sm font-semibold text-zinc-300">
+            Active from
+            <input type="time" value={activeStart} onChange={(e) => { setActiveStart(e.target.value); setSaved(false); }} className={inputCls} />
+          </label>
+          <label className="text-sm font-semibold text-zinc-300">
+            Active until
+            <input type="time" value={activeEnd} onChange={(e) => { setActiveEnd(e.target.value); setSaved(false); }} className={inputCls} />
+          </label>
+        </div>
+        <p className="-mt-2 text-xs text-zinc-500">Scheduled tasks only fire inside this window (Jakarta time). Leave times empty for always-on.</p>
+        <label className="text-sm font-semibold text-zinc-300">
           Memory
           <textarea
             value={memory}
@@ -356,10 +835,23 @@ function BotView({
         <p className="-mt-1 text-xs text-zinc-500">Memory is fed to the model as persistent context on every message.</p>
         {error && <p className="text-sm text-red-400">{error}</p>}
         {saved && <p className="text-sm font-semibold text-emerald-400">Saved.</p>}
-        <button type="submit" disabled={busy} className="self-start rounded-md bg-emerald-600 px-6 py-2 font-semibold text-white hover:bg-emerald-500 disabled:opacity-50">
-          {busy ? "Saving..." : "Save"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button type="submit" disabled={busy} className="rounded-md bg-emerald-600 px-6 py-2 font-semibold text-white hover:bg-emerald-500 disabled:opacity-50">
+            {busy ? "Saving..." : "Save"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={toggleArchive}
+            title={bot.archived ? "Restore this bot to the active list" : "Hide this bot from lists, groups, and crons (history is kept)"}
+            className={`rounded-md border px-4 py-2 text-sm font-semibold disabled:opacity-50 ${bot.archived ? "border-emerald-600 text-emerald-400 hover:bg-emerald-950" : "border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
+          >
+            {bot.archived ? "Restore bot" : "Archive bot"}
+          </button>
+        </div>
       </form>
+
+      <SchedulesView botId={bot.id} />
 
       <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
         <div className="mb-3 flex items-center justify-between">
@@ -394,10 +886,12 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [checking, setChecking] = useState(true);
   const [models, setModels] = useState<{ id: string; label: string }[]>([]);
-  const [view, setView] = useState<"chat" | "bot" | "logs">("chat");
+  const [view, setView] = useState<"chat" | "group" | "bot" | "logs">("chat");
   const [bots, setBots] = useState<SlaveBot[]>([]);
   const [botId, setBotId] = useState<string | null>(null);
   const [bot, setBot] = useState<SlaveBot | null>(null);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [groupId, setGroupId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -407,10 +901,16 @@ export default function App() {
   const [recSecs, setRecSecs] = useState(0);
   const [transcribing, setTranscribing] = useState(false);
   const [voiceOn, setVoiceOn] = useState(true);
+  const [conversing, setConversing] = useState(false);
+  const [micLevel, setMicLevel] = useState(0);
+  const [speakingKey, setSpeakingKey] = useState<number | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const keyRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const recTimer = useRef<number | null>(null);
+  const converseRef = useRef(false);
+  const audioRef = useRef<{ stop: () => void } | null>(null);
 
   const refreshUser = useCallback(async () => {
     try {
@@ -429,6 +929,14 @@ export default function App() {
     }
   }, []);
 
+  const refreshGroups = useCallback(async () => {
+    try {
+      setGroups(await fetchGroups());
+    } catch {
+      /* keep old list on transient failure */
+    }
+  }, []);
+
   useEffect(() => {
     warmUpVoices();
     refreshUser().finally(() => setChecking(false));
@@ -436,9 +944,14 @@ export default function App() {
   }, [refreshUser]);
 
   useEffect(() => {
-    if (user) refreshBots();
-    else setBots([]);
-  }, [user, refreshBots]);
+    if (user) {
+      refreshBots();
+      refreshGroups();
+    } else {
+      setBots([]);
+      setGroups([]);
+    }
+  }, [user, refreshBots, refreshGroups]);
 
   useEffect(() => {
     if (view === "logs" && user) {
@@ -453,18 +966,84 @@ export default function App() {
   useEffect(() => {
     return () => {
       if (recTimer.current !== null) window.clearInterval(recTimer.current);
+      converseRef.current = false;
+      audioRef.current?.stop();
       stopSpeaking();
     };
   }, []);
 
+  function stopAudio() {
+    audioRef.current?.stop();
+    audioRef.current = null;
+    stopSpeaking();
+  }
+
+  function stopConverse() {
+    converseRef.current = false;
+    setConversing(false);
+    setMicLevel(0);
+    stopAudio();
+  }
+
+  /** Spoken reply: server Aura voice first, built-in browser voice as fallback. */
+  async function speakReply(content: string, key: number | null, useServer: boolean) {
+    const text = content.trim().slice(0, 2000);
+    if (!text) return;
+    stopAudio();
+    if (key !== null) setSpeakingKey(key);
+    try {
+      if (useServer && bot) {
+        const res = await speakVoice(text, bot.voice || "luna");
+        const player = playAudioBlob(res.audio);
+        audioRef.current = player;
+        setUser((u) => (u ? { ...u, credit_usd: res.credit_usd } : u));
+        await player.done;
+        return;
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message === "SERVER_VOICE_UNCONFIGURED") {
+        setError("Server voice is not configured yet — using the built-in voice. Set CF_ACCOUNT_ID / CF_AI_TOKEN on the server to enable Aura voices.");
+      }
+    } finally {
+      if (key !== null) setSpeakingKey((k) => (k === key ? null : k));
+    }
+    speak(text);
+  }
+
+  async function openGroup(id: string | null) {
+    setError("");
+    stopConverse();
+    if (recorder) {
+      recorder.cancel();
+      stopRecordingUi();
+    }
+    setGroupId(id);
+    setBotId(null);
+    setBot(null);
+    setMessages([]);
+    setView("group");
+  }
+
+  async function newGroup() {
+    setError("");
+    try {
+      const created = await createGroup("");
+      await refreshGroups();
+      await openGroup(created.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create group.");
+    }
+  }
+
   async function openBot(id: string | null) {
     setError("");
-    stopSpeaking();
+    stopConverse();
     if (recorder) {
       recorder.cancel();
       stopRecordingUi();
     }
     setBotId(id);
+    setGroupId(null);
     setView("chat");
     if (!id) {
       setBot(null);
@@ -508,7 +1087,7 @@ export default function App() {
   }, []);
 
   async function toggleMic() {
-    if (streaming || transcribing || !bot) return;
+    if (streaming || transcribing || conversing || !bot) return;
     if (recorder) {
       const rec = recorder;
       stopRecordingUi();
@@ -537,12 +1116,9 @@ export default function App() {
     }
   }
 
-  let content = "";
-  async function send(e?: React.FormEvent) {
-    e?.preventDefault();
-    const text = input.trim();
-    if (!text || streaming || !bot) return;
-    stopSpeaking();
+  /** Slash commands (/remind, /schedules, /unschedule, /archive, /help) run server-side without the model. */
+  async function sendCommand(text: string) {
+    if (!bot) return;
     setError("");
     setInput("");
     const userKey = ++keyRef.current;
@@ -553,8 +1129,40 @@ export default function App() {
       { key: assistantKey, role: "assistant", content: "" },
     ]);
     setStreaming(true);
+    try {
+      const res = await plainChat(bot.id, text, bot.model);
+      const reply = res.reply ?? "";
+      setMessages((prev) => prev.map((m) => (m.key === assistantKey ? { ...m, content: reply } : m)));
+      setUser((u) => (u ? { ...u, credit_usd: res.credit_usd } : u));
+      if (text.startsWith("/archive")) {
+        await refreshBots();
+        const detail = await fetchBotDetail(bot.id);
+        setBot(detail.slavebot);
+      }
+      if (voiceOn && reply.trim()) speak(reply);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Command failed.");
+      setMessages((prev) => prev.filter((m) => m.key !== assistantKey));
+    } finally {
+      setStreaming(false);
+    }
+  }
+
+  async function sendText(text: string, fromVoice = false) {
+    if (!text || streaming || !bot) return;
+    stopAudio();
+    setError("");
+    const userKey = ++keyRef.current;
+    const assistantKey = ++keyRef.current;
+    setMessages((prev) => [
+      ...prev,
+      { key: userKey, role: "user", content: text },
+      { key: assistantKey, role: "assistant", content: "" },
+    ]);
+    setStreaming(true);
     const controller = new AbortController();
     abortRef.current = controller;
+    let content = "";
     let streamUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
 
     const patchAssistant = (c: string) =>
@@ -577,7 +1185,11 @@ export default function App() {
       await refreshUser();
       const detail = await fetchBotDetail(finalId);
       setBot(detail.slavebot);
-      if (voiceOn && content.trim()) speak(content);
+      if (fromVoice) {
+        await speakReply(content, null, true);
+      } else if (voiceOn && content.trim()) {
+        speak(content);
+      }
     } catch (err) {
       if ((err as Error).name === "AbortError") {
         patchAssistant(`${content}\n— stopped.`);
@@ -586,14 +1198,75 @@ export default function App() {
         setError(err instanceof Error ? err.message : "Chat failed.");
         setMessages((prev) => prev.filter((m) => m.key !== assistantKey));
       }
+      throw err;
     } finally {
       setStreaming(false);
       abortRef.current = null;
     }
   }
 
+  async function send(e?: React.FormEvent) {
+    e?.preventDefault();
+    const text = input.trim();
+    if (!text || streaming || !bot) return;
+    if (text.startsWith("/")) {
+      await sendCommand(text);
+      return;
+    }
+    setInput("");
+    try {
+      await sendText(text);
+    } catch {
+      /* error already shown */
+    }
+  }
+
+  /** Hands-free loop: listen until you pause, send automatically, hear the reply, repeat. */
+  async function toggleConverse() {
+    if (conversing) {
+      stopConverse();
+      return;
+    }
+    if (!bot || streaming || transcribing || recorder) return;
+    setError("");
+    setInput("");
+    converseRef.current = true;
+    setConversing(true);
+    try {
+      while (converseRef.current) {
+        let turn: { wav: Blob } | null = null;
+        try {
+          turn = await recordConversationTurn(setMicLevel);
+        } catch (err) {
+          if (!converseRef.current) break;
+          setError(err instanceof Error ? err.message : "Microphone error.");
+          break;
+        } finally {
+          setMicLevel(0);
+        }
+        if (!converseRef.current || !turn) break;
+        try {
+          const res = await transcribeVoice(turn.wav);
+          await refreshUser();
+          if (!converseRef.current) break;
+          if (!res.transcript.trim()) continue;
+          await sendText(res.transcript, true);
+        } catch (err) {
+          if (!converseRef.current) break;
+          if ((err as Error).name === "AbortError") break;
+          setError(err instanceof Error ? err.message : "Conversation failed.");
+          break;
+        }
+      }
+    } finally {
+      converseRef.current = false;
+      setConversing(false);
+      setMicLevel(0);
+    }
+  }
+
   function logout() {
-    stopSpeaking();
+    stopConverse();
     if (recorder) {
       recorder.cancel();
       stopRecordingUi();
@@ -604,11 +1277,16 @@ export default function App() {
     setBots([]);
     setBotId(null);
     setBot(null);
+    setGroups([]);
+    setGroupId(null);
     setUsage(null);
   }
 
   if (checking) return <div className="flex min-h-screen items-center justify-center text-zinc-400">Loading...</div>;
   if (!user) return <AuthView onAuth={setUser} />;
+
+  const activeBots = bots.filter((b) => !b.archived);
+  const archivedBots = bots.filter((b) => b.archived);
 
   const tabCls = (active: boolean) =>
     `rounded-md px-3 py-1.5 text-sm font-medium ${active ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-200"}`;
@@ -624,7 +1302,7 @@ export default function App() {
           </button>
         </div>
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
-          {bots.map((b) => (
+          {activeBots.map((b) => (
             <button
               key={b.id}
               type="button"
@@ -639,7 +1317,52 @@ export default function App() {
               </span>
             </button>
           ))}
-          {bots.length === 0 && <p className="px-2 py-2 text-sm text-zinc-500">No slaveBots yet — create one to start.</p>}
+          {activeBots.length === 0 && <p className="px-2 py-2 text-sm text-zinc-500">No slaveBots yet — create one to start.</p>}
+          {archivedBots.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowArchived((v) => !v)}
+              className="mt-1 rounded-md px-2 py-1.5 text-left text-xs font-semibold text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+            >
+              {showArchived ? "▾ Archived" : `▸ Archived (${archivedBots.length})`}
+            </button>
+          )}
+          {showArchived &&
+            archivedBots.map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => openBot(b.id)}
+                title={`${b.title || b.name} (archived)`}
+                className={`flex items-center gap-2.5 rounded-md px-2 py-2 text-left opacity-60 hover:bg-zinc-800 hover:opacity-100 ${b.id === botId ? "bg-zinc-800" : ""}`}
+              >
+                <BotAvatar bot={b} size="sm" />
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold">{b.name}</span>
+                  <span className="block truncate text-xs text-zinc-500">archived</span>
+                </span>
+              </button>
+            ))}
+        </nav>
+        <div className="flex items-center justify-between border-t border-zinc-800 px-4 pb-1 pt-3">
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Groups</div>
+          <button type="button" onClick={newGroup} className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
+            + New
+          </button>
+        </div>
+        <nav className="flex max-h-40 flex-col gap-1 overflow-y-auto p-2 pt-1">
+          {groups.map((g) => (
+            <button
+              key={g.id}
+              type="button"
+              onClick={() => openGroup(g.id)}
+              title={g.name}
+              className={`truncate rounded-md px-2 py-2 text-left text-sm hover:bg-zinc-800 ${g.id === groupId ? "bg-zinc-800 font-semibold" : "text-zinc-300"}`}
+            >
+              <span className="mr-1 text-zinc-500">##</span>{g.name}
+            </button>
+          ))}
+          {groups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">No groups yet.</p>}
         </nav>
         <div className="flex flex-col items-start gap-2 border-t border-zinc-800 p-3">
           <button type="button" onClick={() => { setView("logs"); fetchUsage().then(setUsage).catch(() => {}); }} className="rounded-md px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
@@ -660,6 +1383,7 @@ export default function App() {
             <span className="px-1 font-bold text-zinc-300">#</span>
             <span className="font-semibold">{bot ? bot.name : "pick a slaveBot"}</span>
             <button type="button" onClick={() => setView("chat")} className={tabCls(view === "chat")}>Chat</button>
+          <button type="button" onClick={() => groupId && setView("group")} disabled={!groupId} className={`${tabCls(view === "group")} disabled:opacity-40`}>Group</button>
             <button type="button" onClick={() => bot && setView("bot")} disabled={!bot} className={`${tabCls(view === "bot")} disabled:opacity-40`}>Bot</button>
             <button type="button" onClick={() => setView("logs")} className={tabCls(view === "logs")}>Logs</button>
           </div>
@@ -675,6 +1399,19 @@ export default function App() {
 
         {view === "logs" ? (
           <main className="flex-1 overflow-y-auto"><LogsView summary={usage} /></main>
+        ) : view === "group" && groupId ? (
+          <main className="flex-1 overflow-y-auto">
+            <GroupView
+              groupId={groupId}
+              bots={bots}
+              onCredit={refreshUser}
+              onDeleted={async () => {
+                setGroupId(null);
+                await refreshGroups();
+                setView("chat");
+              }}
+            />
+          </main>
         ) : view === "bot" && bot ? (
           <main className="flex-1 overflow-y-auto">
             <BotView
@@ -707,11 +1444,28 @@ export default function App() {
               )}
               {messages.map((m) => (
                 <div key={m.key} className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
-                  <BotAvatar bot={bot ?? { id: "u", name: m.role === "user" ? (user.name || "You") : "A", title: "", model: "", memory: "", avatar_key: "", created_at: "", updated_at: "" } as SlaveBot} size="sm" />
+                  <BotAvatar bot={bot ?? { id: "u", name: m.role === "user" ? (user.name || "You") : "A", title: "", model: "", memory: "", avatar_key: "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" } as SlaveBot} size="sm" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
                       <span className="text-sm font-bold">{m.role === "user" ? (user.name || "You") : (bot?.name ?? "Assistant")}</span>
                       {m.created_at && <span className="text-xs text-zinc-500">{new Date(m.created_at).toLocaleString()}</span>}
+                      {m.role === "assistant" && m.content.trim() && bot && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (speakingKey === m.key) {
+                              stopAudio();
+                              setSpeakingKey(null);
+                            } else {
+                              void speakReply(m.content, m.key, true);
+                            }
+                          }}
+                          title="Hear this reply in the bot's voice"
+                          className="rounded px-1 text-xs text-zinc-500 hover:bg-zinc-700 hover:text-emerald-400"
+                        >
+                          {speakingKey === m.key ? "Stop" : "Speak"}
+                        </button>
+                      )}
                     </div>
                     <div className="whitespace-pre-wrap break-words text-[15px] text-zinc-200">{m.content || (streaming ? "…" : "")}</div>
                   </div>
@@ -727,12 +1481,26 @@ export default function App() {
                 <button
                   type="button"
                   onClick={toggleMic}
-                  disabled={streaming || transcribing || !bot}
-                  title={recorder ? `Stop recording (${recSecs.toFixed(0)}s)` : "Dictate with microphone"}
+                  disabled={streaming || transcribing || conversing || !bot}
+                  title={recorder ? `Stop recording (${recSecs.toFixed(0)}s)` : "Dictate with microphone (push to talk)"}
                   className={`shrink-0 rounded-md px-3 py-2 text-sm font-bold ${recorder ? "text-red-400" : "text-zinc-300 hover:bg-zinc-700"} disabled:opacity-40`}
                 >
                   {recorder ? `● ${recSecs.toFixed(0)}s` : transcribing ? "…" : "Mic"}
                 </button>
+                <button
+                  type="button"
+                  onClick={toggleConverse}
+                  disabled={!bot || streaming || transcribing || !!recorder}
+                  title="Hands-free conversation: auto-send when you pause, auto-play the reply"
+                  className={`shrink-0 rounded-md px-3 py-2 text-sm font-bold ${conversing ? "bg-emerald-700 text-white hover:bg-emerald-600" : "text-zinc-300 hover:bg-zinc-700"} disabled:opacity-40`}
+                >
+                  {conversing ? "Stop chat" : "Converse"}
+                </button>
+                {conversing && (
+                  <span title="Mic level" className="flex h-2 w-16 shrink-0 self-center overflow-hidden rounded-full bg-zinc-700">
+                    <span className="bg-emerald-500" style={{ width: `${Math.round(micLevel * 100)}%` }} />
+                  </span>
+                )}
                 <textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}

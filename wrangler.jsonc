@@ -19,7 +19,8 @@
   },
   "vars": {
     "META_API_BASE_URL": "https://api.meta.ai/v1",
-    "DEFAULT_MODEL": "muse-spark-1.3"
+    "DEFAULT_MODEL": "muse-spark-1.3",
+    "TTS_MODEL": "@cf/deepgram/aura-1"
   },
   "d1_databases": [
     {
@@ -36,6 +37,6 @@
     }
   ],
   "triggers": {
-    "crons": ["5 0 * * *", "10 0 * * 1", "15 0 1 * *"]
+    "crons": ["5 0 * * *", "10 0 * * 1", "15 0 1 * *", "*/15 * * * *"]
   }
 }

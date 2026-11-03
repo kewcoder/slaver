@@ -1,9 +1,11 @@
 mod auth;
 mod avatar;
 mod chat;
+mod group;
 mod mcp;
 mod meta;
 mod pricing;
+mod schedule;
 mod store;
 mod summarize;
 mod util;
@@ -40,10 +42,25 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .put_async("/api/slavebots/:id", chat::update_bot)
         .get_async("/api/usage", chat::usage)
         .post_async("/api/voice/transcribe", voice::transcribe)
+        .post_async("/api/voice/speak", voice::speak)
         .post_async("/api/slavebots/:id/avatar", avatar::upload)
         .get_async("/api/slavebots/:id/avatar", avatar::serve)
         .get_async("/api/summaries", summarize::list)
         .post_async("/api/summaries/run", summarize::run_now)
+        .get_async("/api/groups", group::list)
+        .post_async("/api/groups", group::create)
+        .get_async("/api/groups/:id", group::detail)
+        .put_async("/api/groups/:id", group::rename)
+        .delete_async("/api/groups/:id", group::delete)
+        .post_async("/api/groups/:id/members", group::add_member)
+        .delete_async("/api/groups/:id/members/:botId", group::remove_member)
+        .post_async("/api/groups/:id/chat", group::chat)
+        .post_async("/api/groups/:id/broadcast", group::broadcast)
+        .post_async("/api/slavebots/:id/memory", group::append_memory)
+        .get_async("/api/slavebots/:id/schedules", schedule::list_for_bot)
+        .post_async("/api/slavebots/:id/schedules", schedule::create_for_bot)
+        .put_async("/api/schedules/:sid", schedule::update)
+        .delete_async("/api/schedules/:sid", schedule::delete)
         .get("/mcp", |_, _| mcp::info())
         .post_async("/mcp", mcp::rpc)
         .run(req, env)
@@ -64,6 +81,12 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
             return;
         }
     };
+    // Frequent tick: fire due bot schedules (reminders/briefings).
+    if cron.starts_with("*/") {
+        let fired = schedule::run_due(&env, &db).await;
+        console_error!("scheduled: fired {fired} due schedules");
+        return;
+    }
     let scopes = match store::all_bot_scopes(&db).await {
         Ok(s) => s,
         Err(e) => {

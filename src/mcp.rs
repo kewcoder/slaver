@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 use worker::*;
 
-use crate::{auth, chat, meta, util};
+use crate::{auth, chat, meta, store, util};
 
 /// GET /mcp — human-readable pointer (real MCP clients use POST /mcp).
 pub fn info() -> Result<Response> {
@@ -12,7 +12,7 @@ pub fn info() -> Result<Response> {
             "transport": "streamable-http",
             "endpoint": "/mcp",
             "methods": ["initialize", "tools/list", "tools/call"],
-            "tools": ["chat", "models"],
+            "tools": ["chat", "models", "bot_archive", "schedule_create", "schedule_list", "schedule_delete"],
         }),
     )
 }
@@ -61,6 +61,65 @@ fn models_tool_def() -> Value {
     })
 }
 
+fn bot_archive_tool_def() -> Value {
+    json!({
+        "name": "bot_archive",
+        "description": "Archive (deactivate) or restore a slaveBot. Archived bots are hidden from lists, groups, and crons.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["slavebot_id", "archived"],
+            "properties": {
+                "slavebot_id": { "type": "string" },
+                "archived": { "type": "boolean" }
+            }
+        }
+    })
+}
+
+fn schedule_create_tool_def() -> Value {
+    json!({
+        "name": "schedule_create",
+        "description": "Create a bot-managed schedule: the bot runs `prompt` by itself on a timer (daily HH:MM Jakarta time, or every N minutes). Times are Asia/Jakarta wall-clock.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["slavebot_id", "prompt"],
+            "properties": {
+                "slavebot_id": { "type": "string" },
+                "prompt": { "type": "string" },
+                "name": { "type": "string" },
+                "kind": { "type": "string", "enum": ["once", "daily", "interval"] },
+                "time_hhmm": { "type": "string", "description": "HH:MM 24-hour, for once/daily. Default 07:00." },
+                "days": { "type": "string", "description": "all, weekdays, weekends, or comma list like mon,wed,fri. Default all." },
+                "interval_minutes": { "type": "integer", "description": "For kind=interval, minutes between runs (>= 5). Default 60." }
+            }
+        }
+    })
+}
+
+fn schedule_list_tool_def() -> Value {
+    json!({
+        "name": "schedule_list",
+        "description": "List a slaveBot's schedules.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["slavebot_id"],
+            "properties": { "slavebot_id": { "type": "string" } }
+        }
+    })
+}
+
+fn schedule_delete_tool_def() -> Value {
+    json!({
+        "name": "schedule_delete",
+        "description": "Delete a schedule by id.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["schedule_id"],
+            "properties": { "schedule_id": { "type": "string" } }
+        }
+    })
+}
+
 /// POST /mcp — JSON-RPC 2.0 over Streamable HTTP (plain JSON responses).
 pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let body: Value = match req.json().await {
@@ -83,7 +142,7 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
             Ok(Response::empty()?.with_status(202))
         }
         "ping" => rpc_ok(id, json!({})),
-        "tools/list" => rpc_ok(id, json!({ "tools": [chat_tool_def(), models_tool_def()] })),
+        "tools/list" => rpc_ok(id, json!({ "tools": [chat_tool_def(), models_tool_def(), bot_archive_tool_def(), schedule_create_tool_def(), schedule_list_tool_def(), schedule_delete_tool_def()] })),
         "tools/call" => {
             let user_id = match auth::bearer_sub(&req, &ctx.env)? {
                 Some(uid) => uid,
@@ -95,11 +154,91 @@ pub async fn rpc(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
             match name {
                 "models" => rpc_ok(id, json!({ "content": [{ "type": "text", "text": meta::model_list(&ctx.env).to_string() }] })),
                 "chat" => call_chat(id, &ctx.env, &user_id, &args).await,
-                _ => rpc_err(id, -32602, "Unknown tool. Available: chat, models."),
+                "bot_archive" => call_bot_archive(id, &ctx.env, &user_id, &args).await,
+                "schedule_create" => call_schedule_create(id, &ctx.env, &user_id, &args).await,
+                "schedule_list" => call_schedule_list(id, &ctx.env, &user_id, &args).await,
+                "schedule_delete" => call_schedule_delete(id, &ctx.env, &user_id, &args).await,
+                _ => rpc_err(id, -32602, "Unknown tool. Available: chat, models, bot_archive, schedule_create, schedule_list, schedule_delete."),
             }
         }
         "" => rpc_err(id, -32600, "Invalid Request: missing method field."),
         _ => rpc_err(id, -32601, "Unknown method."),
+    }
+}
+
+fn mcp_text(id: Value, text: String) -> Result<Response> {
+    rpc_ok(id, json!({ "content": [{ "type": "text", "text": text }] }))
+}
+
+async fn call_bot_archive(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+    let bot_id = args.get("slavebot_id").and_then(|v| v.as_str()).unwrap_or("");
+    let archived = args.get("archived").and_then(|v| v.as_bool()).unwrap_or(true);
+    if bot_id.is_empty() {
+        return rpc_err(id, -32602, "The slavebot_id argument is required.");
+    }
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+    };
+    match store::set_archived(&db, user_id, bot_id, archived).await {
+        Ok(Some(bot)) => mcp_text(id, format!("{} is now {}.", bot.name, if archived { "archived" } else { "active" })),
+        Ok(None) => rpc_err(id, -32602, "SlaveBot not found."),
+        Err(e) => rpc_err(id, -32000, &format!("Archive failed: {e}")),
+    }
+}
+
+async fn call_schedule_create(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+    let bot_id = args.get("slavebot_id").and_then(|v| v.as_str()).unwrap_or("");
+    let prompt = args.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
+    if bot_id.is_empty() || prompt.is_empty() {
+        return rpc_err(id, -32602, "The slavebot_id and prompt arguments are required.");
+    }
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+    };
+    if store::get_bot(&db, user_id, bot_id).await.map(|b| b.is_none()).unwrap_or(true) {
+        return rpc_err(id, -32602, "SlaveBot not found.");
+    }
+    let kind = args.get("kind").and_then(|v| v.as_str()).unwrap_or("daily");
+    let time_hhmm = args.get("time_hhmm").and_then(|v| v.as_str()).unwrap_or("07:00");
+    let days = args.get("days").and_then(|v| v.as_str()).unwrap_or("all");
+    let interval = args.get("interval_minutes").and_then(|v| v.as_i64()).unwrap_or(60);
+    let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("MCP schedule");
+    match store::create_schedule(&db, user_id, bot_id, name, kind, time_hhmm, days, interval, prompt).await {
+        Ok(s) => mcp_text(id, format!("Schedule {} created, next run {}.", s.id, s.next_run_at)),
+        Err(e) => rpc_err(id, -32602, &format!("Invalid schedule: {e}")),
+    }
+}
+
+async fn call_schedule_list(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+    let bot_id = args.get("slavebot_id").and_then(|v| v.as_str()).unwrap_or("");
+    if bot_id.is_empty() {
+        return rpc_err(id, -32602, "The slavebot_id argument is required.");
+    }
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+    };
+    match store::list_schedules(&db, user_id, Some(bot_id)).await {
+        Ok(list) => mcp_text(id, serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string())),
+        Err(e) => rpc_err(id, -32000, &format!("List failed: {e}")),
+    }
+}
+
+async fn call_schedule_delete(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<Response> {
+    let sid = args.get("schedule_id").and_then(|v| v.as_str()).unwrap_or("");
+    if sid.is_empty() {
+        return rpc_err(id, -32602, "The schedule_id argument is required.");
+    }
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => return rpc_err(id, -32000, &format!("Database unavailable: {e}")),
+    };
+    match store::delete_schedule(&db, user_id, sid).await {
+        Ok(true) => mcp_text(id, "Schedule deleted.".to_string()),
+        Ok(false) => rpc_err(id, -32602, "Schedule not found."),
+        Err(e) => rpc_err(id, -32000, &format!("Delete failed: {e}")),
     }
 }
 

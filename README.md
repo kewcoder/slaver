@@ -6,6 +6,7 @@ Full-stack on Cloudflare: **API + MCP in Rust** (Workers via `workers-rs`), **Re
 - `POST /api/chat` — persisted chat (`{chat_id?, message, model?, stream?}`). Non-streaming returns reply + cost + credit inline; streaming returns SSE with an `X-Chat-Id` header, then the client calls `POST /api/chat/finish` with the final text so usage is logged and credit deducted.
 - `GET /api/chats`, `GET /api/chats/:id` — saved chat history (never deleted).
 - `GET /api/usage` — token/cost ledger + remaining credit. Every account starts with **$10 demo credit**; costs are estimated from provider token usage (Spark contributor tier).
+- Groups: `GET/POST /api/groups`, `GET/PUT/DELETE /api/groups/:id`, member add/remove, `POST /api/groups/:id/chat` (one task fans out to every member, each reply billed), `POST /api/groups/:id/broadcast` (info to the thread, optionally appended to every member's memory), `POST /api/slavebots/:id/memory` (append one fact).
 - `POST /api/voice/transcribe` — push-to-talk voice chat. The browser records the mic, converts to 16 kHz mono WAV, and uploads it; the server transcribes via Muse Voice Transcribe (`$3/1000 min`, language auto-detected) and bills the seconds to the same credit. Assistant replies are spoken back with the browser's built-in voice (Indonesian preferred, toggleable).
 - `POST /api/chat` and the MCP `chat` tool return 402 when credit runs out.
 - `POST /mcp` — MCP Streamable HTTP (JSON-RPC): `initialize`, `tools/list`, `tools/call` (`chat`, `models`).

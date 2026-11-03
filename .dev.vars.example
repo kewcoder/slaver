@@ -3,3 +3,8 @@ META_API_KEY="replace-with-key-from-dev.meta.ai"
 JWT_SECRET="random-string-min-32-chars"
 META_API_BASE_URL="https://api.meta.ai/v1"
 DEFAULT_MODEL="muse-spark-1.3"
+TTS_MODEL="@cf/deepgram/aura-1"
+# Cloudflare account for Workers AI voice (https://dash.cloudflare.com -> Manage account -> Account ID).
+# CF_AI_TOKEN needs Workers AI run permission (API token with Account / Workers AI / Write).
+CF_ACCOUNT_ID="replace-with-cloudflare-account-id"
+CF_AI_TOKEN="replace-with-cloudflare-api-token"

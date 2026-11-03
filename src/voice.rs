@@ -140,6 +140,113 @@ pub async fn transcribe(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     )
 }
 
+/// Meta has no TTS model (STT only), so spoken replies use a common
+/// third-party voice model through Cloudflare Workers AI instead:
+/// POST /api/voice/speak {text, voice?} -> audio/mpeg (Aura voice).
+/// Needs CF_ACCOUNT_ID + CF_AI_TOKEN secrets; model via TTS_MODEL var.
+pub async fn speak(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
+        Some(id) => id,
+        None => return util::err(401, "Log in before using voice."),
+    };
+    let db = ctx.env.d1("DB")?;
+    let credit = store::get_user(&db, &user_id)
+        .await?
+        .map(|u| u.credit_usd)
+        .unwrap_or(0.0);
+    if credit <= 0.0 {
+        return util::err(402, "Out of credit (balance $0.00). Demo credit is $10 per user.");
+    }
+    #[derive(serde::Deserialize)]
+    struct SpeakBody {
+        text: Option<String>,
+        voice: Option<String>,
+    }
+    let body: SpeakBody = match req.json().await {
+        Ok(b) => b,
+        Err(_) => return util::err(400, "Invalid JSON body."),
+    };
+    let text = body.text.unwrap_or_default();
+    let chars = text.chars().count();
+    if chars == 0 || chars > 2000 {
+        return util::err(400, "text must be 1..2000 characters.");
+    }
+    let speaker = body
+        .voice
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| ["luna", "athena", "orion", "zeus", "hera", "perseus", "angus", "stella"].contains(v))
+        .unwrap_or("luna");
+    let account = ctx.env.secret("CF_ACCOUNT_ID").map(|s| s.to_string()).unwrap_or_default();
+    let token = ctx.env.secret("CF_AI_TOKEN").map(|s| s.to_string()).unwrap_or_default();
+    if account.is_empty() || token.is_empty() {
+        return util::err(501, "Server voice is not configured yet (missing Cloudflare AI credentials). Use the built-in browser voice instead.");
+    }
+    let model = ctx.env.var("TTS_MODEL").map(|v| v.to_string()).unwrap_or_else(|_| "@cf/deepgram/aura-1".to_string());
+    let url = format!("https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{model}");
+    let headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {token}"))?;
+    headers.set("Content-Type", "application/json")?;
+    let payload = serde_json::json!({ "text": text, "speaker": speaker }).to_string();
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post);
+    init.with_headers(headers);
+    let js_body: JsValue = js_sys::Uint8Array::from(payload.as_bytes()).into();
+    init.with_body(Some(js_body));
+    let request = Request::new_with_init(&url, &init)?;
+    let mut upstream = Fetch::Request(request).send().await.map_err(|e| {
+        console_error!("tts upstream fetch failed: {e}");
+        Error::RustError("Could not reach the voice model.".to_string())
+    })?;
+    if upstream.status_code() != 200 {
+        let status = upstream.status_code();
+        let text = upstream.text().await.unwrap_or_default();
+        console_error!("tts upstream status={} body={}", status, util::truncate(&text, 300));
+        return util::json(502, &serde_json::json!({ "error": chat::describe_upstream_error(status, &text) }));
+    }
+    let content_type = upstream.headers().get("content-type").unwrap_or_default().unwrap_or_default();
+    let audio: Vec<u8> = if content_type.contains("json") {
+        let data: serde_json::Value = upstream.json().await.unwrap_or(serde_json::Value::Null);
+        let b64 = data.pointer("/result/audio").and_then(|v| v.as_str()).unwrap_or("");
+        match base64_decode(b64) {
+            Some(bytes) if !bytes.is_empty() => bytes,
+            _ => return util::err(502, "Voice model returned no audio."),
+        }
+    } else {
+        upstream.bytes().await.unwrap_or_default()
+    };
+    if audio.is_empty() {
+        return util::err(502, "Voice model returned no audio.");
+    }
+    let cost = pricing::tts_cost_usd(chars);
+    let (_, remaining) = store::record_usage(
+        &db,
+        &user_id,
+        None,
+        &store::UsageInput {
+            model: "workers-ai-tts".to_string(),
+            prompt_tokens: 0,
+            cached_tokens: 0,
+            completion_tokens: 0,
+            estimated: false,
+            audio_seconds: 0.0,
+            cost_override: Some(cost),
+        },
+    )
+    .await?;
+    let mut resp = Response::from_bytes(audio)?;
+    resp.headers_mut().set("Content-Type", "audio/mpeg")?;
+    resp.headers_mut().set("X-TTS-Cost-Usd", &format!("{cost:.6}"))?;
+    resp.headers_mut().set("X-TTS-Credit-Usd", &format!("{remaining:.4}"))?;
+    util::cors(&mut resp)?;
+    Ok(resp)
+}
+
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(s).ok()
+}
+
 fn looks_like_wav(audio: &[u8]) -> bool {
     audio.len() > 44 && &audio[0..4] == b"RIFF" && &audio[8..12] == b"WAVE"
 }

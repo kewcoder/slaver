@@ -31,6 +31,10 @@ pub fn rates_for(model: &str) -> Rates {
 
 /// Cost of speech-to-text in USD for a clip of `seconds` length.
 /// Muse Voice Transcribe is $3.00 per 1000 minutes of audio.
+pub fn tts_cost_usd(chars: usize) -> f64 {
+    chars as f64 / 1000.0 * 0.015
+}
+
 pub fn stt_cost_usd(seconds: f64) -> f64 {
     seconds.max(0.0) * 3.0 / 60_000.0
 }

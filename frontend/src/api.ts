@@ -12,8 +12,29 @@ export interface SlaveBot {
   model: string;
   memory: string;
   avatar_key: string;
+  archived: number;
+  voice: string;
+  active_days: string;
+  active_start: string;
+  active_end: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface BotSchedule {
+  id: string;
+  user_id: string;
+  slavebot_id: string;
+  name: string;
+  kind: string;
+  time_hhmm: string;
+  days: string;
+  interval_minutes: number;
+  prompt: string;
+  active: number;
+  next_run_at: string;
+  last_run_at: string;
+  created_at: string;
 }
 
 export interface BotDetail {
@@ -47,6 +68,101 @@ export interface UsageLog {
   estimated: number;
   audio_seconds: number;
   created_at: string;
+}
+
+export interface Group {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GroupMessage {
+  id: number;
+  slavebot_id: string | null;
+  bot_name: string | null;
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+export interface GroupDetail {
+  group: Group;
+  members: SlaveBot[];
+  messages: GroupMessage[];
+}
+
+export interface GroupReply {
+  slavebot_id?: string;
+  name?: string;
+  reply?: string;
+  error?: string;
+  usage?: { prompt_tokens: number; completion_tokens: number; estimated?: boolean };
+  cost_usd?: number;
+}
+
+export async function fetchGroups(): Promise<Group[]> {
+  const data = await request<{ groups: Group[] }>("/api/groups");
+  return data.groups;
+}
+
+export async function createGroup(name: string): Promise<Group> {
+  const data = await request<{ group: Group }>("/api/groups", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+  return data.group;
+}
+
+export async function fetchGroupDetail(groupId: string): Promise<GroupDetail> {
+  return request<GroupDetail>(`/api/groups/${encodeURIComponent(groupId)}`);
+}
+
+export async function deleteGroup(groupId: string): Promise<void> {
+  await request(`/api/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
+}
+
+export async function addGroupMember(groupId: string, slavebotId: string): Promise<void> {
+  await request(`/api/groups/${encodeURIComponent(groupId)}/members`, {
+    method: "POST",
+    body: JSON.stringify({ slavebot_id: slavebotId }),
+  });
+}
+
+export async function removeGroupMember(groupId: string, slavebotId: string): Promise<void> {
+  await request(
+    `/api/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(slavebotId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function groupChat(
+  groupId: string,
+  message: string,
+  model?: string,
+): Promise<{ replies: GroupReply[]; total_cost_usd: number; credit_usd: number }> {
+  return request(`/api/groups/${encodeURIComponent(groupId)}/chat`, {
+    method: "POST",
+    body: JSON.stringify({ message, model }),
+  });
+}
+
+export async function broadcast(
+  groupId: string,
+  text: string,
+  saveToMemory: boolean,
+): Promise<{ posted: boolean; saved_to_memory: string[] }> {
+  return request(`/api/groups/${encodeURIComponent(groupId)}/broadcast`, {
+    method: "POST",
+    body: JSON.stringify({ text, save_to_memory: saveToMemory }),
+  });
+}
+
+export async function appendMemory(slavebotId: string, text: string): Promise<{ memory: string }> {
+  return request(`/api/slavebots/${encodeURIComponent(slavebotId)}/memory`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
 }
 
 export interface UsageSummary {
@@ -146,7 +262,16 @@ export async function fetchBotDetail(botId: string): Promise<BotDetail> {
 
 export async function updateBot(
   botId: string,
-  patch: { name?: string; memory?: string; model?: string },
+  patch: {
+    name?: string;
+    memory?: string;
+    model?: string;
+    voice?: string;
+    archived?: boolean;
+    active_days?: string;
+    active_start?: string;
+    active_end?: string;
+  },
 ): Promise<SlaveBot> {
   const data = await request<{ slavebot: SlaveBot }>(
     `/api/slavebots/${encodeURIComponent(botId)}`,
@@ -295,6 +420,75 @@ export interface TranscribeResult {
   estimated?: boolean;
   cost_usd: number;
   credit_usd: number;
+}
+
+export async function fetchSchedules(botId: string): Promise<BotSchedule[]> {
+  const data = await request<{ schedules: BotSchedule[] }>(
+    `/api/slavebots/${encodeURIComponent(botId)}/schedules`,
+  );
+  return data.schedules;
+}
+
+export async function createSchedule(
+  botId: string,
+  schedule: {
+    name?: string;
+    kind: string;
+    time_hhmm?: string;
+    days?: string;
+    interval_minutes?: number;
+    prompt: string;
+  },
+): Promise<BotSchedule> {
+  const data = await request<{ schedule: BotSchedule }>(
+    `/api/slavebots/${encodeURIComponent(botId)}/schedules`,
+    { method: "POST", body: JSON.stringify(schedule) },
+  );
+  return data.schedule;
+}
+
+export async function updateSchedule(scheduleId: string, active: boolean): Promise<BotSchedule> {
+  const data = await request<{ schedule: BotSchedule }>(
+    `/api/schedules/${encodeURIComponent(scheduleId)}`,
+    { method: "PUT", body: JSON.stringify({ active }) },
+  );
+  return data.schedule;
+}
+
+export async function deleteSchedule(scheduleId: string): Promise<void> {
+  await request(`/api/schedules/${encodeURIComponent(scheduleId)}`, { method: "DELETE" });
+}
+
+export interface SpeakResult {
+  audio: Blob;
+  cost_usd: number;
+  credit_usd: number;
+}
+
+/** POST /api/voice/speak — server voice (Workers AI Aura). Falls back to browser voice on 501. */
+export async function speakVoice(text: string, voice: string): Promise<SpeakResult> {
+  const token = getToken();
+  const res = await fetch("/api/voice/speak", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ text: text.slice(0, 2000), voice }),
+  });
+  if (res.status === 501) {
+    throw new Error("SERVER_VOICE_UNCONFIGURED");
+  }
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `Voice failed (${res.status}).`);
+  }
+  const audio = await res.blob();
+  return {
+    audio,
+    cost_usd: Number(res.headers.get("X-TTS-Cost-Usd") ?? 0),
+    credit_usd: Number(res.headers.get("X-TTS-Credit-Usd") ?? 0),
+  };
 }
 
 /** POST /api/voice/transcribe — multipart upload of a WAV clip. */

@@ -10,6 +10,13 @@ export interface Recorder {
   cancel: () => void;
 }
 
+export interface VadTurn {
+  /** 16 kHz mono WAV of one spoken turn. */
+  wav: Blob;
+  /** Seconds of detected speech in the turn. */
+  speechSeconds: number;
+}
+
 function pickMimeType(): string {
   if (typeof MediaRecorder === "undefined") return "";
   const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", ""];
@@ -71,7 +78,7 @@ export async function startRecording(): Promise<Recorder> {
   };
 }
 
-async function toWav16k(input: Blob): Promise<Blob> {
+export async function toWav16k(input: Blob): Promise<Blob> {
   const ctx = new AudioContext();
   try {
     const raw = await input.arrayBuffer();
@@ -139,6 +146,113 @@ export function speak(text: string): void {
 
 export function stopSpeaking(): void {
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+}
+
+/** Play a server-voice audio blob. `done` resolves when playback ends. */
+export function playAudioBlob(blob: Blob): { stop: () => void; done: Promise<void> } {
+  stopSpeaking();
+  const url = URL.createObjectURL(blob);
+  const el = new Audio(url);
+  const done = new Promise<void>((resolve) => {
+    el.onended = () => {
+      URL.revokeObjectURL(url);
+      resolve();
+    };
+    el.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve();
+    };
+  });
+  void el.play().catch(() => {});
+  return {
+    stop: () => {
+      el.pause();
+      URL.revokeObjectURL(url);
+    },
+    done,
+  };
+}
+
+function rmsLevel(analyser: AnalyserNode, buf: Float32Array<ArrayBuffer>): number {
+  analyser.getFloatTimeDomainData(buf);
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+  return Math.sqrt(sum / buf.length);
+}
+
+/**
+ * Hands-free turn: records until the speaker has paused for ~1.4s (or 45s max).
+ * Resolves with a 16 kHz WAV when real speech was heard; throws when the room
+ * stays silent. `onLevel` gets 0..1 mic levels for the UI meter.
+ */
+export async function recordConversationTurn(onLevel?: (level: number) => void): Promise<VadTurn> {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("This browser cannot access the microphone.");
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const mimeType = pickMimeType();
+  const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  const chunks: BlobPart[] = [];
+  const wavReady = new Promise<Blob>((resolve, reject) => {
+    rec.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+    rec.onerror = () => reject(new Error("Recording failed."));
+    rec.onstop = async () => {
+      try {
+        resolve(await toWav16k(new Blob(chunks, { type: rec.mimeType || "audio/webm" })));
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error("Could not convert audio."));
+      }
+    };
+  });
+  const ctx = new AudioContext();
+  const src = ctx.createMediaStreamSource(stream);
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  src.connect(analyser);
+  const buf: Float32Array<ArrayBuffer> = new Float32Array(analyser.fftSize);
+  const START = 0.02;
+  const STOP = 0.012;
+  const SILENCE_MS = 1400;
+  const MAX_MS = 45000;
+  const startedAt = Date.now();
+  let heard = false;
+  let speechMs = 0;
+  let silentSince: number | null = null;
+  let lastTick = Date.now();
+  rec.start(250);
+  try {
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 120));
+      const now = Date.now();
+      const level = rmsLevel(analyser, buf);
+      onLevel?.(Math.min(1, level * 6));
+      const talking = level > (heard ? STOP : START);
+      speechMs += talking ? now - lastTick : 0;
+      lastTick = now;
+      if (talking) {
+        heard = true;
+        silentSince = null;
+      } else if (heard && silentSince === null) {
+        silentSince = now;
+      }
+      if (heard && silentSince !== null && now - silentSince >= SILENCE_MS) break;
+      if (now - startedAt >= MAX_MS) break;
+    }
+  } finally {
+    try {
+      rec.stop();
+    } catch {
+      /* already stopped */
+    }
+    src.disconnect();
+    void ctx.close().catch(() => {});
+    stream.getTracks().forEach((t) => t.stop());
+  }
+  const wav = await wavReady;
+  if (!heard || speechMs < 400) throw new Error("No speech heard — try speaking closer to the mic.");
+  return { wav, speechSeconds: speechMs / 1000 };
 }
 
 /** Warm up the (async) voice list so a preferred voice exists on first use. */

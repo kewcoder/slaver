@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use worker::*;
 
-use crate::{auth, meta, pricing, store, util};
+use crate::{auth, meta, pricing, schedule, store, util};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ChatMessage {
@@ -41,6 +41,11 @@ struct UpdateBotRequest {
     name: Option<String>,
     memory: Option<String>,
     model: Option<String>,
+    voice: Option<String>,
+    archived: Option<bool>,
+    active_days: Option<String>,
+    active_start: Option<String>,
+    active_end: Option<String>,
 }
 
 pub fn valid_model(model: &str) -> bool {
@@ -108,6 +113,12 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
         .filter(|m| valid_model(m))
         .unwrap_or(bot.model.clone());
     let stream = body.stream.unwrap_or(true);
+
+    // Slash commands run locally (no model call, nothing saved to history).
+    // The web client sends these with stream:false and renders `reply` directly.
+    if message.starts_with('/') {
+        return handle_command(&ctx.env, &db, &user_id, &bot, &message).await;
+    }
 
     store::insert_message(&db, &bot_id, "user", &message).await?;
     store::maybe_title_bot(&db, &bot_id, &message).await?;
@@ -263,7 +274,7 @@ pub async fn list_bots(req: Request, ctx: RouteContext<()>) -> Result<Response> 
         None => return util::err(401, "Unauthorized."),
     };
     let db = ctx.env.d1("DB")?;
-    let bots = store::list_bots(&db, &user_id).await?;
+    let bots = store::list_bots(&db, &user_id, true).await?;
     util::json(200, &serde_json::json!({ "slavebots": bots }))
 }
 
@@ -300,7 +311,8 @@ pub async fn bot_detail(req: Request, ctx: RouteContext<()>) -> Result<Response>
     }
 }
 
-/// PUT /api/slavebots/:id — rename, set memory, or change model. Body: {name?, memory?, model?}.
+/// PUT /api/slavebots/:id — rename, set memory/model/voice, archive, or set
+/// active hours. Body: {name?, memory?, model?, voice?, archived?, active_days?, active_start?, active_end?}.
 pub async fn update_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let user_id = match auth::bearer_sub(&req, &ctx.env)? {
         Some(id) => id,
@@ -312,6 +324,12 @@ pub async fn update_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     };
     let bot_id = ctx.param("id").cloned().unwrap_or_default();
     let db = ctx.env.d1("DB")?;
+    if let Some(archived) = body.archived {
+        return match store::set_archived(&db, &user_id, &bot_id, archived).await? {
+            Some(bot) => util::json(200, &serde_json::json!({ "slavebot": bot })),
+            None => util::err(404, "SlaveBot not found."),
+        };
+    }
     match store::update_bot(
         &db,
         &user_id,
@@ -319,12 +337,118 @@ pub async fn update_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         body.name.as_deref(),
         body.memory.as_deref(),
         body.model.as_deref(),
+        body.voice.as_deref(),
+        body.active_days.as_deref(),
+        body.active_start.as_deref(),
+        body.active_end.as_deref(),
     )
     .await?
     {
         Some(bot) => util::json(200, &serde_json::json!({ "slavebot": bot })),
         None => util::err(404, "SlaveBot not found."),
     }
+}
+
+/// Slash commands handled without calling the model. Returns the same shape
+/// as a non-streaming /api/chat reply so the client renders it as a bot message.
+async fn handle_command(
+    _env: &Env,
+    db: &D1Database,
+    user_id: &str,
+    bot: &store::BotRow,
+    message: &str,
+) -> Result<Response> {
+    let credit = store::get_user(db, user_id)
+        .await?
+        .map(|u| u.credit_usd)
+        .unwrap_or(0.0);
+    let reply = if message.starts_with("/remind") {
+        match schedule::parse_remind(message) {
+            Ok((kind, time_hhmm, days, interval_minutes, prompt)) => {
+                match store::create_schedule(
+                    db, user_id, &bot.id, "Chat reminder", &kind, &time_hhmm, &days,
+                    interval_minutes, &prompt,
+                )
+                .await
+                {
+                    Ok(s) => {
+                        let when = if s.kind == "interval" {
+                            format!("every {} minutes", s.interval_minutes)
+                        } else {
+                            format!("at {} ({})", s.time_hhmm, s.days)
+                        };
+                        format!("⏰ Reminder set — I will run \"{}\" {}.", s.prompt, when)
+                    }
+                    Err(e) => format!("Could not set the reminder: {e}"),
+                }
+            }
+            Err(e) => e,
+        }
+    } else if message.starts_with("/schedules") {
+        match store::list_schedules(db, user_id, Some(&bot.id)).await {
+            Ok(list) if list.is_empty() => {
+                "No schedules yet. Try: /remind daily 07:00 Good morning briefing".to_string()
+            }
+            Ok(list) => {
+                let mut out = String::from("Schedules for this bot:\n");
+                for (i, s) in list.iter().enumerate() {
+                    let state = if s.active == 1 { "on" } else { "off" };
+                    let when = if s.kind == "interval" {
+                        format!("every {}m", s.interval_minutes)
+                    } else {
+                        format!("{} {}", s.time_hhmm, s.days)
+                    };
+                    out.push_str(&format!("{}. [{}] {} — {} (next {})  id:{}\n", i + 1, state, s.name, when, s.next_run_at, s.id));
+                }
+                out.push_str("Pause: /unschedule <id> · Full list: Bot tab → Schedules");
+                out
+            }
+            Err(e) => format!("Could not list schedules: {e}"),
+        }
+    } else if message.starts_with("/unschedule") {
+        let id = message.strip_prefix("/unschedule").unwrap_or("").trim();
+        if id.is_empty() {
+            "Usage: /unschedule <schedule-id> (see /schedules).".to_string()
+        } else {
+            // Accept either the full id or the list number from /schedules.
+            let target = if id.len() < 8 {
+                match store::list_schedules(db, user_id, Some(&bot.id)).await {
+                    Ok(list) => id
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|n| list.get(n.saturating_sub(1)))
+                        .map(|s| s.id.clone())
+                        .unwrap_or_else(|| id.to_string()),
+                    Err(_) => id.to_string(),
+                }
+            } else {
+                id.to_string()
+            };
+            match store::delete_schedule(db, user_id, &target).await {
+                Ok(true) => "Schedule removed.".to_string(),
+                _ => "Schedule not found. See /schedules for ids.".to_string(),
+            }
+        }
+    } else if message.starts_with("/archive") {
+        match store::set_archived(db, user_id, &bot.id, true).await {
+            Ok(_) => format!("{} archived. Restore it anytime from the Bot tab.", bot.name),
+            Err(e) => format!("Could not archive: {e}"),
+        }
+    } else if message.starts_with("/help") {
+        "Commands:\n/remind daily HH:MM text — daily reminder (HH:MM Jakarta time)\n/remind weekdays|weekends|mon,wed HH:MM text\n/remind every N text — every N minutes (N ≥ 5)\n/remind once HH:MM text — one-time\n/schedules — list this bot's schedules\n/unschedule <id> — delete a schedule\n/archive — archive this bot".to_string()
+    } else {
+        "Unknown command. Try /help.".to_string()
+    };
+    util::json(
+        200,
+        &serde_json::json!({
+            "slavebot_id": bot.id,
+            "reply": reply,
+            "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 },
+            "cost_usd": 0.0,
+            "credit_usd": credit,
+        }),
+    )
 }
 
 /// GET /api/usage?limit=50 — token/cost ledger for the Logs view.
