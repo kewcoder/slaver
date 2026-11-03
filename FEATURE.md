@@ -236,7 +236,7 @@ Satu layar scroll, kartu per seksi:
 
 ## 13. Inventaris layar (checklist buat UI designer)
 
-Topbar (5): logo-ikon team switcher + Apps, Chat, Code, Market, Settings (+ Voice toggle di header main).
+Topbar (5): logo-ikon ganti tim + Aplikasi, Chat, File, Toko, Pengaturan (+ Voice toggle di header main).
 Sidebar (4 section, tanpa search): ikon+nama team, DMs (bot + user), Channels, Meetings, Support.
 Auth (login prefill demo + register 2 tab) + Onboarding (template picker) + Settings (5 kartu: Profile, New slaveBot, Teams, Fly.io, Developer — tanpa Usage).
 Home = Apps: grid kartu + preview iframe (PROD/DEV) + Set URL + Open full + Board ▤.
