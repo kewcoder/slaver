@@ -49,7 +49,7 @@ export default function HarnessView({ teamId }: { teamId: string | null }) {
 
   useEffect(() => {
     void refreshRuns();
-    // Prefill from Projects kanban "Start agent run".
+    // Prefill from channel board "Start agent run".
     try {
       const raw = localStorage.getItem("harness_prefill");
       if (raw) {

@@ -119,6 +119,7 @@ export interface Group {
   name: string;
   is_public?: number;
   repo_id?: string;
+  project_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -830,6 +831,16 @@ export async function setProjectRepo(projectId: string, repoId: string): Promise
 export async function setProjectUrls(projectId: string, urls: { prod_url?: string; dev_url?: string }): Promise<Project> {
   const data = await callTool<{ project: Project }>("projects_set_urls", { project_id: projectId, ...urls });
   return data.project;
+}
+
+export async function fetchProject(projectId: string): Promise<Project> {
+  const data = await callTool<{ project: Project }>("projects_get", { project_id: projectId });
+  return data.project;
+}
+
+export async function setGroupProject(groupId: string, projectId: string): Promise<Group> {
+  const data = await callTool<{ group: Group }>("groups_set_project", { group_id: groupId, project_id: projectId });
+  return data.group;
 }
 
 export async function createIssue(projectId: string, title: string, body?: string, assigneeBotId?: string): Promise<Issue> {

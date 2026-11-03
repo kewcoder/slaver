@@ -220,9 +220,10 @@ export default function MarketView({
                       type="button"
                       onClick={() => project && onOpenProject(project.project.id)}
                       disabled={!project}
+                      title="Open the channel board for this app"
                       className="rounded-md bg-zinc-700 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-600 disabled:opacity-40"
                     >
-                      {project ? "Open project" : "Licensed"}
+                      {project ? "Open board ▤" : "Licensed"}
                     </button>
                   ) : (
                     <button

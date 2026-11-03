@@ -643,7 +643,7 @@ pub async fn support_group_for_repo(db: &Db, user_id: &str, repo_id: &str) -> Re
     let repo = get_repo(db, user_id, repo_id).await.map_err(|e| e.to_string())?
         .ok_or_else(|| "Repo not found.".to_string())?;
     let existing: Option<store::GroupRow> = db
-        .prepare("SELECT id, team_id, name, is_public, repo_id, created_at, updated_at FROM groups WHERE repo_id = ? AND is_public <> 0 LIMIT 1")
+        .prepare("SELECT id, team_id, name, is_public, repo_id, project_id, created_at, updated_at FROM groups WHERE repo_id = ? AND is_public <> 0 LIMIT 1")
         .bind(&[v_text(repo_id)])
         .map_err(|e| e.to_string())?
         .first(None)
@@ -1081,6 +1081,29 @@ pub async fn group_remove_user(db: &Db, group_id: &str, actor_id: &str, target_i
     }
     crate::store::remove_group_user(db, group_id, target_id).await?;
     Ok(true)
+}
+
+/// Attach (or detach with "") a kanban project to a channel. The board then
+/// lives inside the channel, auto-filtered to that project. Owner/admin only;
+/// the project must belong to the channel's team.
+pub async fn set_group_project(db: &Db, group_id: &str, actor_id: &str, project_id: &str) -> Result<crate::store::GroupRow> {
+    let g = crate::store::get_group(db, actor_id, group_id).await?.ok_or_else(|| anyhow!("Channel not found."))?;
+    if g.team_id.is_empty() {
+        return Err(anyhow!("Legacy channels cannot own a board."));
+    }
+    require_manager(db, &g.team_id, actor_id).await?;
+    let project_id = project_id.trim();
+    if !project_id.is_empty() {
+        let p = get_project(db, actor_id, project_id).await?.ok_or_else(|| anyhow!("Project not found."))?;
+        if p.team_id != g.team_id {
+            return Err(anyhow!("That project is on a different team."));
+        }
+    }
+    db.prepare("UPDATE groups SET project_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?")
+        .bind(&[v_text(project_id), v_text(group_id)])?
+        .run()
+        .await?;
+    crate::store::get_group(db, actor_id, group_id).await?.ok_or_else(|| anyhow!("Channel not found."))
 }
 
 /// Provision 1 PROD + 1 DEV machine on the team's Fly account.

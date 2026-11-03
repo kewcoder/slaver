@@ -61,6 +61,7 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "dm_send", "description": "Send a direct message to a teammate.", "inputSchema": { "type": "object", "required": ["team_id", "to_user_id", "message"], "properties": { "team_id": { "type": "string" }, "to_user_id": { "type": "string" }, "message": { "type": "string" } } } }),
         json!({ "name": "groups_add_user", "description": "Add a teammate to a channel (mixed human + AI channels).", "inputSchema": { "type": "object", "required": ["group_id", "user_id"], "properties": { "group_id": { "type": "string" }, "user_id": { "type": "string" } } } }),
         json!({ "name": "groups_remove_user", "description": "Remove a teammate from a channel.", "inputSchema": { "type": "object", "required": ["group_id", "user_id"], "properties": { "group_id": { "type": "string" }, "user_id": { "type": "string" } } } }),
+        json!({ "name": "groups_set_project", "description": "Attach a kanban project to a channel (empty project_id detaches). The board then lives inside the channel. Owner/admin only.", "inputSchema": { "type": "object", "required": ["group_id"], "properties": { "group_id": { "type": "string" }, "project_id": { "type": "string" } } } }),
         json!({ "name": "projects_set_urls", "description": "Set a project's production and/or dev URL (used for the Apps home iframe + custom domains). Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" }, "prod_url": { "type": "string" }, "dev_url": { "type": "string" } } } }),
         json!({ "name": "fly_connect", "description": "Connect the team's own Fly.io account with an API token (validated). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "api_token"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "org": { "type": "string" }, "api_token": { "type": "string" } } } }),
         json!({ "name": "fly_accounts", "description": "List connected Fly.io accounts.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
@@ -536,6 +537,16 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             match platform::group_remove_user(db, &gid, user_id, &uid).await {
                 Ok(true) => mcp_data(id, "User removed.".to_string(), json!({ "removed": true })),
                 Ok(false) => rpc_err(id, -32602, "Channel not found or not allowed."),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "groups_set_project" => {
+            let (gid, pid) = (arg_str(args, "group_id"), arg_str(args, "project_id"));
+            if gid.is_empty() {
+                return Some(rpc_err(id, -32602, "group_id is required."));
+            }
+            match platform::set_group_project(db, &gid, user_id, &pid).await {
+                Ok(g) => mcp_data(id, if pid.trim().is_empty() { "Board detached.".to_string() } else { "Board attached.".to_string() }, json!({ "group": g })),
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }

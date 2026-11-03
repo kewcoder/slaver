@@ -16,6 +16,7 @@ import {
   createOAuthClient,
   createGroup,
   createMeeting,
+  createProject,
   createSchedule,
   createTeam,
   clearTeamProvider,
@@ -28,6 +29,8 @@ import {
   fetchChildren,
   fetchGroupDetail,
   fetchGroups,
+  fetchProject,
+  fetchProjects,
   fetchMeetingDetail,
   fetchMeetings,
   fetchMe,
@@ -47,6 +50,7 @@ import {
   removeMember,
   revokeBotAccess,
   revokeOAuthClient,
+  setGroupProject,
   setGroupVisibility,
   setMemberRole,
   formatUsd,
@@ -78,6 +82,7 @@ import {
   type MeetingDetail,
   type ActivityItem,
   type OAuthClient,
+  type Project,
   type ProviderInfo,
   type PublicGroup,
   type SlaveBot,
@@ -97,8 +102,8 @@ import {
   type Recorder,
 } from "./voice";
 import AppsView from "./AppsView";
+import KanbanBoard from "./KanbanBoard";
 import HarnessView from "./HarnessView";
-import ProjectsView from "./ProjectsView";
 import CodeView from "./CodeView";
 import MarketView from "./MarketView";
 
@@ -390,13 +395,17 @@ interface UiMessage {
 function GroupView({
   groupId,
   bots,
+  teamId,
   onDeleted,
   onVisibilityChanged,
+  onStartRun,
 }: {
   groupId: string;
   bots: SlaveBot[];
+  teamId: string | null;
   onDeleted: () => void;
   onVisibilityChanged: () => void;
+  onStartRun: (opts: { prompt: string; repoId: string; issueId: string; title: string }) => void;
 }) {
   const [detail, setDetail] = useState<GroupDetail | null>(null);
   const [task, setTask] = useState("");
@@ -409,6 +418,11 @@ function GroupView({
   const [addOpen, setAddOpen] = useState(false);
   const [picked, setPicked] = useState<string[]>([]);
   const [pickFilter, setPickFilter] = useState("");
+  const [tab, setTab] = useState<"chat" | "board">("chat");
+  const [boardFull, setBoardFull] = useState(false);
+  const [teamProjects, setTeamProjects] = useState<Project[]>([]);
+  const [newProjName, setNewProjName] = useState("");
+  const [attachBusy, setAttachBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const refresh = useCallback(async () => {
@@ -422,6 +436,12 @@ function GroupView({
   useEffect(() => {
     setDetail(null);
     setError("");
+    setTab("chat");
+    setBoardFull(false);
+    if (localStorage.getItem("group_open_board") === groupId) {
+      localStorage.removeItem("group_open_board");
+      setTab("board");
+    }
     refresh();
   }, [groupId, refresh]);
 
@@ -507,6 +527,119 @@ function GroupView({
     }
   }
 
+  async function loadTeamProjects() {
+    if (!teamId) return;
+    try {
+      const list = await fetchProjects(teamId);
+      setTeamProjects(list.map((p) => p.project));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function attach(pid: string) {
+    if (!pid || attachBusy) return;
+    setAttachBusy(true);
+    setError("");
+    try {
+      setDetail({ ...(detail as GroupDetail), group: await setGroupProject(groupId, pid) });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not attach board (owner/admin only).");
+    } finally {
+      setAttachBusy(false);
+    }
+  }
+
+  async function createAndAttach(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (!teamId || !newProjName.trim() || attachBusy) return;
+    setAttachBusy(true);
+    setError("");
+    try {
+      const p = await createProject(teamId, newProjName.trim());
+      setNewProjName("");
+      setDetail({ ...(detail as GroupDetail), group: await setGroupProject(groupId, p.id) });
+      void loadTeamProjects();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create board.");
+    } finally {
+      setAttachBusy(false);
+    }
+  }
+
+  function openBoard() {
+    setTab("board");
+    if (!detail?.group.project_id) void loadTeamProjects();
+  }
+
+  /** Chat thread + composer. Minimized = composer only (board fullscreen). */
+  function ChatPane({ minimized }: { minimized: boolean }) {
+    if (!detail) return null;
+    return (
+      <>
+        {!minimized && (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {detail.messages.length === 0 && (
+              <p className="py-8 text-center text-zinc-500">No discussion yet. Give the team a task below.</p>
+            )}
+            {detail.messages.map((m) => (
+              <div key={m.id} className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
+                {m.slavebot_id ? (
+                  <BotAvatar bot={({ id: m.slavebot_id, name: m.bot_name ?? "?", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", relay: 1, user_id: "u", team_id: "", avatar_key: bots.find((b) => b.id === m.slavebot_id)?.avatar_key ?? "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" }) as SlaveBot} size="sm" />
+                ) : (
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-600 text-sm font-bold text-white">Y</div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-sm font-bold">{m.slavebot_id ? (m.bot_name ?? "SlaveBot") : "You"}</span>
+                    <span className="text-xs text-zinc-500">{new Date(m.created_at).toLocaleString()}</span>
+                    {m.slavebot_id && (
+                      <button
+                        type="button"
+                        onClick={() => saveReply(m.slavebot_id, m.bot_name, m.content)}
+                        title="Save this reply into the bot's memory"
+                        className="rounded px-1 text-xs text-zinc-500 hover:bg-zinc-700 hover:text-emerald-400"
+                      >
+                        Save to memory
+                      </button>
+                    )}
+                  </div>
+                  <div className="whitespace-pre-wrap break-words text-[15px] text-zinc-200">{m.content}</div>
+                </div>
+              </div>
+            ))}
+            <div ref={bottomRef} />
+          </div>
+        )}
+        {error && <p className="py-1 text-sm text-red-400">{error}</p>}
+        {savedNote && <p className="py-1 text-sm text-emerald-400">{savedNote}</p>}
+        <form onSubmit={sendTask} className="mt-2 flex items-end gap-1 rounded-[28px] border border-zinc-700 bg-[#2b2d31] p-2 pl-4 shadow-lg focus-within:border-zinc-500">
+          <textarea
+            value={task}
+            onChange={(e) => setTask(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendTask();
+              }
+            }}
+            placeholder="Message the group... (every bot replies, each billed)"
+            rows={1}
+            disabled={busy}
+            className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
+          />
+          <label className="flex shrink-0 cursor-pointer items-center gap-1 px-1 text-xs text-zinc-400" title="Also append this message to every member's memory">
+            <input type="checkbox" checked={saveMemory} onChange={(e) => setSaveMemory(e.target.checked)} className="accent-emerald-500" />
+            +memory
+          </label>
+          <button type="submit" disabled={!task.trim() || busy} title="Send" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500">
+            {busy ? <Spinner /> : <ArrowUpIcon />}
+          </button>
+        </form>
+      </>
+    );
+  }
+
   if (!detail) {
     return (
       <div className="mx-auto w-full max-w-3xl space-y-2 p-8" aria-label="Loading group">
@@ -519,7 +652,7 @@ function GroupView({
   const outsiders = bots.filter((b) => !b.archived && !detail.members.some((m) => m.id === b.id));
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col px-4 py-4">
+    <div className="mx-auto flex h-full w-full max-w-6xl flex-col px-4 py-4">
       <div className="mb-3 rounded-lg border border-zinc-800 bg-zinc-900 p-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           {renaming ? (
@@ -667,67 +800,74 @@ function GroupView({
             </div>
           )}
         </div>
+        <div className="mt-2 flex items-center gap-1 border-t border-zinc-800 pt-2">
+          <button type="button" onClick={() => setTab("chat")} className={`rounded-md px-3 py-1 text-xs font-bold ${tab === "chat" ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-200"}`}>
+            💬 Chat
+          </button>
+          <button type="button" onClick={openBoard} className={`rounded-md px-3 py-1 text-xs font-bold ${tab === "board" ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-200"}`}>
+            ▤ Board{detail.group.project_id ? "" : " +"}
+          </button>
+          {tab === "board" && detail.group.project_id && (
+            <button type="button" onClick={() => setBoardFull((v) => !v)} title={boardFull ? "Side-by-side: chat + board" : "Fullscreen board, chat minimized"} className="ml-auto rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200">
+              {boardFull ? "⇲ Side" : "⛶ Full"}
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {detail.messages.length === 0 && (
-          <p className="py-8 text-center text-zinc-500">No discussion yet. Give the team a task below.</p>
-        )}
-        {detail.messages.map((m) => (
-          <div key={m.id} className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
-            {m.slavebot_id ? (
-              <BotAvatar bot={({ id: m.slavebot_id, name: m.bot_name ?? "?", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", relay: 1, user_id: "u", team_id: "", avatar_key: bots.find((b) => b.id === m.slavebot_id)?.avatar_key ?? "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" }) as SlaveBot} size="sm" />
-            ) : (
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-600 text-sm font-bold text-white">Y</div>
-            )}
-            <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-2">
-                <span className="text-sm font-bold">{m.slavebot_id ? (m.bot_name ?? "SlaveBot") : "You"}</span>
-                <span className="text-xs text-zinc-500">{new Date(m.created_at).toLocaleString()}</span>
-                {m.slavebot_id && (
-                  <button
-                    type="button"
-                    onClick={() => saveReply(m.slavebot_id, m.bot_name, m.content)}
-                    title="Save this reply into the bot's memory"
-                    className="rounded px-1 text-xs text-zinc-500 hover:bg-zinc-700 hover:text-emerald-400"
-                  >
-                    Save to memory
-                  </button>
-                )}
-              </div>
-              <div className="whitespace-pre-wrap break-words text-[15px] text-zinc-200">{m.content}</div>
+      {tab === "chat" ? (
+        <ChatPane minimized={false} />
+      ) : !detail.group.project_id ? (
+        <div className="rounded-xl border border-dashed border-zinc-700 bg-zinc-900/60 p-8 text-center">
+          <div className="text-2xl">▤</div>
+          <h3 className="mt-2 font-bold text-zinc-100">Channel ini belum punya board</h3>
+          <p className="mx-auto mt-1 max-w-md text-sm text-zinc-400">Tempel project yang sudah ada, atau buat board baru — task otomatis kefilter channel ini.</p>
+          {teamProjects.length > 0 && (
+            <div className="mx-auto mt-3 flex max-w-md gap-2">
+              <select
+                value=""
+                onChange={(e) => attach(e.target.value)}
+                disabled={attachBusy}
+                className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none disabled:opacity-40"
+              >
+                <option value="">Pilih project…</option>
+                {teamProjects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
             </div>
+          )}
+          <form onSubmit={createAndAttach} className="mx-auto mt-2 flex max-w-md gap-2">
+            <input
+              value={newProjName}
+              onChange={(e) => setNewProjName(e.target.value)}
+              placeholder="atau nama board baru…"
+              className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
+            />
+            <button type="submit" disabled={!newProjName.trim() || attachBusy} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
+              {attachBusy ? "…" : "Buat"}
+            </button>
+          </form>
+        </div>
+      ) : boardFull ? (
+        <>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <KanbanBoard projectId={detail.group.project_id} teamId={teamId} bots={bots} onStartRun={onStartRun} />
           </div>
-        ))}
-        <div ref={bottomRef} />
-      </div>
-
-      {error && <p className="py-1 text-sm text-red-400">{error}</p>}
-      {savedNote && <p className="py-1 text-sm text-emerald-400">{savedNote}</p>}
-
-      <form onSubmit={sendTask} className="mt-2 flex items-end gap-1 rounded-[28px] border border-zinc-700 bg-[#2b2d31] p-2 pl-4 shadow-lg focus-within:border-zinc-500">
-        <textarea
-          value={task}
-          onChange={(e) => setTask(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              sendTask();
-            }
-          }}
-          placeholder="Message the group... (every bot replies, each billed)"
-          rows={1}
-          disabled={busy}
-          className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
-        />
-        <label className="flex shrink-0 cursor-pointer items-center gap-1 px-1 text-xs text-zinc-400" title="Also append this message to every member's memory">
-          <input type="checkbox" checked={saveMemory} onChange={(e) => setSaveMemory(e.target.checked)} className="accent-emerald-500" />
-          +memory
-        </label>
-        <button type="submit" disabled={!task.trim() || busy} title="Send" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500">
-          {busy ? <Spinner /> : <ArrowUpIcon />}
-        </button>
-      </form>
+          <div className="border-t border-zinc-800 pt-1">
+            <ChatPane minimized />
+          </div>
+        </>
+      ) : (
+        <div className="flex min-h-0 flex-1 gap-3">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <ChatPane minimized={false} />
+          </div>
+          <div className="hidden w-[420px] shrink-0 overflow-y-auto border-l border-zinc-800 pl-3 md:block">
+            <KanbanBoard projectId={detail.group.project_id} teamId={teamId} bots={bots} onStartRun={onStartRun} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2338,7 +2478,7 @@ export default function App() {
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
-  const [view, setView] = useState<"apps" | "chat" | "group" | "meeting" | "bot" | "settings" | "harness" | "projects" | "code" | "market">("apps");
+  const [view, setView] = useState<"apps" | "chat" | "group" | "meeting" | "bot" | "settings" | "harness" | "code" | "market">("apps");
   const [bots, setBots] = useState<SlaveBot[]>([]);
   const [botId, setBotId] = useState<string | null>(null);
   const [bot, setBot] = useState<SlaveBot | null>(null);
@@ -2557,6 +2697,26 @@ export default function App() {
       await openGroup(created.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create group.");
+    }
+  }
+
+  /** Boards live in channels: open the channel holding this project,
+      creating + attaching one when none exists yet. */
+  async function openProjectChannel(pid: string) {
+    setError("");
+    try {
+      const gs = await fetchGroups();
+      let g = gs.find((x) => x.project_id === pid);
+      if (!g) {
+        const p = await fetchProject(pid);
+        g = await createGroup(p.name, teamId ?? undefined);
+        g = await setGroupProject(g.id, pid);
+      }
+      await refreshGroups();
+      localStorage.setItem("group_open_board", g.id);
+      await openGroup(g.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not open board.");
     }
   }
 
@@ -2855,7 +3015,6 @@ export default function App() {
           <button type="button" onClick={() => setView("apps")} className={topBtn(view === "apps")}><span aria-hidden="true">⌂</span> Apps</button>
           <button type="button" onClick={() => setView("chat")} className={topBtn(view === "chat" || view === "group" || view === "bot" || view === "meeting")}><span aria-hidden="true">💬</span> Chat</button>
           <button type="button" onClick={() => setView("harness")} className={topBtn(view === "harness")}><span aria-hidden="true">⌁</span> Harness</button>
-          <button type="button" onClick={() => setView("projects")} className={topBtn(view === "projects")}><span aria-hidden="true">▤</span> Projects</button>
           <button type="button" onClick={() => setView("code")} className={topBtn(view === "code")}><span aria-hidden="true">{"</>"}</span> Code</button>
           <button type="button" onClick={() => setView("market")} className={topBtn(view === "market")}><span aria-hidden="true">◈</span> Market</button>
           <button type="button" onClick={() => setView("settings")} className={topBtn(view === "settings")}><span aria-hidden="true">⚙</span> Settings</button>
@@ -3010,8 +3169,6 @@ export default function App() {
               <span className="px-1 font-semibold">Settings</span>
             ) : view === "harness" ? (
               <span className="px-1 font-semibold">Harness</span>
-            ) : view === "projects" ? (
-              <span className="px-1 font-semibold">Projects</span>
             ) : view === "code" ? (
               <span className="px-1 font-semibold">Code</span>
             ) : view === "market" ? (
@@ -3038,9 +3195,9 @@ export default function App() {
           <main className="flex-1 overflow-y-auto">
             <AppsView
               teamId={teamId}
-              onOpenProject={(pid) => { localStorage.setItem("projects_open", pid); setView("projects"); }}
+              onOpenProject={(pid) => openProjectChannel(pid)}
               onGoMarket={() => setView("market")}
-              onGoProjects={() => setView("projects")}
+              onGoChat={() => setView("chat")}
             />
           </main>
         ) : view === "settings" ? (
@@ -3062,17 +3219,6 @@ export default function App() {
           </main>
         ) : view === "harness" ? (
           <main className="flex min-h-0 flex-1 flex-col overflow-hidden"><HarnessView teamId={teamId} /></main>
-        ) : view === "projects" ? (
-          <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <ProjectsView
-              teamId={teamId}
-              bots={bots}
-              onStartRun={(opts) => {
-                localStorage.setItem("harness_prefill", JSON.stringify({ prompt: opts.prompt, repoId: opts.repoId, issueId: opts.issueId }));
-                setView("harness");
-              }}
-            />
-          </main>
         ) : view === "code" ? (
           <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <CodeView teamId={teamId} teamRole={teams.find((t) => t.id === teamId)?.role ?? ""} />
@@ -3081,7 +3227,7 @@ export default function App() {
           <main className="flex-1 overflow-y-auto">
             <MarketView
               teamId={teamId}
-              onOpenProject={(pid) => { localStorage.setItem("projects_open", pid); setView("projects"); }}
+              onOpenProject={(pid) => openProjectChannel(pid)}
               onOpenSupport={async (repoId) => {
                 const g = await fetchSupportGroup(repoId);
                 await openGroup(g.id);
@@ -3093,6 +3239,7 @@ export default function App() {
             <GroupView
               groupId={groupId}
               bots={bots}
+              teamId={teamId}
               onDeleted={async () => {
                 setGroupId(null);
                 await refreshGroups();
@@ -3101,6 +3248,10 @@ export default function App() {
               onVisibilityChanged={() => {
                 fetchPublicGroups().then(setSupportGroups).catch(() => {});
                 void refreshGroups();
+              }}
+              onStartRun={(opts) => {
+                localStorage.setItem("harness_prefill", JSON.stringify({ prompt: opts.prompt, repoId: opts.repoId, issueId: opts.issueId }));
+                setView("harness");
               }}
             />
           </main>

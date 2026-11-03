@@ -29,7 +29,7 @@
 
 ### 1.1 Top bar (selalu terlihat)
 - Kiri: hamburger (mobile saja) + logo **Slaver**.
-- Tengah (scroll horizontal di mobile): **Apps ⌂ · Chat 💬 · Harness ⌁ · Projects ▤ · Code </> · Market ◈ · Settings ⚙**.
+- Tengah (scroll horizontal di mobile): **Apps ⌂ · Chat 💬 · Harness ⌁ · Code </> · Market ◈ · Settings ⚙**. Tidak ada menu Projects — kanban hidup di dalam channel (§4.3).
 - Kanan: avatar huruf depan (tooltip = email). Tidak ada badge kredit.
 - Aturan aktif: Chat aktif untuk DM/channel/meeting/bot-settings; tiap menu lain aktif di view-nya.
 
@@ -110,11 +110,16 @@ Sidebar memilih target; main view menampilkan thread. Sub-view: DM, channel, mee
   - ada teks / streaming → putih dengan panah ↑ (kirim; disabled saat streaming).
 - Error chat: teks merah di atas composer. Tanpa key di team → error jelas "tambah key di Teams settings" (tidak ada lagi error kredit).
 
-### 4.3 Group channel (termasuk public support)
+### 4.3 Group channel (termasuk public support + board)
 - Header internal: nama (klik = rename inline), badge **PUBLIC SUPPORT** (hijau, bila publik), tombol Rename / **Make public|private** / Delete.
-- Daftar member = avatar (bot × hapus; user) + "+ Add members" (bot) / tambah user ke channel campuran.
+- Tab **[💬 Chat | ▤ Board]**: Chat = thread + composer seperti biasa. Board = kanban project yang ditempel ke channel ini (selalu terfilter 1 project itu).
+- **Attach board**: channel tanpa project → panel "Channel ini belum punya board": pilih project team (select) atau buat board baru (input nama + Buat → project dibuat + langsung ditempel). Hanya owner/admin.
+- **Mode Side** (default): chat kiri + board kanan (panel 400px, kolom kanban scroll horizontal). Cocok untuk diskusi sambil lihat task.
+- **Mode Full** (⛶): board fullscreen, chat mengecil jadi composer saja di bawah. Toggle ⇲ kembali ke Side.
+- Isi board = `KanbanBoard` penuh: progress done/total, repo tertaut (select ganti), 5 kolom drag-drop (Backlog/Todo/In Progress/In Review/Done), kartu (judul + priority + assignee), form New issue (title + acceptance criteria + assignee bot), panel Issue detail (assign, pindah kolom, **▶ Start agent run** → prefill prompt + repo + issue → Harness).
+- Buka board dari luar channel: tombol **Board ▤** di Apps dan **Open board ▤** di Marketplace → buka channel pemilik project (bila belum ada channel, dibuatkan otomatis bernama sama + ditempel) langsung di tab Board.
 - Checkbox `+memory`: tiap pesan juga disimpan ke memory semua member.
-- **Support channel**: user dari team manapun bisa baca + posting; semua bot member membalas (dibiayai key team pemilik). Pesan customer tidak pernah hilang walau provider error.
+- **Support channel**: user dari team manapun bisa baca + posting; semua member bot membalas (dibiayai key team pemilik). Pesan customer tidak pernah hilang walau provider error.
 - Pesan bot bisa "Save to memory".
 
 ### 4.4 Meeting
@@ -133,23 +138,20 @@ Sidebar memilih target; main view menampilkan thread. Sub-view: DM, channel, mee
 ## 5. Harness (⌁ — agent coding runs)
 
 - Form: model (default `glm-5.3-flash`, tersimpan), textarea prompt, tombol "Run in sandbox" / "Stop".
-- Banner konteks bila datang dari Projects: issue + repo tertaut (dengan tombol unlink).
+- Banner konteks bila datang dari board channel: issue + repo tertaut (dengan tombol unlink).
 - Transcript terminal: prompt → step dividers → teks agent → `$ tool + args` (hijau) → hasil (collapsible) → "✓ Done · N steps" / error merah.
 - Past runs: daftar 20 terakhir (status dot) → klik = muat transcript tersimpan.
 - Batasan v1 (jujur di UI): model harus support function calling via chat/completions (daftar contoh di placeholder); model responses-only (keluarga Spark) tidak bisa dipakai harness.
 
 ---
 
-## 6. Projects (▤ — kanban ala Linear)
+## 6. Projects (dihapus sebagai menu — pindah ke channel)
 
-- Bar + selector project + "New project" inline + progress (`done/total`, bar %, persen).
-- Info repo tertaut (select ganti) + deskripsi.
-- Board 5 kolom: Backlog, Todo, In Progress, In Review, Done (drag-drop antar kolom + jumlah per kolom).
-- Kartu: judul + badge priority + assignee (`◈ nama` / unassigned). Klik = panel detail.
-- Form "New issue": title + body (acceptance criteria) + assignee select.
-- Panel detail: body, assignee select, tombol pindah kolom, tombol hijau **"▶ Start agent run"** (prefill prompt + repo + issue → pindah ke Harness).
-- Aturan status otomatis: run dimulai → In Progress; run selesai → In Review; approve manual → Done.
-- URL deploy project (prod/dev) diedit dari **Apps → Set URL** (satu sumber kebenaran).
+- Tidak ada lagi top bar **Projects**. Kanban hidup di **Channel → tab Board** (§4.3): satu channel pegang satu project (`groups.project_id`, via tool `groups_set_project`, owner/admin only), task otomatis terfilter channel itu.
+- Semua kemampuan kanban lama tetap ada di komponen `KanbanBoard` yang dipakai di dalam channel: 5 kolom drag-drop, kartu (judul + priority + assignee), form New issue, panel Issue detail + **▶ Start agent run** (prefill → Harness), repo tertaut, auto-status In Progress/In Review.
+- Project dibuat dari: Marketplace (otomatis saat beli), channel ("Buat board baru" di panel attach), atau tool MCP `projects_create`.
+- Membuka project dari Apps (**Board ▤**) / Marketplace (**Open board ▤**) → buka channel pemiliknya langsung di tab Board (dibuatkan otomatis bila belum ada).
+- URL deploy project (prod/dev) tetap diedit di **Apps → Set URL** (satu sumber kebenaran).
 
 ---
 
@@ -165,10 +167,10 @@ Sidebar memilih target; main view menampilkan thread. Sub-view: DM, channel, mee
 
 ## 8. Marketplace (◈)
 
-- Header + tagline buy-once. **Template cards**: nama, deskripsi, badge OWNED / BUY ONCE, tombol **💬 Support** (buka support channel template; dibuatkan otomatis saat butuh oleh owner), tombol **Buy & fork** atau **Open project** bila sudah punya.
+- Header + tagline buy-once. **Template cards**: nama, deskripsi, badge OWNED / BUY ONCE, tombol **💬 Support** (buka support channel template; dibuatkan otomatis saat butuh oleh owner), tombol **Buy & fork** atau **Open board ▤** bila sudah punya.
 - Catatan kecil: "Includes 12 months updates + support".
 - **My licenses**: list lisensi (repo short-id, kind, status, support-until, provider).
-- Flow beli: klik → checkout HitPay (atau mock instan bila tanpa API key) → bayar di tab HitPay → webhook + polling verifikasi status server-side → license perpetual + support 12 bulan + fork repo + project "X (custom)" → lompat ke Projects. Kembali dari HitPay (`?payment=`): aktivasi otomatis bila sudah lunas. Webhook tanpa HMAC valid / payment gagal tidak pernah membuat lisensi.
+- Flow beli: klik → checkout HitPay (atau mock instan bila tanpa API key) → bayar di tab HitPay → webhook + polling verifikasi status server-side → license perpetual + support 12 bulan + fork repo + project "X (custom)" → lompat ke Apps. Kembali dari HitPay (`?payment=`): aktivasi otomatis bila sudah lunas. Webhook tanpa HMAC valid / payment gagal tidak pernah membuat lisensi.
 
 ---
 
@@ -246,17 +248,17 @@ Satu layar scroll, kartu per seksi:
 
 ## 13. Inventaris layar (checklist buat UI designer)
 
-Topbar (7): Apps, Chat, Harness, Projects, Code, Market, Settings (+ Voice toggle di header main).
+Topbar (6): Apps, Chat, Harness, Code, Market, Settings (+ Voice toggle di header main).
 Sidebar (4 section + search): DMs (bot + user), Channels, Meetings, Support.
 Auth (login prefill demo + register 2 tab) + Onboarding (template picker) + Settings (5 kartu: Profile, New slaveBot, Teams, Fly.io, Developer — tanpa Usage).
-Home = Apps: grid kartu + preview iframe (PROD/DEV) + Set URL + Open full.
-Chat: DM empty ×2, thread, composer pill, GroupView (+public badge), MeetingView (+form), BotView (identity/schedules/team/recaps).
-Harness: form + transcript + history + prefill banner.
-Projects: board 5 kolom, kartu, form issue, panel detail + Start agent run.
+Home = Apps: grid kartu + preview iframe (PROD/DEV) + Set URL + Open full + Board ▤.
+Chat: DM empty ×2, thread, composer pill, GroupView (tab Chat|Board + public badge + mode side/full), MeetingView (+form), BotView (identity/schedules/team/recaps).
+Harness: form + transcript + history + prefill banner (dari board channel).
+Board (di channel): attach/select/create project, 5 kolom drag-drop, kartu, form issue, issue detail + Start agent run.
 Code: list + detail (branches/log/diff/clone info) + deploy VPS.
-Marketplace: katalog + licenses + support button + HitPay flow.
+Marketplace: katalog + licenses + support button + HitPay flow + Open board ▤.
 OAuth: consent screen + login-then-consent (2 layar).
-Dialog/confirm: delete group/meeting/team/schedule/machine, remove key, archive bot.
+Dialog/confirm: delete group/meeting/team/schedule/machine, board detach, remove key, archive bot.
 States wajib per layar: loading skeleton, empty + CTA, error + retry.
 
 ---

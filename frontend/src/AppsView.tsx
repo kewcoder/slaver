@@ -16,12 +16,12 @@ export default function AppsView({
   teamId,
   onOpenProject,
   onGoMarket,
-  onGoProjects,
+  onGoChat,
 }: {
   teamId: string | null;
   onOpenProject: (projectId: string) => void;
   onGoMarket: () => void;
-  onGoProjects: () => void;
+  onGoChat: () => void;
 }) {
   const [apps, setApps] = useState<AppEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -100,10 +100,10 @@ export default function AppsView({
         <div className="rounded-xl border border-dashed border-zinc-700 bg-zinc-900/60 p-10 text-center">
           <div className="text-3xl">◈</div>
           <h3 className="mt-2 font-bold text-zinc-100">Belum ada aplikasi</h3>
-          <p className="mx-auto mt-1 max-w-md text-sm text-zinc-400">Beli template di Marketplace (otomatis jadi aplikasi), atau buat project kosong lalu hubungkan URL deploy-nya.</p>
+          <p className="mx-auto mt-1 max-w-md text-sm text-zinc-400">Beli template di Marketplace (otomatis jadi aplikasi), atau buat board di channel lalu hubungkan URL deploy-nya.</p>
           <div className="mt-4 flex justify-center gap-2">
             <button type="button" onClick={onGoMarket} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500">Lihat Marketplace</button>
-            <button type="button" onClick={onGoProjects} className="rounded-md border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">Buat project</button>
+            <button type="button" onClick={onGoChat} className="rounded-md border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">Buka channel</button>
           </div>
         </div>
       ) : (
@@ -156,7 +156,7 @@ export default function AppsView({
             )}
             <div className="ml-auto flex items-center gap-2">
               <button type="button" onClick={() => onOpenProject(selected.id)} className="rounded-md px-2.5 py-1 text-xs font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-                Project ▤
+                Board ▤
               </button>
               <button type="button" onClick={() => (editing ? setEditing(false) : startEdit())} className="rounded-md px-2.5 py-1 text-xs font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
                 {editing ? "Cancel" : "Set URL"}

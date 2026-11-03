@@ -439,6 +439,7 @@ pub struct GroupRow {
     pub name: String,
     pub is_public: i64,
     pub repo_id: String,
+    pub project_id: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -478,7 +479,7 @@ pub async fn create_group(db: &Db, user_id: &str, team_id: &str, name: &str) -> 
 
 pub async fn get_group(db: &Db, user_id: &str, id: &str) -> Result<Option<GroupRow>> {
     let row: Option<GroupRow> = db
-        .prepare("SELECT id, team_id, name, is_public, repo_id, created_at, updated_at FROM groups WHERE id = ?")
+        .prepare("SELECT id, team_id, name, is_public, repo_id, project_id, created_at, updated_at FROM groups WHERE id = ?")
         .bind(&[v_text(id)])?
         .first(None)
         .await?;
@@ -486,7 +487,7 @@ pub async fn get_group(db: &Db, user_id: &str, id: &str) -> Result<Option<GroupR
         Some(g) if g.team_id.is_empty() => {
             // Legacy group: creator only. Find the creator via user scoping.
             let mine: Option<GroupRow> = db
-                .prepare("SELECT id, team_id, name, is_public, repo_id, created_at, updated_at FROM groups WHERE id = ? AND user_id = ?")
+                .prepare("SELECT id, team_id, name, is_public, repo_id, project_id, created_at, updated_at FROM groups WHERE id = ? AND user_id = ?")
                 .bind(&[v_text(id), v_text(user_id)])?
                 .first(None)
                 .await?;
@@ -523,7 +524,7 @@ pub async fn set_group_visibility(db: &Db, user_id: &str, id: &str, public: bool
     };
     if group.team_id.is_empty() {
         let mine: Option<GroupRow> = db
-            .prepare("SELECT id, team_id, name, is_public, repo_id, created_at, updated_at FROM groups WHERE id = ? AND user_id = ?")
+            .prepare("SELECT id, team_id, name, is_public, repo_id, project_id, created_at, updated_at FROM groups WHERE id = ? AND user_id = ?")
             .bind(&[v_text(id), v_text(user_id)])?
             .first(None)
             .await?;
@@ -544,7 +545,7 @@ pub async fn set_group_visibility(db: &Db, user_id: &str, id: &str, public: bool
 }
 
 async fn get_group_any(id: &str, db: &Db) -> Result<Option<GroupRow>> {
-    db.prepare("SELECT id, team_id, name, is_public, repo_id, created_at, updated_at FROM groups WHERE id = ?")
+    db.prepare("SELECT id, team_id, name, is_public, repo_id, project_id, created_at, updated_at FROM groups WHERE id = ?")
         .bind(&[v_text(id)])?
         .first(None)
         .await
@@ -552,7 +553,7 @@ async fn get_group_any(id: &str, db: &Db) -> Result<Option<GroupRow>> {
 
 pub async fn list_groups(db: &Db, user_id: &str) -> Result<Vec<GroupRow>> {
     db.prepare(
-        "SELECT g.id, g.team_id, g.name, g.is_public, g.repo_id, g.created_at, g.updated_at FROM groups g \
+        "SELECT g.id, g.team_id, g.name, g.is_public, g.repo_id, g.project_id, g.created_at, g.updated_at FROM groups g \
          WHERE (g.team_id = '' AND g.user_id = ?) \
          OR EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = g.team_id AND m.user_id = ?) \
          ORDER BY g.updated_at DESC LIMIT 100",
