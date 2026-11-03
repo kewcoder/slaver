@@ -117,6 +117,10 @@ pub struct StartRun {
     team_id: String,
     model: String,
     prompt: String,
+    #[serde(default)]
+    issue_id: Option<String>,
+    #[serde(default)]
+    repo_id: Option<String>,
 }
 
 async fn emit(
@@ -190,6 +194,8 @@ async fn run_agent(
     team_id: String,
     model: String,
     prompt: String,
+    issue_id: String,
+    repo_id: String,
     tx: mpsc::Sender<Result<Event, Infallible>>,
 ) {
     let db = &state.db;
@@ -199,6 +205,58 @@ async fn run_agent(
         emit(&tx, &run_id, db, "error", "", &format!("Could not prepare workspace: {e}")).await;
         let _ = store::set_run_status(db, &run_id, "error").await;
         return;
+    }
+
+    // Link a repo: clone the bare repo into the workspace on an issue branch.
+    let mut branch = String::new();
+    let mut repo_note = String::new();
+    if !repo_id.trim().is_empty() {
+        match crate::platform::get_repo(db, &user_id, repo_id.trim()).await {
+            Ok(Some(repo)) => {
+                let bare = crate::platform::bare_repo_path(
+                    &state.git_root.to_string_lossy(),
+                    &repo.id,
+                );
+                let dest = ws.join("repo");
+                let clone_out = tokio::process::Command::new("git")
+                    .arg("clone")
+                    .arg(&bare)
+                    .arg(&dest)
+                    .output()
+                    .await;
+                match clone_out {
+                    Ok(o) if o.status.success() => {
+                        if !issue_id.trim().is_empty() {
+                            branch = format!("issue-{}", &issue_id.replace('-', "")[..8.min(issue_id.len())]);
+                            let _ = tokio::process::Command::new("git")
+                                .arg("-C")
+                                .arg(&dest)
+                                .arg("checkout")
+                                .arg("-B")
+                                .arg(&branch)
+                                .output()
+                                .await;
+                        }
+                        if branch.is_empty() {
+                            branch = "work".to_string();
+                        }
+                        let _ = store::set_run_repo(db, &run_id, &issue_id, &repo.id, &branch).await;
+                        repo_note = format!(
+                            "\n\nRepository \"{}\" is cloned at /workspace/repo on branch {branch}. Read code there, make edits there, commit with git when a unit of work is done.",
+                            repo.name
+                        );
+                    }
+                    _ => {
+                        emit(&tx, &run_id, db, "error", "", &"Could not clone the linked repo; continuing without it.".to_string()).await;
+                    }
+                }
+            }
+            _ => {
+                emit(&tx, &run_id, db, "error", "", &"Linked repo not found or not visible; continuing without it.".to_string()).await;
+            }
+        }
+    } else if !issue_id.trim().is_empty() {
+        let _ = store::set_run_repo(db, &run_id, &issue_id, "", "").await;
     }
 
     let prov = match provider::provider_for(db, &team_id).await {
@@ -219,13 +277,14 @@ async fn run_agent(
     emit(&tx, &run_id, db, "run", "", &json!({ "run_id": run_id, "model": model }).to_string()).await;
     let _ = store::insert_run_step(db, &run_id, "prompt", "", &prompt).await;
 
+    let full_prompt = if repo_note.is_empty() { prompt.clone() } else { format!("{prompt}{repo_note}") };
     let mut chat_msgs = vec![
         ChatMessage { role: "system".to_string(), content: SYSTEM_PROMPT.to_string(), ..Default::default() },
-        ChatMessage { role: "user".to_string(), content: prompt.clone(), ..Default::default() },
+        ChatMessage { role: "user".to_string(), content: full_prompt.clone(), ..Default::default() },
     ];
     let mut resp_input = json!([
         { "role": "system", "content": SYSTEM_PROMPT },
-        { "role": "user", "content": prompt },
+        { "role": "user", "content": full_prompt },
     ]);
 
     let mut total_prompt = 0u64;
@@ -354,6 +413,14 @@ async fn run_agent(
     )
     .await;
     let _ = store::set_run_status(db, &run_id, "done").await;
+    if !issue_id.trim().is_empty() {
+        // Finished work goes to review.
+        if let Ok(Some(issue)) = crate::platform::get_issue(db, &user_id, &issue_id).await {
+            if issue.state == "in_progress" {
+                let _ = crate::platform::set_issue_state(db, &user_id, &issue_id, "in_review").await;
+            }
+        }
+    }
     emit(
         &tx,
         &run_id,
@@ -425,6 +492,16 @@ pub async fn start_run(
     if store::membership(&state.db, &team_id, &user_id).await.unwrap_or(None).is_none() {
         return sse_error("You are not on that team.".to_string());
     }
+    let issue_id = req.issue_id.as_deref().unwrap_or("").trim().to_string();
+    let repo_id = req.repo_id.as_deref().unwrap_or("").trim().to_string();
+    if !issue_id.is_empty() {
+        // Linked issue moves to in_progress (from backlog/todo only).
+        if let Ok(Some(issue)) = crate::platform::get_issue(&state.db, &user_id, &issue_id).await {
+            if issue.state == "backlog" || issue.state == "todo" {
+                let _ = crate::platform::set_issue_state(&state.db, &user_id, &issue_id, "in_progress").await;
+            }
+        }
+    }
     let run_id = uuid();
     if store::insert_run(&state.db, &run_id, &user_id, &team_id, &model, &prompt)
         .await
@@ -433,8 +510,7 @@ pub async fn start_run(
         return sse_error("Could not create run.".to_string());
     }
     let (tx, rx) = mpsc::channel(32);
-    let st = state.clone();
-    tokio::spawn(run_agent(st, user_id, run_id, team_id, model, prompt, tx));
+    tokio::spawn(run_agent(state, user_id, run_id, team_id, model, prompt, issue_id, repo_id, tx));
     Sse::new(ReceiverStream::new(rx)).keep_alive(KeepAlive::default())
 }
 

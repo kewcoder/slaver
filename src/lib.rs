@@ -2,13 +2,19 @@ pub mod auth;
 pub mod avatar;
 pub mod chat;
 pub mod db;
+pub mod deploy;
+pub mod git;
+pub mod git_http;
 pub mod group;
 pub mod harness;
 pub mod huddle;
 pub mod mcp;
+pub mod platform;
+pub mod platform_api;
 pub mod pricing;
 pub mod provider;
 pub mod schedule;
+pub mod seed;
 pub mod store;
 pub mod summarize;
 pub mod teams;
@@ -24,4 +30,6 @@ pub struct AppState {
     pub jwt_secret: String,
     pub avatar_dir: PathBuf,
     pub workspace_dir: PathBuf,
+    pub git_root: PathBuf,
+    pub frontend_dir: PathBuf,
 }

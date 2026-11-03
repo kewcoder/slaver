@@ -82,6 +82,11 @@ pub fn bearer_sub_from_header(secret: &str, auth: Option<&str>) -> Option<String
     verify_jwt(secret, token.trim())
 }
 
+/// Returns the user id from a raw JWT (already stripped of any scheme).
+pub fn verify_bearer_token(secret: &str, token: &str) -> Option<String> {
+    verify_jwt(secret, token.trim())
+}
+
 fn valid_email(s: &str) -> bool {
     if s.contains(' ') || s.len() > 254 {
         return false;

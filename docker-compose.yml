@@ -9,7 +9,9 @@ services:
       DB_PATH: "/data/slaver.db"
       AVATAR_DIR: "/data/avatars"
       WORK_DIR: "/data/workspaces"
+      GIT_ROOT: "/data/git"
       MIGRATIONS_DIR: "./migrations"
+      SEEDS_DIR: "./seeds"
       FRONTEND_DIR: "./frontend/dist"
       JWT_SECRET: "${JWT_SECRET:?set JWT_SECRET in .env}"
     volumes:

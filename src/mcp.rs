@@ -7,7 +7,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-use crate::{auth, chat, db::Db, provider, store, util, AppState};
+use crate::{auth, chat, provider, store, AppState};
 
 
 fn rpc_ok(id: Value, result: Value) -> Response {
@@ -276,7 +276,11 @@ pub async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes)
             return (StatusCode::ACCEPTED, "").into_response();
         }
         "ping" => rpc_ok(id, json!({})),
-        "tools/list" => rpc_ok(id, json!({ "tools": [auth_register_tool_def(), auth_login_tool_def(), auth_me_tool_def(), models_tool_def(), chat_tool_def(), chat_send_tool_def(), bots_list_tool_def(), bots_create_tool_def(), bots_get_tool_def(), bots_update_tool_def(), bots_children_tool_def(), bots_transfer_tool_def(), bots_append_memory_tool_def(), bots_set_avatar_tool_def(), bots_get_avatar_tool_def(), bot_archive_tool_def(), bot_pin_tool_def(), bot_set_role_tool_def(), bot_spawn_tool_def(), bot_send_tool_def(), groups_list_tool_def(), groups_create_tool_def(), groups_get_tool_def(), groups_rename_tool_def(), groups_delete_tool_def(), groups_add_member_tool_def(), groups_remove_member_tool_def(), groups_chat_tool_def(), groups_broadcast_tool_def(), huddle_list_tool_def(), huddle_get_tool_def(), huddle_start_tool_def(), huddle_chat_tool_def(), huddle_delete_tool_def(), schedules_update_tool_def(), schedule_create_tool_def(), schedule_list_tool_def(), schedule_delete_tool_def(), summaries_get_tool_def(), summaries_run_tool_def(), team_create_tool_def(), team_list_tool_def(), teams_get_tool_def(), teams_delete_tool_def(), team_invite_tool_def(), teams_set_member_tool_def(), teams_remove_member_tool_def(), teams_set_provider_tool_def(), teams_test_provider_tool_def(), teams_clear_provider_tool_def(), teams_activity_tool_def(), usage_get_tool_def(), harness_config_tool_def(), voice_transcribe_tool_def(), voice_speak_tool_def()] })),
+        "tools/list" => {
+            let mut tools = vec![auth_register_tool_def(), auth_login_tool_def(), auth_me_tool_def(), models_tool_def(), chat_tool_def(), chat_send_tool_def(), bots_list_tool_def(), bots_create_tool_def(), bots_get_tool_def(), bots_update_tool_def(), bots_children_tool_def(), bots_transfer_tool_def(), bots_append_memory_tool_def(), bots_set_avatar_tool_def(), bots_get_avatar_tool_def(), bot_archive_tool_def(), bot_pin_tool_def(), bot_set_role_tool_def(), bot_spawn_tool_def(), bot_send_tool_def(), groups_list_tool_def(), groups_create_tool_def(), groups_get_tool_def(), groups_rename_tool_def(), groups_delete_tool_def(), groups_add_member_tool_def(), groups_remove_member_tool_def(), groups_chat_tool_def(), groups_broadcast_tool_def(), huddle_list_tool_def(), huddle_get_tool_def(), huddle_start_tool_def(), huddle_chat_tool_def(), huddle_delete_tool_def(), schedules_update_tool_def(), schedule_create_tool_def(), schedule_list_tool_def(), schedule_delete_tool_def(), summaries_get_tool_def(), summaries_run_tool_def(), team_create_tool_def(), team_list_tool_def(), teams_get_tool_def(), teams_delete_tool_def(), team_invite_tool_def(), teams_set_member_tool_def(), teams_remove_member_tool_def(), teams_set_provider_tool_def(), teams_test_provider_tool_def(), teams_clear_provider_tool_def(), teams_activity_tool_def(), usage_get_tool_def(), harness_config_tool_def(), voice_transcribe_tool_def(), voice_speak_tool_def()];
+            tools.extend(crate::platform_api::tool_defs());
+            rpc_ok(id, json!({ "tools": tools }))
+        },
         "tools/call" => {
             let params = body.get("params").cloned().unwrap_or(Value::Null);
             let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -364,7 +368,10 @@ pub async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes)
                 "harness_config" => call_harness_config(id, &state),
                 "voice_transcribe" => call_voice_transcribe(id, &state, &user_id, &args).await,
                 "voice_speak" => call_voice_speak(id, &state, &user_id, &args).await,
-                _ => rpc_err(id, -32602, "Unknown tool. Run tools/list for the current catalogue."),
+                _ => match crate::platform_api::dispatch(&state, &user_id, name, id.clone(), &args).await {
+                    Some(r) => r,
+                    None => rpc_err(id, -32602, "Unknown tool. Run tools/list for the current catalogue."),
+                },
             }
         }
         "" => rpc_err(id, -32600, "Invalid Request: missing method field."),

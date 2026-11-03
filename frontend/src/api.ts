@@ -678,6 +678,180 @@ export function formatUsd(n: number): string {
   return `$${n.toFixed(n < 0.01 && n > 0 ? 6 : 4)}`;
 }
 
+// ---------- platform: projects, kanban, git, marketplace, vps ----------
+
+export interface Project {
+  id: string;
+  team_id: string;
+  repo_id: string;
+  name: string;
+  description: string;
+  status: string;
+  created_at: string;
+}
+
+export interface ProjectStats {
+  total: number;
+  done: number;
+  in_progress: number;
+}
+
+export interface Issue {
+  id: string;
+  project_id: string;
+  title: string;
+  body: string;
+  state: string;
+  assignee_bot_id: string;
+  assignee_name: string | null;
+  priority: string;
+  labels: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Repo {
+  id: string;
+  team_id: string;
+  name: string;
+  description: string;
+  template: number;
+  fork_of: string;
+  created_at: string;
+}
+
+export interface License {
+  id: string;
+  team_id: string;
+  repo_id: string;
+  kind: string;
+  support_until: string;
+  status: string;
+  provider: string;
+  amount_cents: number;
+  created_at: string;
+}
+
+export interface VpsTarget {
+  id: string;
+  team_id: string;
+  name: string;
+  host: string;
+  ssh_user: string;
+  created_at: string;
+}
+
+export interface Deployment {
+  id: string;
+  project_id: string;
+  vps_target_id: string;
+  commit_sha: string;
+  status: string;
+  log: string;
+  created_at: string;
+}
+
+export async function createProject(teamId: string, name: string, description?: string): Promise<Project> {
+  const data = await callTool<{ project: Project }>("projects_create", { team_id: teamId, name, description: description ?? "" });
+  return data.project;
+}
+
+export async function fetchProjects(teamId: string): Promise<{ project: Project; stats: ProjectStats }[]> {
+  const data = await callTool<{ projects: { project: Project; stats: ProjectStats }[] }>("projects_list", { team_id: teamId });
+  return data.projects;
+}
+
+export async function setProjectRepo(projectId: string, repoId: string): Promise<Project> {
+  const data = await callTool<{ project: Project }>("project_set_repo", { project_id: projectId, repo_id: repoId });
+  return data.project;
+}
+
+export async function createIssue(projectId: string, title: string, body?: string, assigneeBotId?: string): Promise<Issue> {
+  const data = await callTool<{ issue: Issue }>("issues_create", { project_id: projectId, title, body: body ?? "", assignee_bot_id: assigneeBotId ?? "" });
+  return data.issue;
+}
+
+export async function fetchIssues(projectId: string): Promise<Issue[]> {
+  const data = await callTool<{ issues: Issue[] }>("issues_list", { project_id: projectId });
+  return data.issues;
+}
+
+export async function moveIssue(issueId: string, state: string): Promise<Issue> {
+  const data = await callTool<{ issue: Issue }>("issues_move", { issue_id: issueId, state });
+  return data.issue;
+}
+
+export async function assignIssue(issueId: string, botId: string): Promise<Issue> {
+  const data = await callTool<{ issue: Issue }>("issues_assign", { issue_id: issueId, bot_id: botId });
+  return data.issue;
+}
+
+export async function updateIssue(issueId: string, patch: { title?: string; body?: string; priority?: string; labels?: string }): Promise<Issue> {
+  const data = await callTool<{ issue: Issue }>("issues_update", { issue_id: issueId, ...patch });
+  return data.issue;
+}
+
+export async function createRepo(teamId: string, name: string, description?: string): Promise<{ repo: Repo; clone_url: string }> {
+  return callTool("repos_create", { team_id: teamId, name, description: description ?? "" });
+}
+
+export async function fetchRepos(teamId: string): Promise<Repo[]> {
+  const data = await callTool<{ repos: Repo[] }>("repos_list", { team_id: teamId });
+  return data.repos;
+}
+
+export async function fetchTemplates(): Promise<Repo[]> {
+  const data = await callTool<{ repos: Repo[] }>("repos_templates", {});
+  return data.repos;
+}
+
+export async function fetchRepoDetail(repoId: string): Promise<{ repo: Repo; branches: string[]; log: { sha: string; author: string; email: string; date: string; subject: string }[]; clone_url: string }> {
+  return callTool("repos_get", { repo_id: repoId });
+}
+
+export async function fetchRepoDiff(repoId: string, commit?: string): Promise<string> {
+  const data = await callTool<{ diff: string }>("repos_diff", { repo_id: repoId, commit: commit ?? "" });
+  return data.diff;
+}
+
+export async function forkRepo(repoId: string, teamId: string): Promise<Repo> {
+  const data = await callTool<{ repo: Repo }>("repos_fork", { repo_id: repoId, team_id: teamId });
+  return data.repo;
+}
+
+export async function publishRepo(repoId: string, template: boolean): Promise<void> {
+  await callTool("repos_publish", { repo_id: repoId, template });
+}
+
+export async function buyLicense(teamId: string, repoId: string): Promise<{ license: License; repo: Repo; project: Project }> {
+  return callTool("licenses_buy", { team_id: teamId, repo_id: repoId, provider: "mock" });
+}
+
+export async function fetchLicenses(teamId: string): Promise<License[]> {
+  const data = await callTool<{ licenses: License[] }>("licenses_list", { team_id: teamId });
+  return data.licenses;
+}
+
+export async function addVps(teamId: string, v: { name: string; host: string; ssh_user: string; ssh_key: string }): Promise<VpsTarget> {
+  const data = await callTool<{ vps: VpsTarget }>("vps_add", { team_id: teamId, ...v });
+  return data.vps;
+}
+
+export async function fetchVpsList(teamId: string): Promise<VpsTarget[]> {
+  const data = await callTool<{ vps: VpsTarget[] }>("vps_list", { team_id: teamId });
+  return data.vps;
+}
+
+export async function startDeploy(projectId: string, vpsId: string): Promise<Deployment> {
+  const data = await callTool<{ deployment: Deployment }>("deploy_start", { project_id: projectId, vps_id: vpsId });
+  return data.deployment;
+}
+
+export async function fetchDeployments(projectId: string): Promise<Deployment[]> {
+  const data = await callTool<{ deployments: Deployment[] }>("deployments_list", { project_id: projectId });
+  return data.deployments;
+}
+
 // ---------- harness (Codex-like agent runs in Sandbox containers) ----------
 
 export interface HarnessRun {
@@ -735,11 +909,11 @@ async function harnessFetch(path: string, init?: RequestInit): Promise<Response>
 }
 
 /** Start an agent run. Returns the raw SSE response — read events with readHarnessEvents. */
-export async function harnessStartRun(teamId: string, model: string, prompt: string, signal?: AbortSignal): Promise<Response> {
+export async function harnessStartRun(teamId: string, model: string, prompt: string, signal?: AbortSignal, repoId?: string, issueId?: string): Promise<Response> {
   return harnessFetch("/api/runs", {
     method: "POST",
     signal,
-    body: JSON.stringify({ team_id: teamId, model, prompt }),
+    body: JSON.stringify({ team_id: teamId, model, prompt, repo_id: repoId ?? "", issue_id: issueId ?? "" }),
   });
 }
 

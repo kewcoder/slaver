@@ -27,7 +27,9 @@ impl Db {
         }
         let conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_secs(10))?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        // NOTE: no `foreign_keys=ON` — D1 does not enforce foreign keys, and
+        // the schema relies on that (legacy rows use team_id '' etc.).
+        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         Ok(Self { inner: Arc::new(Mutex::new(conn)), path: path.to_string() })
     }
 
@@ -50,11 +52,50 @@ impl Db {
         // connection is only used once the runtime is up. (WAL mode allows
         // both connections to the same file.)
         let setup = Connection::open(&self.path)?;
+        setup.execute_batch(
+            "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));",
+        )?;
+        let mut applied: std::collections::HashSet<String> = {
+            let mut stmt = setup.prepare("SELECT name FROM _migrations")?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        if applied.is_empty() {
+            // Legacy database migrated without tracking (e.g. by wrangler or an
+            // older binary): if the core tables already exist, treat the base
+            // schema files as applied so their non-idempotent ALTERs don't re-run.
+            let has_runs: bool = setup
+                .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'")
+                .and_then(|mut s| s.exists([]))
+                .unwrap_or(false);
+            if has_runs {
+                for legacy in ["0001_schema.sql", "0002_runs.sql"] {
+                    let _ = setup.execute("INSERT OR IGNORE INTO _migrations (name) VALUES (?1)", [legacy]);
+                    applied.insert(legacy.to_string());
+                }
+                eprintln!("migrate: baselined legacy database at 0002");
+            }
+        }
         for f in files {
+            let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            if applied.contains(&name) {
+                continue;
+            }
             let sql = std::fs::read_to_string(&f)?;
-            setup
-                .execute_batch(&sql)
-                .with_context(|| format!("migration failed: {}", f.display()))?;
+            match setup.execute_batch(&sql) {
+                Ok(()) => {}
+                // `ALTER TABLE ... ADD COLUMN` has no IF NOT EXISTS form; a
+                // "duplicate column" error just means this half of the file
+                // already landed on a previous untracked run — safe to skip.
+                Err(e) if e.to_string().contains("duplicate column name") => {
+                    eprintln!("migrate: {name} partially applied before, skipping remainder");
+                }
+                Err(e) => {
+                    return Err(e).with_context(|| format!("migration failed: {}", f.display()));
+                }
+            }
+            setup.execute("INSERT INTO _migrations (name) VALUES (?1)", [&name])?;
+            eprintln!("migrated {name}");
         }
         Ok(())
     }

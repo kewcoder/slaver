@@ -1,6 +1,6 @@
 use axum::{routing::{get, post}, Router};
 use chrono::Datelike;
-use slaver::{db::Db, harness, mcp, schedule, store, summarize, AppState};
+use slaver::{db::Db, git_http, harness, mcp, schedule, store, summarize, AppState};
 use std::{collections::HashMap, time::Duration};
 use tower_http::{cors::CorsLayer, services::{ServeDir, ServeFile}};
 
@@ -89,6 +89,36 @@ async fn scheduler(state: AppState) {
     }
 }
 
+async fn git_info_refs(
+    state: axum::extract::State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Path(repo): axum::extract::Path<String>,
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    git_http::handle_at(state, headers, repo, "info/refs".to_string(), query, body).await
+}
+
+async fn git_upload_pack(
+    state: axum::extract::State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Path(repo): axum::extract::Path<String>,
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    git_http::handle_at(state, headers, repo, "git-upload-pack".to_string(), query, body).await
+}
+
+async fn git_receive_pack(
+    state: axum::extract::State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Path(repo): axum::extract::Path<String>,
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    git_http::handle_at(state, headers, repo, "git-receive-pack".to_string(), query, body).await
+}
+
 #[tokio::main]
 async fn main() {
     let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_default();
@@ -98,7 +128,8 @@ async fn main() {
     }
     let db_path = env_or("DB_PATH", "data/slaver.db");
     let avatar_dir = std::path::PathBuf::from(env_or("AVATAR_DIR", "data/avatars"));
-    let workspace_dir = std::path::PathBuf::from(env_or("WORKSPACE_DIR", "data/workspaces"));
+    let workspace_dir = std::path::PathBuf::from(env_or("WORK_DIR", "data/workspaces"));
+    let git_root = std::path::PathBuf::from(env_or("GIT_ROOT", "data/git"));
     let frontend_dir = env_or("FRONTEND_DIR", "frontend/dist");
     let port: u16 = env_or("PORT", "8080").parse().unwrap_or(8080);
 
@@ -107,18 +138,32 @@ async fn main() {
         .expect("run db migrations");
     std::fs::create_dir_all(&avatar_dir).ok();
     std::fs::create_dir_all(&workspace_dir).ok();
+    std::fs::create_dir_all(&git_root).ok();
+    slaver::seed::seed_templates(&db, &git_root, &env_or("SEEDS_DIR", "./seeds")).await;
 
-    let state = AppState { db, jwt_secret, avatar_dir, workspace_dir };
+    let state = AppState { db, jwt_secret, avatar_dir, workspace_dir, git_root, frontend_dir: std::path::PathBuf::from(&frontend_dir) };
     tokio::spawn(scheduler(state.clone()));
 
-    let index = format!("{frontend_dir}/index.html");
+    let index = state.frontend_dir.join("index.html");
     let app = Router::new()
         .route("/mcp", post(mcp::rpc))
         .route("/ping", get(|| async { "ok" }))
         .route("/api/runs", post(harness::start_run).get(harness::list_runs))
         .route("/api/runs/:id", get(harness::run_detail))
+        .route(
+            "/git/:repo/info/refs",
+            get(git_info_refs).post(git_info_refs),
+        )
+        .route(
+            "/git/:repo/git-upload-pack",
+            post(git_upload_pack),
+        )
+        .route(
+            "/git/:repo/git-receive-pack",
+            post(git_receive_pack),
+        )
         .fallback_service(
-            ServeDir::new(&frontend_dir)
+            ServeDir::new(&state.frontend_dir)
                 .not_found_service(ServeFile::new(&index)),
         )
         .layer(CorsLayer::permissive())

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use chrono::Datelike;
 use serde::{Deserialize, Serialize};
-use crate::db::{v_int, v_null, v_real, v_text, Db};
+use crate::db::{v_null, v_real, v_text, Db};
 
 use crate::chat::ChatMessage;
 use crate::pricing;
@@ -1748,6 +1748,14 @@ pub async fn insert_run(
 ) -> Result<()> {
     db.prepare("INSERT INTO runs (id, user_id, team_id, model, prompt, status) VALUES (?, ?, ?, ?, ?, 'running')")
         .bind(&[v_text(id), v_text(user_id), v_text(team_id), v_text(model), v_text(prompt)])?
+        .run()
+        .await?;
+    Ok(())
+}
+
+pub async fn set_run_repo(db: &Db, id: &str, issue_id: &str, repo_id: &str, branch: &str) -> Result<()> {
+    db.prepare("UPDATE runs SET issue_id = ?, repo_id = ?, branch = ? WHERE id = ?")
+        .bind(&[v_text(issue_id), v_text(repo_id), v_text(branch), v_text(id)])?
         .run()
         .await?;
     Ok(())

@@ -18,16 +18,18 @@ RUN cargo build --release
 
 # Stage 3: runtime
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git openssh-client && rm -rf /var/lib/apt/lists
 WORKDIR /app
 COPY --from=backend /app/target/release/slaver ./slaver
 COPY --from=backend /app/frontend/dist ./frontend/dist
 COPY migrations ./migrations
+COPY seeds ./seeds
 ENV PORT=8080 \
     DB_PATH=/data/slaver.db \
     AVATAR_DIR=/data/avatars \
     WORK_DIR=/data/workspaces \
     MIGRATIONS_DIR=./migrations \
+    SEEDS_DIR=./seeds \
     FRONTEND_DIR=./frontend/dist
 EXPOSE 8080
 VOLUME ["/data"]

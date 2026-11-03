@@ -20,6 +20,9 @@ const DEFAULT_MODEL = "glm-5.3-flash";
 export default function HarnessView({ teamId }: { teamId: string | null }) {
   const [model, setModel] = useState(() => localStorage.getItem("harness_model") || DEFAULT_MODEL);
   const [prompt, setPrompt] = useState("");
+  const [repoId, setRepoId] = useState("");
+  const [issueId, setIssueId] = useState("");
+  const [issueTitle, setIssueTitle] = useState("");
   const [running, setRunning] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
   const [error, setError] = useState("");
@@ -46,6 +49,20 @@ export default function HarnessView({ teamId }: { teamId: string | null }) {
 
   useEffect(() => {
     void refreshRuns();
+    // Prefill from Projects kanban "Start agent run".
+    try {
+      const raw = localStorage.getItem("harness_prefill");
+      if (raw) {
+        const p = JSON.parse(raw) as { prompt?: string; repoId?: string; issueId?: string; title?: string };
+        if (p.prompt) setPrompt(p.prompt);
+        if (p.repoId) setRepoId(p.repoId);
+        if (p.issueId) setIssueId(p.issueId);
+        if (p.title) setIssueTitle(p.title);
+        localStorage.removeItem("harness_prefill");
+      }
+    } catch {
+      /* ignore */
+    }
   }, [refreshRuns]);
 
   useEffect(() => {
@@ -66,10 +83,11 @@ export default function HarnessView({ teamId }: { teamId: string | null }) {
     const ac = new AbortController();
     abortRef.current = ac;
     localStorage.setItem("harness_model", model.trim() || DEFAULT_MODEL);
-    push("prompt", "Task", text);
+    push("prompt", issueTitle ? `Issue: ${issueTitle}` : "Task", text);
     setPrompt("");
+    setIssueTitle("");
     try {
-      const res = await harnessStartRun(teamId, model.trim() || DEFAULT_MODEL, text, ac.signal);
+      const res = await harnessStartRun(teamId, model.trim() || DEFAULT_MODEL, text, ac.signal, repoId || undefined, issueId || undefined);
       await readHarnessEvents(
         res,
         (ev) => {
@@ -165,6 +183,20 @@ export default function HarnessView({ teamId }: { teamId: string | null }) {
               className="max-h-40 flex-1 resize-none rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40"
             />
           </div>
+          {(repoId || issueId) && (
+            <div className="flex items-center gap-2 text-xs text-zinc-400">
+              <span className="rounded bg-zinc-800 px-2 py-0.5">
+                Linked {issueTitle ? `issue “${issueTitle.slice(0, 40)}”` : "issue"} {repoId ? `· repo ${repoId.slice(0, 8)}` : "· no repo"}
+              </span>
+              <button
+                type="button"
+                onClick={() => { setRepoId(""); setIssueId(""); setIssueTitle(""); }}
+                className="text-zinc-500 hover:text-zinc-200"
+              >
+                unlink
+              </button>
+            </div>
+          )}
           <div className="flex gap-2">
             {!running ? (
               <button type="submit" disabled={!prompt.trim() || !teamId} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">

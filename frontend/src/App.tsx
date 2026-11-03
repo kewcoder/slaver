@@ -76,6 +76,9 @@ import {
   type Recorder,
 } from "./voice";
 import HarnessView from "./HarnessView";
+import ProjectsView from "./ProjectsView";
+import CodeView from "./CodeView";
+import MarketView from "./MarketView";
 
 const AURA_VOICES = ["luna", "athena", "orion", "zeus", "hera", "perseus", "angus", "stella"];
 
@@ -1950,7 +1953,7 @@ export default function App() {
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
-  const [view, setView] = useState<"chat" | "group" | "huddle" | "bot" | "logs" | "teams" | "harness">("chat");
+  const [view, setView] = useState<"chat" | "group" | "huddle" | "bot" | "logs" | "teams" | "harness" | "projects" | "code" | "market">("chat");
   const [bots, setBots] = useState<SlaveBot[]>([]);
   const [botId, setBotId] = useState<string | null>(null);
   const [bot, setBot] = useState<SlaveBot | null>(null);
@@ -2466,6 +2469,9 @@ export default function App() {
         <button type="button" onClick={() => setView("chat")} title="Home" className={railBtn(view === "chat" || view === "group" || view === "bot")}>⌂</button>
         <button type="button" onClick={() => openHuddle(null)} title="New huddle" className={railBtn(false)}>◉</button>
         <button type="button" onClick={() => setView("harness")} title="Harness (agent runs)" className={railBtn(view === "harness")}>⌁</button>
+        <button type="button" onClick={() => setView("projects")} title="Projects (kanban)" className={railBtn(view === "projects")}>▤</button>
+        <button type="button" onClick={() => setView("code")} title="Code (git repos)" className={railBtn(view === "code")}>{"</>"}</button>
+        <button type="button" onClick={() => setView("market")} title="Marketplace" className={railBtn(view === "market")}>◈</button>
         <button type="button" onClick={() => setView("teams")} title="Teams" className={railBtn(view === "teams")}>▦</button>
         <button type="button" onClick={() => { setView("logs"); fetchUsage().then(setUsage).catch(() => {}); }} title="Usage & logs" className={railBtn(view === "logs")}>≡</button>
         <div className="mt-auto flex flex-col items-center gap-2">
@@ -2643,6 +2649,12 @@ export default function App() {
               <span className="px-1 font-semibold">Teams</span>
             ) : view === "harness" ? (
               <span className="px-1 font-semibold">Harness</span>
+            ) : view === "projects" ? (
+              <span className="px-1 font-semibold">Projects</span>
+            ) : view === "code" ? (
+              <span className="px-1 font-semibold">Code</span>
+            ) : view === "market" ? (
+              <span className="px-1 font-semibold">Marketplace</span>
             ) : view === "logs" ? (
               <span className="px-1 font-semibold">Usage &amp; logs</span>
             ) : (
@@ -2665,6 +2677,25 @@ export default function App() {
           <main className="flex-1 overflow-y-auto"><LogsView summary={usage} /></main>
         ) : view === "harness" ? (
           <main className="flex min-h-0 flex-1 flex-col overflow-hidden"><HarnessView teamId={teamId} /></main>
+        ) : view === "projects" ? (
+          <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <ProjectsView
+              teamId={teamId}
+              bots={bots}
+              onStartRun={(opts) => {
+                localStorage.setItem("harness_prefill", JSON.stringify({ prompt: opts.prompt, repoId: opts.repoId, issueId: opts.issueId }));
+                setView("harness");
+              }}
+            />
+          </main>
+        ) : view === "code" ? (
+          <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <CodeView teamId={teamId} teamRole={teams.find((t) => t.id === teamId)?.role ?? ""} />
+          </main>
+        ) : view === "market" ? (
+          <main className="flex-1 overflow-y-auto">
+            <MarketView teamId={teamId} onOpenProject={(pid) => { localStorage.setItem("projects_open", pid); setView("projects"); }} />
+          </main>
         ) : view === "teams" ? (
           <main className="flex-1 overflow-y-auto">
             <TeamsView
