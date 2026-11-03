@@ -2459,28 +2459,38 @@ export default function App() {
     );
   }
 
-  const railBtn = (active: boolean) =>
-    `flex h-10 w-10 items-center justify-center rounded-lg text-lg ${active ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:bg-zinc-800/60 hover:text-zinc-200"}`;
+  const topBtn = (active: boolean) =>
+    `flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-2 text-sm ${active ? "bg-zinc-800 font-semibold text-zinc-100" : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"}`;
+
+  const goLogs = () => { setView("logs"); fetchUsage().then(setUsage).catch(() => {}); };
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-100">
-      {/* App rail — Slack-style workspace nav */}
-      <nav className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-zinc-800 bg-zinc-950 py-3">
-        <button type="button" onClick={() => setView("chat")} title="Home" className={railBtn(view === "chat" || view === "group" || view === "bot")}>⌂</button>
-        <button type="button" onClick={() => openHuddle(null)} title="New huddle" className={railBtn(false)}>◉</button>
-        <button type="button" onClick={() => setView("harness")} title="Harness (agent runs)" className={railBtn(view === "harness")}>⌁</button>
-        <button type="button" onClick={() => setView("projects")} title="Projects (kanban)" className={railBtn(view === "projects")}>▤</button>
-        <button type="button" onClick={() => setView("code")} title="Code (git repos)" className={railBtn(view === "code")}>{"</>"}</button>
-        <button type="button" onClick={() => setView("market")} title="Marketplace" className={railBtn(view === "market")}>◈</button>
-        <button type="button" onClick={() => setView("teams")} title="Teams" className={railBtn(view === "teams")}>▦</button>
-        <button type="button" onClick={() => { setView("logs"); fetchUsage().then(setUsage).catch(() => {}); }} title="Usage & logs" className={railBtn(view === "logs")}>≡</button>
-        <div className="mt-auto flex flex-col items-center gap-2">
+    <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
+      {/* Top bar — workspace nav with labels */}
+      <header className="flex h-13 shrink-0 items-center gap-1 overflow-x-auto border-b border-zinc-800 bg-zinc-950 px-2 py-1">
+        <button type="button" onClick={() => setSideOpen((v) => !v)} title="Conversations" className="shrink-0 rounded-md px-2 py-2 text-lg text-zinc-300 hover:bg-zinc-800 md:hidden">
+          ☰
+        </button>
+        <span className="mr-1 hidden shrink-0 px-1 text-[15px] font-bold tracking-tight text-zinc-100 sm:block">
+          Slaver
+        </span>
+        <nav className="flex items-center gap-0.5">
+          <button type="button" onClick={() => setView("chat")} className={topBtn(view === "chat" || view === "group" || view === "bot" || view === "huddle")}><span aria-hidden="true">⌂</span> Home</button>
+          <button type="button" onClick={() => setView("harness")} className={topBtn(view === "harness")}><span aria-hidden="true">⌁</span> Harness</button>
+          <button type="button" onClick={() => setView("projects")} className={topBtn(view === "projects")}><span aria-hidden="true">▤</span> Projects</button>
+          <button type="button" onClick={() => setView("code")} className={topBtn(view === "code")}><span aria-hidden="true">{"</>"}</span> Code</button>
+          <button type="button" onClick={() => setView("market")} className={topBtn(view === "market")}><span aria-hidden="true">◈</span> Market</button>
+          <button type="button" onClick={() => setView("teams")} className={topBtn(view === "teams")}><span aria-hidden="true">▦</span> Teams</button>
+          <button type="button" onClick={goLogs} className={topBtn(view === "logs")}><span aria-hidden="true">≡</span> Logs</button>
+        </nav>
+        <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
           <span className="rounded px-1 text-[11px] font-bold text-emerald-400" title="Demo credit left">{formatUsd(user.credit_usd)}</span>
-          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-800 text-sm font-bold text-zinc-200" title={user.email}>
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800 text-sm font-bold text-zinc-200" title={user.email}>
             {(user.name || user.email || "?").slice(0, 1).toUpperCase()}
           </span>
         </div>
-      </nav>
+      </header>
+      <div className="flex min-h-0 flex-1">
       {/* Sidebar — workspace sections */}
       {sideOpen && (
         <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setSideOpen(false)} />
@@ -2634,9 +2644,6 @@ export default function App() {
       <div className="flex min-w-0 flex-1 flex-col bg-zinc-900">
         <header className="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2 md:px-4">
           <div className="flex min-w-0 items-center gap-1">
-            <button type="button" onClick={() => setSideOpen((v) => !v)} title="Conversations" className="rounded-md px-2 py-1 text-lg text-zinc-300 hover:bg-zinc-800 md:hidden">
-              ☰
-            </button>
             {view === "bot" && bot ? (
               <button type="button" onClick={() => setView("chat")} title="Back to chat" className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800">
                 ← {bot.name} <span className="text-xs font-normal text-zinc-500">settings</span>
@@ -2904,6 +2911,7 @@ export default function App() {
             </div>
           </>
         )}
+      </div>
       </div>
     </div>
   );

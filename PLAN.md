@@ -1,146 +1,62 @@
 # SLAVER
-## Stop Renting Software. Start Owning It.
+### Don't Just Connect Software. Own It.
 
-**The next generation of software won't be rented. It will be owned.**
+**[0:00–0:25 | THE PROBLEM]**
 
-### 1. The Problem — We Don't Own the Software We Depend On
+Today, AI agents can connect almost every SaaS product.
 
-Think about a typical business today.
+But businesses still pay for every tool they connect. They don't own the software, and they can't freely customize it.
 
-It pays for a CRM, an inventory system, an accounting platform, a booking system, email, automation tools, analytics, and countless other SaaS subscriptions.
+At the same time, talented software developers are losing opportunities as AI transforms the industry.
 
-Every month, businesses pay to access software they don't own.
+We believe there's a better future.
 
-They cannot fully control how it works. They cannot freely change its architecture. They depend on vendors for features, pricing, availability, and product decisions.
+**[0:25–0:45 | INTRODUCING SLAVER]**
 
-And now, AI agents are making it easier to connect all these tools.
+Meet Slaver.
 
-But connecting software we don't own doesn't solve the fundamental problem.
+A marketplace where businesses can discover, buy, and own software — then customize it with AI.
 
-**We're still renting our digital infrastructure.**
+**[0:45–1:15 | MARKETPLACE DEMO]**
 
-### 2. The Vision — What If Every Business Could Own Its Software?
+Welcome to Slaver Marketplace.
 
-Imagine a different future.
+Discover applications built by developers and AI agents.
 
-A restaurant owner describes what they need:
+Buy software, own your licensed copy, and make it your own.
 
-"I want an ordering system, inventory management, customer loyalty, employee management, and a dashboard that understands my business."
+Need more than software? Explore Services to find developers and agencies who can build, customize, and maintain your solutions.
 
-Instead of searching for five different SaaS products, an AI team builds the software.
+**[1:15–2:05 | AI DEMO]**
 
-Not a mockup. Not another chatbot.
+But Slaver goes beyond a traditional marketplace.
 
-A real, working application — with its own source code, database, business logic, and execution environment.
+Your personal AI agent understands your business needs and helps you find the right applications and services.
 
-The business can customize it, deploy it, move it, and continue developing it.
+Once you own an application, Meta-powered AI agents work together to understand its code, plan changes, build new features, and test them.
 
-It owns the software.
-
-**That's what we're building with Slaver.**
-
-### 3. How Slaver Works
-
-Slaver connects four parts of the software lifecycle.
-
-**Workspace — Create.**
-
-Describe what you want. AI agents plan, write code, build, test, and deploy your application.
-
-**Git — Own.**
-
-Every application has a real source-code history. Fork it, inspect it, modify it, and maintain control over your own version.
-
-**Marketplace — Discover and Trade.**
-
-Discover applications built by other people. Buy software, sell your creations, or hire developers for customization, integrations, and maintenance.
-
-**Team — Collaborate.**
-
-Bring AI agents together to build features, investigate bugs, review code, and improve applications.
+You don't need to start from scratch.
 
 You can use your own AI agents, work with the original creator, or hire another developer.
 
-You are never forced to depend on just one vendor.
+**[2:05–2:35 | THE FUTURE]**
 
-### 4. What Makes Slaver Different — Isolation by Design
+And this is only the beginning.
 
-Ownership is only one part of the problem.
+Slaver can expand beyond software.
 
-Businesses also need security, performance, and control.
+Imagine a restaurant connecting its management system to AI cameras, smart sensors, POS terminals, and physical equipment through local integration agencies.
 
-Slaver is designed around isolated business environments.
+One marketplace connecting software, developers, businesses, and the physical world.
 
-Each business can have independently isolated data, application processes, permissions, secrets, and execution resources.
+**[2:35–3:00 | THE VISION]**
 
-One business should not be able to access another business's data.
+We believe AI should create opportunities, not just automate existing jobs.
 
-One business's workload should not unnecessarily interfere with another's.
+Developers can become independent creators. Agencies can reach new customers. Businesses can own the technology they depend on.
 
-Resources can be allocated and scaled according to each business's needs.
+The future isn't about connecting more software we rent.
 
-Instead of putting every business inside one shared application environment, Slaver provides a foundation for independently operated software.
+It's about owning what we build.
 
-**Your business. Your data. Your environment. Your rules.**
-
-### 5. A New Software Economy
-
-This also changes who can participate in the software economy.
-
-A developer can build an application once and sell it to thousands of businesses.
-
-A business can purchase it, fork it, and make it their own.
-
-An AI agent can help maintain and customize it.
-
-The original developer can earn money from paid feature requests, support, and maintenance.
-
-Other developers can compete to provide better services.
-
-And businesses remain in control of their software.
-
-This creates a marketplace where people don't just sell access to software.
-
-They sell software that other people can actually own.
-
-### 6. A Different Economic Model
-
-Slaver separates software ownership from infrastructure consumption.
-
-Buy an application once and own your licensed copy.
-
-You don't need to keep paying a mandatory software subscription just to retain access to your own application.
-
-You pay for the resources you actually consume: computing, storage, databases, bandwidth, email, and AI inference.
-
-Infrastructure costs remain transparent and usage-based.
-
-Developers earn from software sales and services. Businesses retain control over their applications.
-
-### 7. Why Now?
-
-AI has dramatically reduced the cost of creating software.
-
-But creating software is only the beginning.
-
-People still need a way to own it, run it securely, distribute it, customize it, and maintain it.
-
-We believe the next major shift in technology isn't simply AI that uses more software.
-
-It's AI that makes software ownership accessible to everyone.
-
-### 8. Our Mission
-
-We believe every business should have the ability to own the software it depends on.
-
-Not just configure someone else's product.
-
-Not just connect another SaaS API.
-
-But build, own, and control its own digital infrastructure.
-
-**Slaver is building the infrastructure for a world where everyone can own their software.**
-
-Don't rent software.
-
-**Build yours. Own it. Make it better.**
+**Slaver. Don't just connect software. Own it.**
