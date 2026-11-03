@@ -1,0 +1,32 @@
+services:
+  web:
+    image: caddy:2-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web:/srv:ro
+    restart: unless-stopped
+  api:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./api/server.py:/app/server.py:ro
+    environment:
+      - PORT=8000
+      - APP_PASSWORD=${APP_PASSWORD:-}
+      - IMAP_HOST=${IMAP_HOST:-}
+      - IMAP_PORT=${IMAP_PORT:-993}
+      - IMAP_USER=${IMAP_USER:-}
+      - IMAP_PASS=${IMAP_PASS:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_SSL=${SMTP_SSL:-0}
+      - MAIL_FROM=${MAIL_FROM:-}
+      - SLAVER_URL=${SLAVER_URL:-https://www.slaver.app}
+      - OAUTH_CLIENT_ID=${OAUTH_CLIENT_ID:-}
+      - OAUTH_CLIENT_SECRET=${OAUTH_CLIENT_SECRET:-}
+    command: ["python", "server.py"]
+    restart: unless-stopped

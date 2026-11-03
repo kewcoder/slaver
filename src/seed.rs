@@ -11,6 +11,7 @@ const SEEDS: &[(&str, &str)] = &[
     ("grocery-pos", "Grocery POS Lite — kasir + inventori warung, siap docker"),
     ("fb-ordering", "F&B Ordering Lite — pesan meja + tiket dapur, siap docker"),
     ("resto-ops", "Resto Ops — kasir + peta meja + booking DP + stok + HitPay, siap docker"),
+    ("mail-app", "Mail App — email usaha sendiri: inbox, balas, tulis baru, siap docker"),
 ];
 
 pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, seeds_dir: &str) {
@@ -74,6 +75,7 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, seeds_dir: &str
             "grocery-pos" => "Grocery POS Lite",
             "fb-ordering" => "F&B Ordering Lite",
             "resto-ops" => "Resto Ops",
+            "mail-app" => "Mail App",
             other => other,
         };
         if existing.iter().any(|n| n == name) {

@@ -851,6 +851,8 @@ fn voice_speak_tool_def() -> Value {
     json!({ "name": "voice_speak", "description": "Speak text via the Workers AI voice (base64 MP3 out).", "inputSchema": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string" }, "voice": { "type": "string" } } } })
 }
 
+
+
 async fn call_bot_archive(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let bot_id = args.get("slavebot_id").and_then(|v| v.as_str()).unwrap_or("");
     let archived = args.get("archived").and_then(|v| v.as_bool()).unwrap_or(true);
