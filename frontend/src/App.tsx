@@ -96,6 +96,7 @@ import {
   warmUpVoices,
   type Recorder,
 } from "./voice";
+import AppsView from "./AppsView";
 import HarnessView from "./HarnessView";
 import ProjectsView from "./ProjectsView";
 import CodeView from "./CodeView";
@@ -2337,7 +2338,7 @@ export default function App() {
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
-  const [view, setView] = useState<"chat" | "group" | "meeting" | "bot" | "settings" | "harness" | "projects" | "code" | "market">("chat");
+  const [view, setView] = useState<"apps" | "chat" | "group" | "meeting" | "bot" | "settings" | "harness" | "projects" | "code" | "market">("apps");
   const [bots, setBots] = useState<SlaveBot[]>([]);
   const [botId, setBotId] = useState<string | null>(null);
   const [bot, setBot] = useState<SlaveBot | null>(null);
@@ -2851,7 +2852,8 @@ export default function App() {
           Slaver
         </span>
         <nav className="flex items-center gap-0.5">
-          <button type="button" onClick={() => setView("chat")} className={topBtn(view === "chat" || view === "group" || view === "bot" || view === "meeting")}><span aria-hidden="true">⌂</span> Home</button>
+          <button type="button" onClick={() => setView("apps")} className={topBtn(view === "apps")}><span aria-hidden="true">⌂</span> Apps</button>
+          <button type="button" onClick={() => setView("chat")} className={topBtn(view === "chat" || view === "group" || view === "bot" || view === "meeting")}><span aria-hidden="true">💬</span> Chat</button>
           <button type="button" onClick={() => setView("harness")} className={topBtn(view === "harness")}><span aria-hidden="true">⌁</span> Harness</button>
           <button type="button" onClick={() => setView("projects")} className={topBtn(view === "projects")}><span aria-hidden="true">▤</span> Projects</button>
           <button type="button" onClick={() => setView("code")} className={topBtn(view === "code")}><span aria-hidden="true">{"</>"}</span> Code</button>
@@ -3014,6 +3016,8 @@ export default function App() {
               <span className="px-1 font-semibold">Code</span>
             ) : view === "market" ? (
               <span className="px-1 font-semibold">Marketplace</span>
+            ) : view === "apps" ? (
+              <span className="px-1 font-semibold">Apps</span>
             ) : (
               <button type="button" onClick={() => bot && setView("bot")} disabled={!bot} title={bot ? "Bot settings" : undefined} className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800 disabled:hover:bg-transparent">
                 <span className="mr-1 font-bold text-zinc-300">#</span>{bot ? bot.name : "pick a slaveBot"}
@@ -3030,7 +3034,16 @@ export default function App() {
           </button>
         </header>
 
-        {view === "settings" ? (
+        {view === "apps" ? (
+          <main className="flex-1 overflow-y-auto">
+            <AppsView
+              teamId={teamId}
+              onOpenProject={(pid) => { localStorage.setItem("projects_open", pid); setView("projects"); }}
+              onGoMarket={() => setView("market")}
+              onGoProjects={() => setView("projects")}
+            />
+          </main>
+        ) : view === "settings" ? (
           <main className="flex-1 overflow-y-auto">
             <SettingsView
               user={user}

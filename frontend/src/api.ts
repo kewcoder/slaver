@@ -703,6 +703,8 @@ export interface Project {
   name: string;
   description: string;
   status: string;
+  prod_url: string;
+  dev_url: string;
   created_at: string;
 }
 
@@ -822,6 +824,11 @@ export async function fetchProjects(teamId: string): Promise<{ project: Project;
 
 export async function setProjectRepo(projectId: string, repoId: string): Promise<Project> {
   const data = await callTool<{ project: Project }>("project_set_repo", { project_id: projectId, repo_id: repoId });
+  return data.project;
+}
+
+export async function setProjectUrls(projectId: string, urls: { prod_url?: string; dev_url?: string }): Promise<Project> {
+  const data = await callTool<{ project: Project }>("projects_set_urls", { project_id: projectId, ...urls });
   return data.project;
 }
 
