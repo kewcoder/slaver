@@ -1,13 +1,15 @@
 pub mod auth;
 pub mod avatar;
 pub mod chat;
+pub mod cf;
 pub mod db;
+pub mod fly;
 pub mod deploy;
 pub mod git;
 pub mod git_http;
 pub mod group;
 pub mod harness;
-pub mod huddle;
+pub mod meeting;
 pub mod hitpay;
 pub mod mcp;
 pub mod oauth;

@@ -57,6 +57,20 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "licenses_checkout", "description": "Start a HitPay checkout for a template license. Returns a payment URL (or instant mock license when HitPay is not configured). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "repo_id"], "properties": { "team_id": { "type": "string" }, "repo_id": { "type": "string" } } } }),
         json!({ "name": "payments_status", "description": "Live status of a checkout payment (refreshes from HitPay when pending).", "inputSchema": { "type": "object", "required": ["payment_id"], "properties": { "payment_id": { "type": "string" } } } }),
         json!({ "name": "licenses_activate", "description": "Verify a paid checkout and mint the license + fork + project. Idempotent.", "inputSchema": { "type": "object", "required": ["payment_id"], "properties": { "payment_id": { "type": "string" } } } }),
+        json!({ "name": "dm_history", "description": "Direct messages with a teammate (same team).", "inputSchema": { "type": "object", "required": ["team_id", "user_id"], "properties": { "team_id": { "type": "string" }, "user_id": { "type": "string" } } } }),
+        json!({ "name": "dm_send", "description": "Send a direct message to a teammate.", "inputSchema": { "type": "object", "required": ["team_id", "to_user_id", "message"], "properties": { "team_id": { "type": "string" }, "to_user_id": { "type": "string" }, "message": { "type": "string" } } } }),
+        json!({ "name": "groups_add_user", "description": "Add a teammate to a channel (mixed human + AI channels).", "inputSchema": { "type": "object", "required": ["group_id", "user_id"], "properties": { "group_id": { "type": "string" }, "user_id": { "type": "string" } } } }),
+        json!({ "name": "groups_remove_user", "description": "Remove a teammate from a channel.", "inputSchema": { "type": "object", "required": ["group_id", "user_id"], "properties": { "group_id": { "type": "string" }, "user_id": { "type": "string" } } } }),
+        json!({ "name": "projects_set_urls", "description": "Set a project's production and/or dev URL (used for the Apps home iframe + custom domains). Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" }, "prod_url": { "type": "string" }, "dev_url": { "type": "string" } } } }),
+        json!({ "name": "fly_connect", "description": "Connect the team's own Fly.io account with an API token (validated). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "api_token"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "org": { "type": "string" }, "api_token": { "type": "string" } } } }),
+        json!({ "name": "fly_accounts", "description": "List connected Fly.io accounts.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
+        json!({ "name": "fly_disconnect", "description": "Remove a connected Fly.io account (does not delete remote resources). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "account_id"], "properties": { "team_id": { "type": "string" }, "account_id": { "type": "string" } } } }),
+        json!({ "name": "fly_provision", "description": "Provision 1 PROD + 1 DEV machine on the team's Fly account (isolated dev runs its own agent sandbox). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" }, "account_id": { "type": "string" }, "name": { "type": "string" }, "prod_image": { "type": "string" }, "dev_image": { "type": "string" }, "dev_cpus": { "type": "integer" }, "dev_memory": { "type": "integer" } } } }),
+        json!({ "name": "fly_machines", "description": "List provisioned Fly machines for the team (with live state when reachable).", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
+        json!({ "name": "fly_destroy", "description": "Destroy a provisioned Fly machine (and optionally its app). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "machine_id"], "properties": { "team_id": { "type": "string" }, "machine_id": { "type": "string" }, "delete_app": { "type": "boolean" } } } }),
+        json!({ "name": "domains_add", "description": "Map {uuid}.slaver.app (or custom subdomain) to a Fly app hostname or IP. Creates the Cloudflare DNS record when configured. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "project_id", "target"], "properties": { "team_id": { "type": "string" }, "project_id": { "type": "string" }, "subdomain": { "type": "string" }, "target": { "type": "string" }, "kind": { "type": "string" } } } }),
+        json!({ "name": "domains_list", "description": "List custom domains for a team.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
+        json!({ "name": "domains_remove", "description": "Remove a custom domain (and its Cloudflare DNS record when configured). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "domain_id"], "properties": { "team_id": { "type": "string" }, "domain_id": { "type": "string" } } } }),
         json!({ "name": "licenses_list", "description": "List a team's licenses.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
         json!({ "name": "vps_add", "description": "Register a VPS deploy target (SSH key stored server-side). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "host", "ssh_key"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "host": { "type": "string" }, "ssh_user": { "type": "string" }, "ssh_key": { "type": "string" } } } }),
         json!({ "name": "vps_list", "description": "List a team's VPS targets (keys never leave the server).", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
@@ -465,6 +479,169 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             }
             match crate::oauth::revoke_client(db, &tid, user_id, &cid).await {
                 Ok(()) => mcp_data(id, "Client revoked.".to_string(), json!({ "revoked": true })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "dm_history" => {
+            let (tid, uid) = (arg_str(args, "team_id"), arg_str(args, "user_id"));
+            if tid.is_empty() || uid.is_empty() {
+                return Some(rpc_err(id, -32602, "team_id and user_id are required."));
+            }
+            match platform::dm_history_checked(db, &tid, user_id, &uid).await {
+                Ok(rows) => mcp_data(id, format!("{} message(s).", rows.len()), json!({ "messages": rows })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "dm_send" => {
+            let (tid, to, msg) = (arg_str(args, "team_id"), arg_str(args, "to_user_id"), arg_str(args, "message"));
+            if tid.is_empty() || to.is_empty() || msg.trim().is_empty() {
+                return Some(rpc_err(id, -32602, "team_id, to_user_id and message are required."));
+            }
+            match platform::dm_send_checked(db, &tid, user_id, &to, &msg).await {
+                Ok(row) => mcp_data(id, "Sent.".to_string(), json!({ "message": row })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "groups_add_user" => {
+            let (gid, uid) = (arg_str(args, "group_id"), arg_str(args, "user_id"));
+            if gid.is_empty() || uid.is_empty() {
+                return Some(rpc_err(id, -32602, "group_id and user_id are required."));
+            }
+            match platform::group_add_user(db, "", &gid, user_id, &uid).await {
+                Ok(true) => mcp_data(id, "User added.".to_string(), json!({ "added": true })),
+                Ok(false) => rpc_err(id, -32602, "Channel not found or not allowed."),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "groups_remove_user" => {
+            let (gid, uid) = (arg_str(args, "group_id"), arg_str(args, "user_id"));
+            if gid.is_empty() || uid.is_empty() {
+                return Some(rpc_err(id, -32602, "group_id and user_id are required."));
+            }
+            match platform::group_remove_user(db, &gid, user_id, &uid).await {
+                Ok(true) => mcp_data(id, "User removed.".to_string(), json!({ "removed": true })),
+                Ok(false) => rpc_err(id, -32602, "Channel not found or not allowed."),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "projects_set_urls" => {
+            let pid = arg_str(args, "project_id");
+            if pid.is_empty() {
+                return Some(rpc_err(id, -32602, "project_id is required."));
+            }
+            let prod = args.get("prod_url").and_then(|v| v.as_str());
+            let dev = args.get("dev_url").and_then(|v| v.as_str());
+            match platform::set_project_urls(db, user_id, &pid, prod, dev).await {
+                Ok(p) => mcp_data(id, "URLs updated.".to_string(), json!({ "project": p })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "fly_connect" => {
+            let (tid, token) = (arg_str(args, "team_id"), arg_str(args, "api_token"));
+            if tid.is_empty() || token.trim().is_empty() {
+                return Some(rpc_err(id, -32602, "team_id and api_token are required."));
+            }
+            match platform::fly_connect(db, &tid, user_id, &arg_str(args, "name"), &arg_str(args, "org"), &token).await {
+                Ok(a) => mcp_data(id, format!("Fly account {} connected.", a.name), json!({ "account": a })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "fly_accounts" => {
+            let tid = arg_str(args, "team_id");
+            if tid.is_empty() {
+                return Some(rpc_err(id, -32602, "team_id is required."));
+            }
+            match platform::fly_list(db, &tid, user_id).await {
+                Ok(rows) => mcp_data(id, format!("{} Fly account(s).", rows.len()), json!({ "accounts": rows })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "fly_disconnect" => {
+            let (tid, aid) = (arg_str(args, "team_id"), arg_str(args, "account_id"));
+            if tid.is_empty() || aid.is_empty() {
+                return Some(rpc_err(id, -32602, "team_id and account_id are required."));
+            }
+            match platform::fly_disconnect(db, &tid, user_id, &aid).await {
+                Ok(()) => mcp_data(id, "Fly account removed.".to_string(), json!({ "removed": true })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "fly_provision" => {
+            let tid = arg_str(args, "team_id");
+            let aid = arg_str(args, "account_id");
+            let slug = if arg_str(args, "name").is_empty() { arg_str(args, "slug") } else { arg_str(args, "name") };
+            if tid.is_empty() || aid.is_empty() || slug.trim().is_empty() {
+                return Some(rpc_err(id, -32602, "team_id, account_id and name (slug) are required."));
+            }
+            let prod_image = arg_str(args, "prod_image");
+            let dev_image = arg_str(args, "dev_image");
+            let dev_cpus = args.get("dev_cpus").and_then(|v| v.as_i64()).unwrap_or_else(|| args.get("dev_cpus").and_then(|v| v.as_str()).and_then(|s| s.parse().ok()).unwrap_or(2));
+            let dev_mem = args.get("dev_memory").and_then(|v| v.as_i64()).unwrap_or_else(|| args.get("dev_memory_mb").and_then(|v| v.as_i64()).unwrap_or(2048));
+            let pi = if prod_image.is_empty() { None } else { Some(prod_image.as_str()) };
+            let di = if dev_image.is_empty() { None } else { Some(dev_image.as_str()) };
+            match platform::fly_provision_team(db, &tid, user_id, &aid, &slug, pi, di, dev_cpus, dev_mem).await {
+                Ok(v) => mcp_data(id, "PROD + DEV machines provisioned.".to_string(), v),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "fly_machines" => {
+            let tid = arg_str(args, "team_id");
+            if tid.is_empty() {
+                return Some(rpc_err(id, -32602, "team_id is required."));
+            }
+            match platform::fly_machines(db, &tid, user_id).await {
+                Ok(rows) => {
+                    // Best-effort live state: refresh from Fly when a token is available.
+                    let mut out = Vec::new();
+                    for m in rows {
+                        let live = crate::fly::get_machine_by_token_for(db, &tid, &m.app_name, &m.machine_id).await.ok();
+                        let mut v = serde_json::to_value(&m).unwrap_or(serde_json::Value::Null);
+                        if let Some(st) = live { v["live"] = st; }
+                        out.push(v);
+                    }
+                    mcp_data(id, format!("{} machine(s).", out.len()), json!({ "machines": out }))
+                }
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "fly_destroy" => {
+            let (tid, mid) = (arg_str(args, "team_id"), arg_str(args, "machine_id"));
+            if tid.is_empty() || mid.is_empty() {
+                return Some(rpc_err(id, -32602, "team_id and machine_id are required."));
+            }
+            let delete_app = args.get("delete_app").and_then(|v| v.as_bool()).unwrap_or(false);
+            match platform::fly_destroy_machine(db, "", &tid, user_id, &mid, delete_app).await {
+                Ok(v) => mcp_data(id, "Machine destroyed.".to_string(), v),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "domains_add" => {
+            let (tid, target) = (arg_str(args, "team_id"), arg_str(args, "target"));
+            if tid.is_empty() || target.trim().is_empty() {
+                return Some(rpc_err(id, -32602, "team_id and target are required."));
+            }
+            match platform::domain_add(db, &tid, user_id, &arg_str(args, "project_id"), &arg_str(args, "subdomain"), &target, &arg_str(args, "kind")).await {
+                Ok(d) => mcp_data(id, format!("Domain {} mapped.", d.hostname), json!({ "domain": d })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "domains_list" => {
+            let tid = arg_str(args, "team_id");
+            if tid.is_empty() {
+                return Some(rpc_err(id, -32602, "team_id is required."));
+            }
+            match platform::domain_list(db, &tid, user_id).await {
+                Ok(rows) => mcp_data(id, format!("{} domain(s).", rows.len()), json!({ "domains": rows })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "domains_remove" => {
+            let (tid, did) = (arg_str(args, "team_id"), arg_str(args, "domain_id"));
+            if tid.is_empty() || did.is_empty() {
+                return Some(rpc_err(id, -32602, "team_id and domain_id are required."));
+            }
+            match platform::domain_remove(db, &tid, user_id, &did).await {
+                Ok(()) => mcp_data(id, "Domain removed.".to_string(), json!({ "removed": true })),
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }

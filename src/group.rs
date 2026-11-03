@@ -27,7 +27,7 @@ pub(crate) async fn post_chat(
         .ok_or_else(|| "Group not found.".to_string())?;
     // Save the message first so customer questions are never lost, even when
     // the provider is misconfigured or no agent can reply right now.
-    store::insert_group_message(db, group_id, None, "user", message)
+    store::insert_group_message(db, group_id, None, Some(user_id), "user", message)
         .await
         .map_err(|e| e.to_string())?;
     let prov = provider::provider_for(db, &group.team_id)
@@ -104,7 +104,7 @@ pub(crate) async fn post_chat(
                 continue;
             }
         };
-        store::insert_group_message(db, group_id, Some(&bot.id), "assistant", &done.text)
+        store::insert_group_message(db, group_id, Some(&bot.id), None, "assistant", &done.text)
             .await
             .map_err(|e| e.to_string())?;
         let (cost, credit_left) = store::record_usage(
@@ -161,7 +161,7 @@ pub(crate) async fn post_broadcast(
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "Group not found.".to_string())?;
-    store::insert_group_message(db, group_id, None, "user", text)
+    store::insert_group_message(db, group_id, None, Some(user_id), "user", text)
         .await
         .map_err(|e| e.to_string())?;
     let mut saved_to = Vec::new();

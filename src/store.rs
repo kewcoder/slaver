@@ -499,16 +499,6 @@ pub struct PublicGroupRow {
     pub created_at: String,
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct GroupMessageRow {
-    pub id: i64,
-    pub slavebot_id: Option<String>,
-    pub bot_name: Option<String>,
-    pub role: String,
-    pub content: String,
-    pub created_at: String,
-}
-
 /// Groups live on a team: any member may use/rename one, only owner/admin
 /// may delete it. Legacy team-less groups belong to their creator.
 pub async fn create_group(db: &Db, user_id: &str, team_id: &str, name: &str) -> Result<GroupRow> {
@@ -725,13 +715,15 @@ pub async fn insert_group_message(
     db: &Db,
     group_id: &str,
     slavebot_id: Option<&str>,
+    user_id: Option<&str>,
     role: &str,
     content: &str,
 ) -> Result<()> {
-    db.prepare("INSERT INTO group_messages (group_id, slavebot_id, role, content) VALUES (?, ?, ?, ?)")
+    db.prepare("INSERT INTO group_messages (group_id, slavebot_id, user_id, role, content) VALUES (?, ?, ?, ?, ?)")
         .bind(&[
             v_text(group_id),
         slavebot_id.map(v_text).unwrap_or(v_null()),
+            user_id.map(v_text).unwrap_or(v_null()),
             v_text(role),
             v_text(content),
         ])?
@@ -742,8 +734,8 @@ pub async fn insert_group_message(
 
 pub async fn group_history(db: &Db, group_id: &str, limit: i32) -> Result<Vec<GroupMessageRow>> {
     db.prepare(
-        "SELECT g.id, g.slavebot_id, s.name AS bot_name, g.role, g.content, g.created_at \
-         FROM group_messages g LEFT JOIN slavebots s ON s.id = g.slavebot_id \
+        "SELECT g.id, g.slavebot_id, s.name AS bot_name, g.user_id, COALESCE(u.name, u.email) AS user_name, g.role, g.content, g.created_at \
+         FROM group_messages g LEFT JOIN slavebots s ON s.id = g.slavebot_id LEFT JOIN users u ON u.id = g.user_id \
          WHERE g.group_id = ? ORDER BY g.id DESC LIMIT ?",
     )
     .bind(&[v_text(group_id), v_real(limit as f64)])?
@@ -1183,7 +1175,7 @@ pub async fn children_of(db: &Db, user_id: &str, manager_id: &str) -> Result<Vec
 }
 
 #[derive(Deserialize, Serialize, Clone)]
-pub struct HuddleRow {
+pub struct MeetingRow {
     pub id: String,
     pub user_id: String,
     pub team_id: String,
@@ -1194,8 +1186,8 @@ pub struct HuddleRow {
 }
 
 #[derive(Deserialize, Serialize, Clone)]
-pub struct HuddleParticipant {
-    pub huddle_id: String,
+pub struct MeetingParticipant {
+    pub meeting_id: String,
     pub slavebot_id: String,
     pub bot_name: Option<String>,
     pub decision: String,
@@ -1204,17 +1196,123 @@ pub struct HuddleParticipant {
 }
 
 #[derive(Deserialize, Serialize, Clone)]
-pub struct HuddleMessageRow {
+pub struct GroupMessageRow {
     pub id: i64,
-    pub huddle_id: String,
     pub slavebot_id: Option<String>,
     pub bot_name: Option<String>,
+    pub user_id: Option<String>,
+    pub user_name: Option<String>,
     pub role: String,
     pub content: String,
     pub created_at: String,
 }
 
-pub async fn create_huddle(db: &Db, user_id: &str, team_id: &str, topic: &str) -> Result<HuddleRow> {
+#[derive(Deserialize, Serialize, Clone)]
+pub struct GroupUserRow {
+    pub user_id: String,
+    pub name: String,
+    pub email: Option<String>,
+}
+
+/// Human members of a group (mixed human + AI channels).
+pub async fn group_user_members(db: &Db, group_id: &str) -> Result<Vec<GroupUserRow>> {
+    db.prepare(
+        "SELECT m.user_id AS user_id, COALESCE(u.name, u.email, m.user_id) AS name, u.email AS email \
+         FROM group_members m LEFT JOIN users u ON u.id = m.user_id \
+         WHERE m.group_id = ? AND m.user_id <> '' ORDER BY m.created_at ASC",
+    )
+    .bind(&[v_text(group_id)])?
+    .all()
+    .await?
+    .results()
+}
+
+pub async fn add_group_user(db: &Db, group_id: &str, user_id: &str) -> Result<()> {
+    db.prepare("INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)")
+        .bind(&[v_text(group_id), v_text(user_id)])?
+        .run()
+        .await?;
+    touch_group(db, group_id).await
+}
+
+pub async fn remove_group_user(db: &Db, group_id: &str, user_id: &str) -> Result<()> {
+    db.prepare("DELETE FROM group_members WHERE group_id = ? AND user_id = ?")
+        .bind(&[v_text(group_id), v_text(user_id)])?
+        .run()
+        .await?;
+    touch_group(db, group_id).await
+}
+
+// ---------- user-to-user direct messages (same team) ----------
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct DirectMessageRow {
+    pub id: i64,
+    pub team_id: String,
+    pub from_user_id: String,
+    pub from_name: Option<String>,
+    pub to_user_id: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+pub async fn dm_history(
+    db: &Db,
+    team_id: &str,
+    me: &str,
+    peer_id: &str,
+    limit: i64,
+) -> Result<Vec<DirectMessageRow>> {
+    db.prepare(
+        "SELECT m.id, m.team_id, m.from_user_id, COALESCE(u.name, u.email) AS from_name, m.to_user_id, m.content, m.created_at \
+         FROM direct_messages m LEFT JOIN users u ON u.id = m.from_user_id \
+         WHERE m.team_id = ? AND ((m.from_user_id = ? AND m.to_user_id = ?) OR (m.from_user_id = ? AND m.to_user_id = ?)) \
+         ORDER BY m.id DESC LIMIT ?",
+    )
+    .bind(&[v_text(team_id), v_text(me), v_text(peer_id), v_text(peer_id), v_text(me), v_int(limit.clamp(1, 200))])?
+    .all()
+    .await?
+    .results()
+    .map(|mut rows: Vec<DirectMessageRow>| {
+        rows.reverse();
+        rows
+    })
+}
+
+pub async fn dm_send(
+    db: &Db,
+    team_id: &str,
+    from_id: &str,
+    to_id: &str,
+    content: &str,
+) -> Result<DirectMessageRow> {
+    let content = content.trim();
+    if content.is_empty() || content.len() > 4000 {
+        return Err(anyhow!("message must be 1..4000 characters."));
+    }
+    if from_id == to_id {
+        return Err(anyhow!("Pick someone else to message."));
+    }
+    db.prepare("INSERT INTO direct_messages (team_id, from_user_id, to_user_id, content) VALUES (?, ?, ?, ?)")
+        .bind(&[v_text(team_id), v_text(from_id), v_text(to_id), v_text(content)])?
+        .run()
+        .await?;
+    let rows: Vec<DirectMessageRow> = db
+        .prepare(
+            "SELECT m.id, m.team_id, m.from_user_id, COALESCE(u.name, u.email) AS from_name, m.to_user_id, m.content, m.created_at \
+             FROM direct_messages m LEFT JOIN users u ON u.id = m.from_user_id \
+             WHERE m.team_id = ? AND m.from_user_id = ? AND m.to_user_id = ? ORDER BY m.id DESC LIMIT 1",
+        )
+        .bind(&[v_text(team_id), v_text(from_id), v_text(to_id)])?
+        .all()
+        .await?
+        .results()?;
+    rows.into_iter().next().ok_or_else(|| anyhow!("message insert failed"))
+}
+
+
+
+pub async fn create_meeting(db: &Db, user_id: &str, team_id: &str, topic: &str) -> Result<MeetingRow> {
     let team_id = if team_id.is_empty() {
         ensure_personal_team(db, user_id).await?.id
     } else {
@@ -1225,28 +1323,28 @@ pub async fn create_huddle(db: &Db, user_id: &str, team_id: &str, topic: &str) -
     };
     let topic: String = topic.trim().chars().take(500).collect();
     if topic.is_empty() {
-        return Err(anyhow!("Huddle topic must be 1..500 characters.".to_string()));
+        return Err(anyhow!("Meeting topic must be 1..500 characters.".to_string()));
     }
     let id = new_id();
-    db.prepare("INSERT INTO huddles (id, user_id, team_id, topic) VALUES (?, ?, ?, ?)")
+    db.prepare("INSERT INTO meetings (id, user_id, team_id, topic) VALUES (?, ?, ?, ?)")
         .bind(&[v_text(&id), v_text(user_id), v_text(&team_id), v_text(&topic)])?
         .run()
         .await?;
-    get_huddle(db, user_id, &id)
+    get_meeting(db, user_id, &id)
         .await?
-        .ok_or_else(|| anyhow!("huddle insert failed".to_string()))
+        .ok_or_else(|| anyhow!("meeting insert failed".to_string()))
 }
 
-pub async fn get_huddle(db: &Db, user_id: &str, id: &str) -> Result<Option<HuddleRow>> {
-    let row: Option<HuddleRow> = db
-        .prepare("SELECT id, user_id, team_id, topic, status, created_at, updated_at FROM huddles WHERE id = ?")
+pub async fn get_meeting(db: &Db, user_id: &str, id: &str) -> Result<Option<MeetingRow>> {
+    let row: Option<MeetingRow> = db
+        .prepare("SELECT id, user_id, team_id, topic, status, created_at, updated_at FROM meetings WHERE id = ?")
         .bind(&[v_text(id)])?
         .first(None)
         .await?;
     Ok(match row {
         Some(h) if h.team_id.is_empty() => {
-            let mine: Option<HuddleRow> = db
-                .prepare("SELECT id, user_id, team_id, topic, status, created_at, updated_at FROM huddles WHERE id = ? AND user_id = ?")
+            let mine: Option<MeetingRow> = db
+                .prepare("SELECT id, user_id, team_id, topic, status, created_at, updated_at FROM meetings WHERE id = ? AND user_id = ?")
                 .bind(&[v_text(id), v_text(user_id)])?
                 .first(None)
                 .await?;
@@ -1257,9 +1355,9 @@ pub async fn get_huddle(db: &Db, user_id: &str, id: &str) -> Result<Option<Huddl
     })
 }
 
-pub async fn list_huddles(db: &Db, user_id: &str) -> Result<Vec<HuddleRow>> {
+pub async fn list_meetings(db: &Db, user_id: &str) -> Result<Vec<MeetingRow>> {
     db.prepare(
-        "SELECT h.id, h.user_id, h.team_id, h.topic, h.status, h.created_at, h.updated_at FROM huddles h \
+        "SELECT h.id, h.user_id, h.team_id, h.topic, h.status, h.created_at, h.updated_at FROM meetings h \
          WHERE (h.team_id = '' AND h.user_id = ?) \
          OR EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = h.team_id AND m.user_id = ?) \
          ORDER BY h.updated_at DESC LIMIT 50",
@@ -1270,35 +1368,35 @@ pub async fn list_huddles(db: &Db, user_id: &str) -> Result<Vec<HuddleRow>> {
     .results()
 }
 
-pub async fn touch_huddle(db: &Db, id: &str) -> Result<()> {
-    db.prepare("UPDATE huddles SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?")
+pub async fn touch_meeting(db: &Db, id: &str) -> Result<()> {
+    db.prepare("UPDATE meetings SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?")
         .bind(&[v_text(id)])?
         .run()
         .await?;
     Ok(())
 }
 
-pub async fn delete_huddle(db: &Db, user_id: &str, id: &str) -> Result<bool> {
-    let huddle = match get_huddle(db, user_id, id).await? {
+pub async fn delete_meeting(db: &Db, user_id: &str, id: &str) -> Result<bool> {
+    let meeting = match get_meeting(db, user_id, id).await? {
         Some(h) => h,
         None => return Ok(false),
     };
-    if !huddle.team_id.is_empty() {
-        match membership(db, &huddle.team_id, user_id).await? {
+    if !meeting.team_id.is_empty() {
+        match membership(db, &meeting.team_id, user_id).await? {
             Some(r) if r == "owner" || r == "admin" => {}
             _ => return Ok(false),
         }
     }
     // Child tables carry no user_id: they are scoped by the ownership check above.
-    db.prepare("DELETE FROM huddle_messages WHERE huddle_id = ?")
+    db.prepare("DELETE FROM meeting_messages WHERE meeting_id = ?")
         .bind(&[v_text(id)])?
         .run()
         .await?;
-    db.prepare("DELETE FROM huddle_participants WHERE huddle_id = ?")
+    db.prepare("DELETE FROM meeting_participants WHERE meeting_id = ?")
         .bind(&[v_text(id)])?
         .run()
         .await?;
-    db.prepare("DELETE FROM huddles WHERE id = ?")
+    db.prepare("DELETE FROM meetings WHERE id = ?")
         .bind(&[v_text(id)])?
         .run()
         .await?;
@@ -1307,37 +1405,37 @@ pub async fn delete_huddle(db: &Db, user_id: &str, id: &str) -> Result<bool> {
 
 pub async fn set_participant(
     db: &Db,
-    huddle_id: &str,
+    meeting_id: &str,
     bot_id: &str,
     decision: &str,
     reason: &str,
 ) -> Result<()> {
     let reason: String = reason.chars().take(300).collect();
     db.prepare(
-        "INSERT INTO huddle_participants (huddle_id, slavebot_id, decision, reason) VALUES (?, ?, ?, ?) \
-         ON CONFLICT(huddle_id, slavebot_id) DO UPDATE SET decision = excluded.decision, reason = excluded.reason",
+        "INSERT INTO meeting_participants (meeting_id, slavebot_id, decision, reason) VALUES (?, ?, ?, ?) \
+         ON CONFLICT(meeting_id, slavebot_id) DO UPDATE SET decision = excluded.decision, reason = excluded.reason",
     )
-    .bind(&[v_text(huddle_id), v_text(bot_id), v_text(decision), v_text(&reason)])?
+    .bind(&[v_text(meeting_id), v_text(bot_id), v_text(decision), v_text(&reason)])?
     .run()
     .await?;
     Ok(())
 }
 
-pub async fn huddle_participants(db: &Db, huddle_id: &str) -> Result<Vec<HuddleParticipant>> {
+pub async fn meeting_participants(db: &Db, meeting_id: &str) -> Result<Vec<MeetingParticipant>> {
     db.prepare(
-        "SELECT p.huddle_id, p.slavebot_id, s.name AS bot_name, p.decision, p.reason, p.created_at \
-         FROM huddle_participants p LEFT JOIN slavebots s ON s.id = p.slavebot_id \
-         WHERE p.huddle_id = ? ORDER BY p.created_at ASC",
+        "SELECT p.meeting_id, p.slavebot_id, s.name AS bot_name, p.decision, p.reason, p.created_at \
+         FROM meeting_participants p LEFT JOIN slavebots s ON s.id = p.slavebot_id \
+         WHERE p.meeting_id = ? ORDER BY p.created_at ASC",
     )
-    .bind(&[v_text(huddle_id)])?
+    .bind(&[v_text(meeting_id)])?
     .all()
     .await?
     .results()
 }
 
-pub async fn insert_huddle_message(
+pub async fn insert_meeting_message(
     db: &Db,
-    huddle_id: &str,
+    meeting_id: &str,
     bot: Option<&BotRow>,
     role: &str,
     content: &str,
@@ -1349,17 +1447,28 @@ pub async fn insert_huddle_message(
     let none = v_null();
     let id_val = bot_id.map(|s| v_text(&s)).unwrap_or(none.clone());
     let name_val = bot_name.map(|s| v_text(&s)).unwrap_or(none);
-    db.prepare("INSERT INTO huddle_messages (huddle_id, slavebot_id, bot_name, role, content) VALUES (?, ?, ?, ?, ?)")
-        .bind(&[v_text(huddle_id), id_val, name_val, v_text(role), v_text(content)])?
+    db.prepare("INSERT INTO meeting_messages (meeting_id, slavebot_id, bot_name, role, content) VALUES (?, ?, ?, ?, ?)")
+        .bind(&[v_text(meeting_id), id_val, name_val, v_text(role), v_text(content)])?
         .run()
         .await?;
     Ok(())
 }
 
-pub async fn huddle_history(db: &Db, huddle_id: &str, limit: i32) -> Result<Vec<HuddleMessageRow>> {
-    let rows: Vec<HuddleMessageRow> = db
-        .prepare("SELECT id, huddle_id, slavebot_id, bot_name, role, content, created_at FROM huddle_messages WHERE huddle_id = ? ORDER BY id DESC LIMIT ?")
-        .bind(&[v_text(huddle_id), v_real(limit as f64)])?
+#[derive(Deserialize, Serialize, Clone)]
+pub struct MeetingMessageRow {
+    pub id: i64,
+    pub meeting_id: String,
+    pub slavebot_id: Option<String>,
+    pub bot_name: Option<String>,
+    pub role: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+pub async fn meeting_history(db: &Db, meeting_id: &str, limit: i32) -> Result<Vec<MeetingMessageRow>> {
+    let rows: Vec<MeetingMessageRow> = db
+        .prepare("SELECT id, meeting_id, slavebot_id, bot_name, role, content, created_at FROM meeting_messages WHERE meeting_id = ? ORDER BY id DESC LIMIT ?")
+        .bind(&[v_text(meeting_id), v_real(limit as f64)])?
         .all()
         .await?
         .results()?;
@@ -1456,9 +1565,9 @@ pub async fn delete_team(db: &Db, team_id: &str, actor_id: &str) -> Result<(), S
         "DELETE FROM bot_grants WHERE bot_id IN (SELECT id FROM slavebots WHERE team_id = ?)",
         "DELETE FROM team_members WHERE team_id = ?",
         "DELETE FROM group_messages WHERE group_id IN (SELECT id FROM groups WHERE team_id = ?)",
-        "DELETE FROM huddle_messages WHERE huddle_id IN (SELECT id FROM huddles WHERE team_id = ?)",
+        "DELETE FROM meeting_messages WHERE meeting_id IN (SELECT id FROM meetings WHERE team_id = ?)",
         "DELETE FROM groups WHERE team_id = ?",
-        "DELETE FROM huddles WHERE team_id = ?",
+        "DELETE FROM meetings WHERE team_id = ?",
         "DELETE FROM teams WHERE id = ?",
     ] {
         db.prepare(sql)
@@ -1578,7 +1687,7 @@ pub async fn ensure_personal_team(db: &Db, user_id: &str) -> Result<TeamRow> {
         .map(|u| if u.name.trim().is_empty() { "My team".to_string() } else { format!("{}'s team", u.name.chars().take(40).collect::<String>()) })
         .unwrap_or_else(|| "My team".to_string());
     let team = create_team(db, user_id, &name, true).await?;
-    for (table, col) in [("slavebots", "user_id"), ("groups", "user_id"), ("huddles", "user_id")] {
+    for (table, col) in [("slavebots", "user_id"), ("groups", "user_id"), ("meetings", "user_id")] {
         let sql = format!("UPDATE {table} SET team_id = ? WHERE team_id = '' AND {col} = ?");
         db.prepare(&sql).bind(&[v_text(&team.id), v_text(user_id)])?.run().await?;
     }

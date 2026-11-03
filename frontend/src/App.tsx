@@ -1,17 +1,24 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  addDomain,
   addGroupMembers,
   appendMemory,
+  connectFly,
+  destroyFlyMachine,
+  disconnectFly,
   fetchAvatar,
+  fetchDomains,
+  fetchFlyAccounts,
+  fetchFlyMachines,
   createBot,
   createOAuthClient,
   createGroup,
-  createHuddle,
+  createMeeting,
   createSchedule,
   createTeam,
   clearTeamProvider,
   deleteGroup,
-  deleteHuddle,
+  deleteMeeting,
   deleteSchedule,
   deleteTeam,
   fetchBotDetail,
@@ -19,8 +26,8 @@ import {
   fetchChildren,
   fetchGroupDetail,
   fetchGroups,
-  fetchHuddleDetail,
-  fetchHuddles,
+  fetchMeetingDetail,
+  fetchMeetings,
   fetchMe,
   fetchOAuthClients,
   fetchProviderModels,
@@ -28,6 +35,8 @@ import {
   fetchSchedules,
   fetchSupportGroup,
   fetchSummaries,
+  provisionFly,
+  removeDomain,
   fetchTeam,
   fetchTeamActivity,
   fetchTeams,
@@ -41,7 +50,7 @@ import {
   setMemberRole,
   formatUsd,
   groupChat,
-  huddleChat,
+  meetingChat,
   login,
   sendChat,
   register,
@@ -59,10 +68,13 @@ import {
   updateSchedule,
   uploadAvatar,
   type BotSchedule,
+  type CustomDomain,
+  type FlyAccount,
+  type FlyMachine,
   type Group,
   type GroupDetail,
-  type Huddle,
-  type HuddleDetail,
+  type Meeting,
+  type MeetingDetail,
   type ActivityItem,
   type OAuthClient,
   type ProviderInfo,
@@ -707,8 +719,8 @@ function GroupView({
   );
 }
 
-function HuddleView({
-  huddleId,
+function MeetingView({
+  meetingId,
   bots,
   teamId,
   onCreated,
@@ -716,7 +728,7 @@ function HuddleView({
   onDeleted,
   onOpenBot,
 }: {
-  huddleId: string | null;
+  meetingId: string | null;
   bots: SlaveBot[];
   teamId: string | null;
   onCreated: (id: string) => Promise<void>;
@@ -724,7 +736,7 @@ function HuddleView({
   onDeleted: () => Promise<void>;
   onOpenBot: (id: string) => void;
 }) {
-  const [detail, setDetail] = useState<HuddleDetail | null>(null);
+  const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [topic, setTopic] = useState("");
   const [picked, setPicked] = useState<string[] | null>(null);
   const [task, setTask] = useState("");
@@ -737,23 +749,23 @@ function HuddleView({
   const selected = picked ?? activeBots.map((b) => b.id);
 
   const load = useCallback(async () => {
-    if (!huddleId) {
+    if (!meetingId) {
       setDetail(null);
       return;
     }
     try {
-      setDetail(await fetchHuddleDetail(huddleId));
+      setDetail(await fetchMeetingDetail(meetingId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load huddle.");
+      setError(err instanceof Error ? err.message : "Could not load meeting.");
     }
-  }, [huddleId]);
+  }, [meetingId]);
 
   useEffect(() => {
     setError("");
     setSavedNote("");
     setPicked(null);
     void load();
-  }, [huddleId, load]);
+  }, [meetingId, load]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
@@ -782,12 +794,12 @@ function HuddleView({
     setBusy(true);
     setError("");
     try {
-      const created = await createHuddle(topic.trim(), selected, teamId ?? undefined);
+      const created = await createMeeting(topic.trim(), selected, teamId ?? undefined);
       setTopic("");
       setPicked(null);
-      await onCreated(created.huddle.id);
+      await onCreated(created.meeting.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start huddle.");
+      setError(err instanceof Error ? err.message : "Could not start meeting.");
     } finally {
       setBusy(false);
     }
@@ -800,39 +812,39 @@ function HuddleView({
     setError("");
     setSavedNote("");
     try {
-      const res = await huddleChat(detail.huddle.id, task.trim());
+      const res = await meetingChat(detail.meeting.id, task.trim());
       setTask("");
       setSavedNote(`Heard by ${res.replies.length} bot(s) · ${formatUsd(res.total_cost_usd)}`);
       await load();
       await onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Huddle chat failed.");
+      setError(err instanceof Error ? err.message : "Meeting chat failed.");
     } finally {
       setBusy(false);
     }
   }
 
   async function remove() {
-    if (!detail || !window.confirm(`Delete huddle "${detail.huddle.topic}"?`)) return;
+    if (!detail || !window.confirm(`Delete meeting "${detail.meeting.topic}"?`)) return;
     try {
-      await deleteHuddle(detail.huddle.id);
+      await deleteMeeting(detail.meeting.id);
       await onDeleted();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not delete huddle.");
+      setError(err instanceof Error ? err.message : "Could not delete meeting.");
     }
   }
 
-  if (!huddleId) {
+  if (!meetingId) {
     return (
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-6">
         <div>
-          <h2 className="text-xl font-bold">Start a huddle</h2>
+          <h2 className="text-xl font-bold">Start a meeting</h2>
           <p className="mt-1 text-sm text-zinc-400">
             Notify your slaveBots about a topic. Each bot reads its role and decides by itself whether to join.
-            Up to 8 bots are asked per huddle.
+            Up to 8 bots are asked per meeting.
           </p>
         </div>
-        {activeBots.length === 0 && <p className="text-sm text-zinc-400">Create a slaveBot first — there is nobody to huddle with yet.</p>}
+        {activeBots.length === 0 && <p className="text-sm text-zinc-400">Create a slaveBot first — there is nobody to meeting with yet.</p>}
         <form onSubmit={start} className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
           <label className="text-sm font-semibold text-zinc-300">
             Topic
@@ -861,7 +873,7 @@ function HuddleView({
           )}
           {error && <p className="text-sm text-red-400">{error}</p>}
           <button type="submit" disabled={busy || !topic.trim() || selected.length === 0} className="self-start rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
-            {busy ? "Asking bots to join..." : "Start huddle"}
+            {busy ? "Asking bots to join..." : "Start meeting"}
           </button>
         </form>
       </div>
@@ -870,7 +882,7 @@ function HuddleView({
 
   if (!detail) {
     return (
-      <div className="mx-auto w-full max-w-3xl space-y-2 p-8" aria-label="Loading huddle">
+      <div className="mx-auto w-full max-w-3xl space-y-2 p-8" aria-label="Loading meeting">
         <div className="loading-skeleton h-8 w-1/3" />
         <div className="loading-skeleton h-24 w-full" />
         <div className="loading-skeleton h-24 w-full" />
@@ -885,7 +897,7 @@ function HuddleView({
     <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-3 p-4">
       <div>
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-lg font-bold">{detail.huddle.topic}</h2>
+          <h2 className="text-lg font-bold">{detail.meeting.topic}</h2>
           <button type="button" onClick={remove} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400">
             Delete
           </button>
@@ -1169,7 +1181,7 @@ function TeamView({ bot, onOpenBot, onTeamChanged }: { bot: SlaveBot; onOpenBot:
     <div className="mb-8 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
       <h3 className="font-semibold text-zinc-200">Team</h3>
       <p className="mb-3 mt-1 text-xs text-zinc-500">
-        Managers grow sub-bots for specific tasks. Sub-bots report to their manager and can be huddled, scheduled, and grouped like any bot.
+        Managers grow sub-bots for specific tasks. Sub-bots report to their manager and can be meetingd, scheduled, and grouped like any bot.
       </p>
       {parent && (
         <p className="mb-2 text-sm text-zinc-300">
@@ -1458,7 +1470,7 @@ function TeamsView({
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
       <h2 className="text-xl font-bold">Teams</h2>
-      <p className="mt-1 text-sm text-zinc-400">Each team owns its slaveBots, groups, and huddles. Owners and admins manage everything; staff only see bots granted to them.</p>
+      <p className="mt-1 text-sm text-zinc-400">Each team owns its slaveBots, groups, and meetings. Owners and admins manage everything; staff only see bots granted to them.</p>
       <form
         onSubmit={(e) => { e.preventDefault(); if (name.trim()) void run(() => createTeam(name.trim())); setName(""); }}
         className="mt-4 flex gap-2"
@@ -1491,7 +1503,7 @@ function TeamsView({
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-bold">{detail.team.name}</h3>
             {canManage && !detail.team.personal && (
-              <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Delete team ${detail.team.name}? Its bots are archived; groups and huddles are removed.`)) void run(() => deleteTeam(detail.team.id)); }} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400 disabled:opacity-50">
+              <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Delete team ${detail.team.name}? Its bots are archived; groups and meetings are removed.`)) void run(() => deleteTeam(detail.team.id)); }} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400 disabled:opacity-50">
                 Delete team
               </button>
             )}
@@ -1853,7 +1865,7 @@ function BotView({
             className={inputCls}
           />
         </label>
-        <p className="-mt-2 text-xs text-zinc-500">The role guides huddle join decisions: bots join only when the topic fits their job. New bots ask for this in their first message.</p>
+        <p className="-mt-2 text-xs text-zinc-500">The role guides meeting join decisions: bots join only when the topic fits their job. New bots ask for this in their first message.</p>
         <label className="text-sm font-semibold text-zinc-300">
           Avatar
           <span className="mt-1 flex items-center gap-3">
@@ -2002,6 +2014,106 @@ function BotView({
             )),
           )
         )}
+      </div>
+    </div>
+  );
+}
+
+function FlySection({ teamId }: { teamId: string | null }) {
+  const [accounts, setAccounts] = useState<FlyAccount[]>([]);
+  const [machines, setMachines] = useState<FlyMachine[]>([]);
+  const [domains, setDomains] = useState<CustomDomain[]>([]);
+  const [name, setName] = useState("");
+  const [org, setOrg] = useState("");
+  const [token, setTokenInput] = useState("");
+  const [slug, setSlug] = useState("");
+  const [sub, setSub] = useState("");
+  const [target, setTarget] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const refresh = useCallback(async () => {
+    if (!teamId) { setAccounts([]); setMachines([]); setDomains([]); return; }
+    try {
+      const [a, m, d] = await Promise.all([fetchFlyAccounts(teamId), fetchFlyMachines(teamId), fetchDomains(teamId)]);
+      setAccounts(a); setMachines(m); setDomains(d);
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not load Fly state."); }
+  }, [teamId]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  async function connect(e: React.FormEvent) {
+    e.preventDefault();
+    if (!teamId || !token.trim() || busy) return;
+    setBusy(true); setError("");
+    try {
+      await connectFly(teamId, { name: name.trim() || "fly", org: org.trim(), api_token: token.trim() });
+      setName(""); setOrg(""); setTokenInput("");
+      await refresh();
+    } catch (err) { setError(err instanceof Error ? err.message : "Fly connect failed."); }
+    finally { setBusy(false); }
+  }
+
+  async function provision(accountId: string) {
+    if (!teamId || !slug.trim() || busy) return;
+    setBusy(true); setError("");
+    try { await provisionFly(teamId, { account_id: accountId, name: slug.trim().toLowerCase() }); await refresh(); }
+    catch (err) { setError(err instanceof Error ? err.message : "Provision failed."); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+      <h3 className="mb-1 text-sm font-bold uppercase tracking-wide text-zinc-500">Fly.io — team machines (prod + dev/harness)</h3>
+      <p className="mb-2 text-xs text-zinc-500">Owner connects their own Fly API token. Slaver provisions 2 isolated machines: <b>prod</b> (stable, public iframe) + <b>dev</b> (agent sandbox, computer-use). Token stored server-side, never shown again.</p>
+      {error && <p className="mb-2 text-sm text-red-400">{error}</p>}
+      <form onSubmit={connect} className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Account name" disabled={!teamId} className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40" />
+          <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="Org slug (optional)" disabled={!teamId} className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40" />
+        </div>
+        <input value={token} onChange={(e) => setTokenInput(e.target.value)} placeholder="Fly API token (fo1_...)" type="password" disabled={!teamId} className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40" />
+        <div><button type="submit" disabled={!token.trim() || !teamId || busy} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">{busy ? "Saving..." : "Connect Fly token"}</button></div>
+      </form>
+      {accounts.map((a) => (
+        <div key={a.id} className="mt-3 rounded-md bg-zinc-800/60 p-3 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-zinc-100">{a.name}</span>
+            <span className="font-mono text-zinc-500">{a.org || "default org"} · token ✓</span>
+            <button type="button" onClick={() => teamId && disconnectFly(teamId, a.id).then(refresh)} className="ml-auto text-zinc-500 hover:text-red-400">Disconnect</button>
+          </div>
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+            <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="app slug, e.g. warung" className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+            <button type="button" onClick={() => provision(a.id)} disabled={!slug.trim() || busy} className="rounded-md bg-sky-600 px-3 py-1.5 font-bold text-white hover:bg-sky-500 disabled:opacity-40">Provision prod+dev</button>
+          </div>
+          <p className="mt-1 text-zinc-500">Creates <span className="font-mono">{slug || "slug"}-prod</span> (1cpu/512MB, Caddy) + <span className="font-mono">{slug || "slug"}-dev</span> (2cpu/2GB, sandbox sleep infinity).</p>
+        </div>
+      ))}
+      {machines.length > 0 && (
+        <ul className="mt-2 flex flex-col gap-1">
+          {machines.map((m) => (
+            <li key={m.id} className="flex flex-wrap items-center gap-2 rounded-md bg-zinc-800/60 px-3 py-2 font-mono text-xs">
+              <span className={m.role === "prod" ? "font-bold text-emerald-400" : "font-bold text-sky-400"}>{m.role}</span>
+              <span className="text-zinc-100">{m.app_name}</span>
+              <span className="text-zinc-500">{m.machine_id.slice(0, 8)} · {m.image} · {m.cpus}cpu/{m.memory_mb}MB · {m.status}</span>
+              <button type="button" onClick={() => teamId && destroyFlyMachine(teamId, m.id, false).then(refresh)} className="ml-auto text-zinc-500 hover:text-red-400">Destroy</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-3 border-t border-zinc-800 pt-3">
+        <div className="mb-1 text-xs font-bold uppercase tracking-wide text-zinc-500">Custom domains — {`{uuid}.slaver.app`}</div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <input value={sub} onChange={(e) => setSub(e.target.value)} placeholder="subdomain uuid" className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+          <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="target: xxx.fly.dev or IP" className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
+          <button type="button" onClick={async () => { if (!teamId || !sub.trim() || !target.trim()) return; setError(""); try { await addDomain(teamId, { subdomain: sub.trim().toLowerCase(), target: target.trim() }); setSub(""); setTarget(""); await refresh(); } catch (err) { setError(err instanceof Error ? err.message : "Domain failed."); } }} className="rounded-md bg-zinc-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-zinc-600">Map domain</button>
+        </div>
+        {domains.map((d) => (
+          <div key={d.id} className="mt-1 flex items-center gap-2 font-mono text-xs text-zinc-400">
+            <span className="text-zinc-100">{d.hostname}</span><span>→ {d.target}</span><span className="text-zinc-600">[{d.status}]</span>
+            <button type="button" onClick={() => teamId && removeDomain(teamId, d.id).then(refresh)} className="ml-auto text-zinc-600 hover:text-red-400">remove</button>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -2202,6 +2314,8 @@ function SettingsView({
         />
       </div>
 
+      <FlySection teamId={teamId} />
+
       <DeveloperSection teamId={teamId} />
 
       <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
@@ -2218,14 +2332,14 @@ export default function App() {
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
-  const [view, setView] = useState<"chat" | "group" | "huddle" | "bot" | "settings" | "harness" | "projects" | "code" | "market">("chat");
+  const [view, setView] = useState<"chat" | "group" | "meeting" | "bot" | "settings" | "harness" | "projects" | "code" | "market">("chat");
   const [bots, setBots] = useState<SlaveBot[]>([]);
   const [botId, setBotId] = useState<string | null>(null);
   const [bot, setBot] = useState<SlaveBot | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [groupId, setGroupId] = useState<string | null>(null);
-  const [huddles, setHuddles] = useState<Huddle[]>([]);
-  const [huddleId, setHuddleId] = useState<string | null>(null);
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [meetingId, setMeetingId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -2275,9 +2389,9 @@ export default function App() {
     }
   }, []);
 
-  const refreshHuddles = useCallback(async () => {
+  const refreshMeetings = useCallback(async () => {
     try {
-      setHuddles(await fetchHuddles());
+      setMeetings(await fetchMeetings());
     } catch {
       /* keep old list on transient failure */
     }
@@ -2327,7 +2441,7 @@ export default function App() {
         }
       })();
       refreshGroups();
-      refreshHuddles();
+      refreshMeetings();
       if (teamId) {
         fetchTeam(teamId).then((d) => {
           const names: Record<string, string> = {};
@@ -2338,7 +2452,7 @@ export default function App() {
     } else {
       setBots([]);
       setGroups([]);
-      setHuddles([]);
+      setMeetings([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, teamId]);
@@ -2417,14 +2531,14 @@ export default function App() {
       stopRecordingUi();
     }
     setGroupId(id);
-    setHuddleId(null);
+    setMeetingId(null);
     setBotId(null);
     setBot(null);
     setMessages([]);
     setView("group");
   }
 
-  function openHuddle(id: string | null) {
+  function openMeeting(id: string | null) {
     setSideOpen(false);
     setError("");
     stopConverse();
@@ -2432,9 +2546,9 @@ export default function App() {
       recorder.cancel();
       stopRecordingUi();
     }
-    setHuddleId(id);
+    setMeetingId(id);
     setGroupId(null);
-    setView("huddle");
+    setView("meeting");
   }
 
   async function newGroup() {
@@ -2458,7 +2572,7 @@ export default function App() {
     }
     setBotId(id);
     setGroupId(null);
-    setHuddleId(null);
+    setMeetingId(null);
     setView("chat");
     if (!id) {
       setBot(null);
@@ -2676,8 +2790,8 @@ export default function App() {
     setBot(null);
     setGroups([]);
     setGroupId(null);
-    setHuddles([]);
-    setHuddleId(null);
+    setMeetings([]);
+    setMeetingId(null);
     setUsage(null);
   }
 
@@ -2687,7 +2801,7 @@ export default function App() {
   // Team scope: only rows of the selected team ("" = legacy row, shown as fallback).
   const inTeam = (t: string) => !teamId || t === teamId || t === "";
   const teamGroups = groups.filter((g) => inTeam(g.team_id));
-  const teamHuddles = huddles.filter((h) => inTeam(h.team_id));
+  const teamMeetings = meetings.filter((h) => inTeam(h.team_id));
   const activeBots = bots.filter((b) => !b.archived && inTeam(b.team_id));
   const archivedBots = bots.filter((b) => b.archived && inTeam(b.team_id));
   const childMap = new Map<string, SlaveBot[]>();
@@ -2745,7 +2859,7 @@ export default function App() {
           Slaver
         </span>
         <nav className="flex items-center gap-0.5">
-          <button type="button" onClick={() => setView("chat")} className={topBtn(view === "chat" || view === "group" || view === "bot" || view === "huddle")}><span aria-hidden="true">⌂</span> Home</button>
+          <button type="button" onClick={() => setView("chat")} className={topBtn(view === "chat" || view === "group" || view === "bot" || view === "meeting")}><span aria-hidden="true">⌂</span> Home</button>
           <button type="button" onClick={() => setView("harness")} className={topBtn(view === "harness")}><span aria-hidden="true">⌁</span> Harness</button>
           <button type="button" onClick={() => setView("projects")} className={topBtn(view === "projects")}><span aria-hidden="true">▤</span> Projects</button>
           <button type="button" onClick={() => setView("code")} className={topBtn(view === "code")}><span aria-hidden="true">{"</>"}</span> Code</button>
@@ -2774,7 +2888,7 @@ export default function App() {
             Team
             <select
               value={teamId ?? ""}
-              onChange={(e) => { setTeamId(e.target.value || null); setBotId(null); setBot(null); setGroupId(null); setHuddleId(null); setMessages([]); }}
+              onChange={(e) => { setTeamId(e.target.value || null); setBotId(null); setBot(null); setGroupId(null); setMeetingId(null); setMessages([]); }}
               className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs font-semibold text-zinc-100 focus:border-emerald-500 focus:outline-none"
             >
               {teams.map((t) => (
@@ -2847,24 +2961,24 @@ export default function App() {
           {teamGroups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">No groups yet.</p>}
         </nav>
         <div className="flex items-center justify-between border-t border-zinc-800 px-4 pb-1 pt-3">
-          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Huddles</div>
-          <button type="button" onClick={() => openHuddle(null)} className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Meetings</div>
+          <button type="button" onClick={() => openMeeting(null)} className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
             + New
           </button>
         </div>
         <nav className="flex max-h-40 flex-col gap-1 overflow-y-auto p-2 pt-1">
-          {teamHuddles.map((h) => (
+          {teamMeetings.map((h) => (
             <button
               key={h.id}
               type="button"
-              onClick={() => openHuddle(h.id)}
+              onClick={() => openMeeting(h.id)}
               title={h.topic}
-              className={`truncate rounded-md px-2 py-2 text-left text-sm hover:bg-zinc-800 ${h.id === huddleId ? "bg-zinc-800 font-semibold" : "text-zinc-300"}`}
+              className={`truncate rounded-md px-2 py-2 text-left text-sm hover:bg-zinc-800 ${h.id === meetingId ? "bg-zinc-800 font-semibold" : "text-zinc-300"}`}
             >
               <span className="mr-1 text-zinc-500">◉</span>{h.topic.length > 40 ? `${h.topic.slice(0, 40)}…` : h.topic}
             </button>
           ))}
-          {teamHuddles.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">No huddles yet.</p>}
+          {teamMeetings.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">No meetings yet.</p>}
         </nav>
         <div className="border-t border-zinc-800 px-4 pb-1 pt-3">
           <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Support channels</div>
@@ -2897,8 +3011,8 @@ export default function App() {
               </button>
             ) : view === "group" ? (
               <span className="truncate px-1 font-semibold"><span className="mr-1 font-bold text-zinc-300">#</span>{groups.find((g) => g.id === groupId)?.name ?? "group"}</span>
-            ) : view === "huddle" ? (
-              <span className="truncate px-1 font-semibold"><span className="mr-1 text-zinc-300">◉</span>{huddles.find((h) => h.id === huddleId)?.topic.slice(0, 40) ?? "huddle"}</span>
+            ) : view === "meeting" ? (
+              <span className="truncate px-1 font-semibold"><span className="mr-1 text-zinc-300">◉</span>{meetings.find((h) => h.id === meetingId)?.topic.slice(0, 40) ?? "meeting"}</span>
             ) : view === "settings" ? (
               <span className="px-1 font-semibold">Settings</span>
             ) : view === "harness" ? (
@@ -2988,20 +3102,20 @@ export default function App() {
               }}
             />
           </main>
-        ) : view === "huddle" ? (
+        ) : view === "meeting" ? (
           <main className="flex-1 overflow-y-auto">
-            <HuddleView
-              huddleId={huddleId}
+            <MeetingView
+              meetingId={meetingId}
               bots={bots}
               teamId={teamId}
               onCreated={async (id) => {
-                await refreshHuddles();
-                openHuddle(id);
+                await refreshMeetings();
+                openMeeting(id);
               }}
-              onChanged={refreshHuddles}
+              onChanged={refreshMeetings}
               onDeleted={async () => {
-                setHuddleId(null);
-                await refreshHuddles();
+                setMeetingId(null);
+                await refreshMeetings();
                 setView("chat");
               }}
               onOpenBot={openBot}
@@ -3110,8 +3224,8 @@ export default function App() {
                         <button type="button" onClick={() => { setPlusOpen(false); newGroup(); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">
                           New channel
                         </button>
-                        <button type="button" onClick={() => { setPlusOpen(false); openHuddle(null); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">
-                          New huddle
+                        <button type="button" onClick={() => { setPlusOpen(false); openMeeting(null); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">
+                          New meeting
                         </button>
                       </div>
                     </>

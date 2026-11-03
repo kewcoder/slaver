@@ -124,7 +124,7 @@ fn bot_pin_tool_def() -> Value {
 fn bot_set_role_tool_def() -> Value {
     json!({
         "name": "bot_set_role",
-        "description": "Set a slaveBot's personal identity/role (e.g. sales manager). The role guides huddle join decisions and is shown in the Bot tab.",
+        "description": "Set a slaveBot's personal identity/role (e.g. sales manager). The role guides meeting join decisions and is shown in the Bot tab.",
         "inputSchema": {
             "type": "object",
             "required": ["slavebot_id", "role"],
@@ -169,10 +169,10 @@ fn bot_spawn_tool_def() -> Value {
     })
 }
 
-fn huddle_start_tool_def() -> Value {
+fn meeting_start_tool_def() -> Value {
     json!({
-        "name": "huddle_start",
-        "description": "Start a Slack-style huddle: notify bots about a topic; each bot decides by itself (from its role) whether to join. Notifies up to 8 active team bots, or the given slavebot_ids. team_id defaults to the personal team.",
+        "name": "meeting_start",
+        "description": "Start a Slack-style meeting: notify bots about a topic; each bot decides by itself (from its role) whether to join. Notifies up to 8 active team bots, or the given slavebot_ids. team_id defaults to the personal team.",
         "inputSchema": {
             "type": "object",
             "required": ["topic"],
@@ -219,23 +219,23 @@ fn team_invite_tool_def() -> Value {
     })
 }
 
-fn huddle_list_tool_def() -> Value {
+fn meeting_list_tool_def() -> Value {
     json!({
-        "name": "huddle_list",
-        "description": "List huddles with their join/decline participants.",
+        "name": "meeting_list",
+        "description": "List meetings with their join/decline participants.",
         "inputSchema": { "type": "object", "properties": {} }
     })
 }
 
-fn huddle_chat_tool_def() -> Value {
+fn meeting_chat_tool_def() -> Value {
     json!({
-        "name": "huddle_chat",
-        "description": "Send a message into a huddle; every bot that joined replies. Replies are saved and billed per bot.",
+        "name": "meeting_chat",
+        "description": "Send a message into a meeting; every bot that joined replies. Replies are saved and billed per bot.",
         "inputSchema": {
             "type": "object",
-            "required": ["huddle_id", "message"],
+            "required": ["meeting_id", "message"],
             "properties": {
-                "huddle_id": { "type": "string" },
+                "meeting_id": { "type": "string" },
                 "message": { "type": "string" }
             }
         }
@@ -277,7 +277,7 @@ pub async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes)
         }
         "ping" => rpc_ok(id, json!({})),
         "tools/list" => {
-            let mut tools = vec![auth_register_tool_def(), auth_login_tool_def(), auth_me_tool_def(), models_tool_def(), chat_tool_def(), chat_send_tool_def(), bots_list_tool_def(), bots_create_tool_def(), bots_get_tool_def(), bots_update_tool_def(), bots_children_tool_def(), bots_transfer_tool_def(), bots_append_memory_tool_def(), bots_set_avatar_tool_def(), bots_get_avatar_tool_def(), bot_archive_tool_def(), bot_pin_tool_def(), bot_set_role_tool_def(), bot_spawn_tool_def(), bot_send_tool_def(), groups_list_tool_def(), groups_create_tool_def(), groups_get_tool_def(), groups_rename_tool_def(), groups_delete_tool_def(), groups_add_member_tool_def(), groups_remove_member_tool_def(), groups_chat_tool_def(), groups_broadcast_tool_def(), huddle_list_tool_def(), huddle_get_tool_def(), huddle_start_tool_def(), huddle_chat_tool_def(), huddle_delete_tool_def(), schedules_update_tool_def(), schedule_create_tool_def(), schedule_list_tool_def(), schedule_delete_tool_def(), summaries_get_tool_def(), summaries_run_tool_def(), team_create_tool_def(), team_list_tool_def(), teams_get_tool_def(), teams_delete_tool_def(), team_invite_tool_def(), teams_set_member_tool_def(), teams_remove_member_tool_def(), teams_set_provider_tool_def(), teams_test_provider_tool_def(), teams_clear_provider_tool_def(), teams_activity_tool_def(), usage_get_tool_def(), harness_config_tool_def(), voice_transcribe_tool_def(), voice_speak_tool_def()];
+            let mut tools = vec![auth_register_tool_def(), auth_login_tool_def(), auth_me_tool_def(), models_tool_def(), chat_tool_def(), chat_send_tool_def(), bots_list_tool_def(), bots_create_tool_def(), bots_get_tool_def(), bots_update_tool_def(), bots_children_tool_def(), bots_transfer_tool_def(), bots_append_memory_tool_def(), bots_set_avatar_tool_def(), bots_get_avatar_tool_def(), bot_archive_tool_def(), bot_pin_tool_def(), bot_set_role_tool_def(), bot_spawn_tool_def(), bot_send_tool_def(), groups_list_tool_def(), groups_create_tool_def(), groups_get_tool_def(), groups_rename_tool_def(), groups_delete_tool_def(), groups_add_member_tool_def(), groups_remove_member_tool_def(), groups_chat_tool_def(), groups_broadcast_tool_def(), meeting_list_tool_def(), meeting_get_tool_def(), meeting_start_tool_def(), meeting_chat_tool_def(), meeting_delete_tool_def(), schedules_update_tool_def(), schedule_create_tool_def(), schedule_list_tool_def(), schedule_delete_tool_def(), summaries_get_tool_def(), summaries_run_tool_def(), team_create_tool_def(), team_list_tool_def(), teams_get_tool_def(), teams_delete_tool_def(), team_invite_tool_def(), teams_set_member_tool_def(), teams_remove_member_tool_def(), teams_set_provider_tool_def(), teams_test_provider_tool_def(), teams_clear_provider_tool_def(), teams_activity_tool_def(), usage_get_tool_def(), harness_config_tool_def(), voice_transcribe_tool_def(), voice_speak_tool_def()];
             tools.extend(crate::platform_api::tool_defs());
             rpc_ok(id, json!({ "tools": tools }))
         },
@@ -325,12 +325,12 @@ pub async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes)
                 "schedule_create" => call_schedule_create(id, &state, &user_id, &args).await,
                 "schedule_list" => call_schedule_list(id, &state, &user_id, &args).await,
                 "schedule_delete" => call_schedule_delete(id, &state, &user_id, &args).await,
-                "huddle_start" => call_huddle_start(id, &state, &user_id, &args).await,
+                "meeting_start" => call_meeting_start(id, &state, &user_id, &args).await,
                 "team_create" => call_team_create(id, &state, &user_id, &args).await,
                 "team_list" => call_team_list(id, &state, &user_id, &args).await,
                 "team_invite" => call_team_invite(id, &state, &user_id, &args).await,
-                "huddle_list" => call_huddle_list(id, &state, &user_id, &args).await,
-                "huddle_chat" => call_huddle_chat(id, &state, &user_id, &args).await,
+                "meeting_list" => call_meeting_list(id, &state, &user_id, &args).await,
+                "meeting_chat" => call_meeting_chat(id, &state, &user_id, &args).await,
                 "auth_me" => call_auth_me(id, &state, &user_id).await,
                 "chat_send" => call_chat_send(id, &state, &user_id, &args).await,
                 "bots_list" => call_bots_list(id, &state, &user_id).await,
@@ -351,8 +351,8 @@ pub async fn rpc(State(state): State<AppState>, headers: HeaderMap, body: Bytes)
                 "groups_remove_member" => call_groups_remove_member(id, &state, &user_id, &args).await,
                 "groups_chat" => call_groups_chat(id, &state, &user_id, &args).await,
                 "groups_broadcast" => call_groups_broadcast(id, &state, &user_id, &args).await,
-                "huddle_get" => call_huddle_get(id, &state, &user_id, &args).await,
-                "huddle_delete" => call_huddle_delete(id, &state, &user_id, &args).await,
+                "meeting_get" => call_meeting_get(id, &state, &user_id, &args).await,
+                "meeting_delete" => call_meeting_delete(id, &state, &user_id, &args).await,
                 "schedules_update" => call_schedules_update(id, &state, &user_id, &args).await,
                 "summaries_get" => call_summaries_get(id, &state, &user_id, &args).await,
                 "summaries_run" => call_summaries_run(id, &state, &user_id, &args).await,
@@ -508,7 +508,7 @@ async fn call_team_invite(id: Value, state: &AppState, user_id: &str, args: &Val
     }
 }
 
-async fn call_huddle_start(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
+async fn call_meeting_start(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
     let topic = args.get("topic").and_then(|v| v.as_str()).unwrap_or("");
     let team_id = args.get("team_id").and_then(|v| v.as_str()).unwrap_or("");
     let ids: Option<Vec<String>> = args.get("slavebot_ids").and_then(|v| {
@@ -517,32 +517,32 @@ async fn call_huddle_start(id: Value, state: &AppState, user_id: &str, args: &Va
         })
     });
     let db = &state.db;
-    match crate::huddle::start_huddle(db, user_id, team_id, topic, ids).await {
-        Ok((huddle, participants)) => mcp_data(
+    match crate::meeting::start_meeting(db, user_id, team_id, topic, ids).await {
+        Ok((meeting, participants)) => mcp_data(
             id,
-            format!("Huddle started on \"{}\".", huddle.topic),
-            json!({ "huddle": huddle, "participants": participants, "messages": [] }),
+            format!("Meeting started on \"{}\".", meeting.topic),
+            json!({ "meeting": meeting, "participants": participants, "messages": [] }),
         ),
         Err(e) => rpc_err(id, -32000, &e),
     }
 }
 
-async fn call_huddle_list(id: Value, state: &AppState, user_id: &str, _args: &Value) -> Response {
+async fn call_meeting_list(id: Value, state: &AppState, user_id: &str, _args: &Value) -> Response {
     let db = &state.db;
-    match store::list_huddles(&db, user_id).await {
-        Ok(list) => mcp_data(id, format!("{} huddle(s).", list.len()), json!({ "huddles": list })),
+    match store::list_meetings(&db, user_id).await {
+        Ok(list) => mcp_data(id, format!("{} meeting(s).", list.len()), json!({ "meetings": list })),
         Err(e) => rpc_err(id, -32000, &format!("List failed: {e}")),
     }
 }
 
-async fn call_huddle_chat(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
-    let huddle_id = args.get("huddle_id").and_then(|v| v.as_str()).unwrap_or("");
+async fn call_meeting_chat(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
+    let meeting_id = args.get("meeting_id").and_then(|v| v.as_str()).unwrap_or("");
     let message = args.get("message").and_then(|v| v.as_str()).unwrap_or("");
-    if huddle_id.is_empty() || message.is_empty() {
-        return rpc_err(id, -32602, "The huddle_id and message arguments are required.");
+    if meeting_id.is_empty() || message.is_empty() {
+        return rpc_err(id, -32602, "The meeting_id and message arguments are required.");
     }
     let db = &state.db;
-    match crate::huddle::post_message(db, user_id, huddle_id, message, None).await {
+    match crate::meeting::post_message(db, user_id, meeting_id, message, None).await {
         Ok(r) => mcp_data(
             id,
             format!("{} replie(s), total ${:.6}.", r.replies.len(), r.total_cost),
@@ -793,12 +793,12 @@ fn groups_broadcast_tool_def() -> Value {
     json!({ "name": "groups_broadcast", "description": "Post one info message to a channel thread, optionally saving it into every member's memory.", "inputSchema": { "type": "object", "required": ["group_id", "text"], "properties": { "group_id": { "type": "string" }, "text": { "type": "string" }, "save_to_memory": { "type": "boolean" } } } })
 }
 
-fn huddle_get_tool_def() -> Value {
-    json!({ "name": "huddle_get", "description": "Huddle detail: huddle, participants, messages.", "inputSchema": { "type": "object", "required": ["huddle_id"], "properties": { "huddle_id": { "type": "string" } } } })
+fn meeting_get_tool_def() -> Value {
+    json!({ "name": "meeting_get", "description": "Meeting detail: meeting, participants, messages.", "inputSchema": { "type": "object", "required": ["meeting_id"], "properties": { "meeting_id": { "type": "string" } } } })
 }
 
-fn huddle_delete_tool_def() -> Value {
-    json!({ "name": "huddle_delete", "description": "Delete a huddle.", "inputSchema": { "type": "object", "required": ["huddle_id"], "properties": { "huddle_id": { "type": "string" } } } })
+fn meeting_delete_tool_def() -> Value {
+    json!({ "name": "meeting_delete", "description": "Delete a meeting.", "inputSchema": { "type": "object", "required": ["meeting_id"], "properties": { "meeting_id": { "type": "string" } } } })
 }
 
 fn schedules_update_tool_def() -> Value {
@@ -818,7 +818,7 @@ fn teams_get_tool_def() -> Value {
 }
 
 fn teams_delete_tool_def() -> Value {
-    json!({ "name": "teams_delete", "description": "Delete a team (bots archived, groups and huddles removed). Owner/admin only; personal team cannot be deleted.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } })
+    json!({ "name": "teams_delete", "description": "Delete a team (bots archived, groups and meetings removed). Owner/admin only; personal team cannot be deleted.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } })
 }
 
 fn teams_set_member_tool_def() -> Value {
@@ -1243,11 +1243,15 @@ async fn call_groups_get(id: Value, state: &AppState, user_id: &str, args: &Valu
         Ok(m) => m,
         Err(e) => return rpc_err(id, -32000, &format!("Database error: {e}")),
     };
+    let user_members = match store::group_user_members(&db, &group_id).await {
+        Ok(m) => m,
+        Err(e) => return rpc_err(id, -32000, &format!("Database error: {e}")),
+    };
     let messages = match store::group_history(&db, &group_id, 100).await {
         Ok(m) => m,
         Err(e) => return rpc_err(id, -32000, &format!("Database error: {e}")),
     };
-    mcp_data(id, format!("Group {}.", group.name), json!({ "group": group, "members": members, "messages": messages }))
+    mcp_data(id, format!("Group {}.", group.name), json!({ "group": group, "members": members, "user_members": user_members, "messages": messages }))
 }
 
 async fn call_groups_rename(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
@@ -1354,35 +1358,35 @@ async fn call_groups_broadcast(id: Value, state: &AppState, user_id: &str, args:
     }
 }
 
-async fn call_huddle_get(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
-    let huddle_id = arg_str(args, "huddle_id");
-    if huddle_id.is_empty() {
-        return rpc_err(id, -32602, "The huddle_id argument is required.");
+async fn call_meeting_get(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
+    let meeting_id = arg_str(args, "meeting_id");
+    if meeting_id.is_empty() {
+        return rpc_err(id, -32602, "The meeting_id argument is required.");
     }
     let db = &state.db;
-    let huddle = match store::get_huddle(&db, user_id, &huddle_id).await {
+    let meeting = match store::get_meeting(&db, user_id, &meeting_id).await {
         Ok(Some(h)) => h,
-        Ok(None) => return rpc_err(id, -32602, "Huddle not found."),
+        Ok(None) => return rpc_err(id, -32602, "Meeting not found."),
         Err(e) => return rpc_err(id, -32000, &format!("Database error: {e}")),
     };
-    let participants = store::huddle_participants(&db, &huddle_id).await.unwrap_or_default();
-    let messages = store::huddle_history(&db, &huddle_id, 100).await.unwrap_or_default();
+    let participants = store::meeting_participants(&db, &meeting_id).await.unwrap_or_default();
+    let messages = store::meeting_history(&db, &meeting_id, 100).await.unwrap_or_default();
     mcp_data(
         id,
-        format!("Huddle: {}.", huddle.topic),
-        json!({ "huddle": huddle, "participants": participants, "messages": messages }),
+        format!("Meeting: {}.", meeting.topic),
+        json!({ "meeting": meeting, "participants": participants, "messages": messages }),
     )
 }
 
-async fn call_huddle_delete(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
-    let huddle_id = arg_str(args, "huddle_id");
-    if huddle_id.is_empty() {
-        return rpc_err(id, -32602, "The huddle_id argument is required.");
+async fn call_meeting_delete(id: Value, state: &AppState, user_id: &str, args: &Value) -> Response {
+    let meeting_id = arg_str(args, "meeting_id");
+    if meeting_id.is_empty() {
+        return rpc_err(id, -32602, "The meeting_id argument is required.");
     }
     let db = &state.db;
-    match store::delete_huddle(&db, user_id, &huddle_id).await {
-        Ok(true) => mcp_data(id, "Huddle deleted.".to_string(), json!({ "deleted": true })),
-        Ok(false) => rpc_err(id, -32602, "Huddle not found."),
+    match store::delete_meeting(&db, user_id, &meeting_id).await {
+        Ok(true) => mcp_data(id, "Meeting deleted.".to_string(), json!({ "deleted": true })),
+        Ok(false) => rpc_err(id, -32602, "Meeting not found."),
         Err(e) => rpc_err(id, -32000, &format!("Delete failed: {e}")),
     }
 }

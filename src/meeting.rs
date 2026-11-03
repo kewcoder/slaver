@@ -1,13 +1,13 @@
 use crate::{chat, db::Db, provider, store};
 
-/// Slack-style huddles: one topic is pushed to bots, and each bot decides by
+/// Slack-style meetings: one topic is pushed to bots, and each bot decides by
 /// itself (from its role + memory) whether to join. Joined bots then discuss
-/// in the shared huddle thread. Join decisions are capped at 8 bots so one
-/// huddle start stays inside a single request's time budget.
+/// in the shared meeting thread. Join decisions are capped at 8 bots so one
+/// meeting start stays inside a single request's time budget.
 ///
-const MAX_HUDDLE_BOTS: usize = 8;
+const MAX_MEETING_BOTS: usize = 8;
 
-/// Ask one bot whether the huddle topic deserves its time.
+/// Ask one bot whether the meeting topic deserves its time.
 /// Returns (joined, reason) and bills the short decision call.
 async fn ask_to_join(
     prov: &provider::Provider,
@@ -25,7 +25,7 @@ async fn ask_to_join(
         chat::ChatMessage {
             role: "system".to_string(),
             content: format!(
-                "You are {name}, a slaveBot with this identity.\nRole: {role}\nOwner notes about you: {memory}\n\nA live huddle (short group call) just started. Only join when your role or knowledge is genuinely relevant to the topic.",
+                "You are {name}, a slaveBot with this identity.\nRole: {role}\nOwner notes about you: {memory}\n\nA live meeting (short group call) just started. Only join when your role or knowledge is genuinely relevant to the topic.",
                 name = bot.name,
                 memory = bot.memory.trim(),
             ),
@@ -34,7 +34,7 @@ async fn ask_to_join(
         chat::ChatMessage {
             role: "user".to_string(),
             content: format!(
-                "Huddle topic: \"{topic}\"\nReply with exactly one line: either `JOIN: <short reason>` or `DECLINE: <short reason>`.",
+                "Meeting topic: \"{topic}\"\nReply with exactly one line: either `JOIN: <short reason>` or `DECLINE: <short reason>`.",
             ),
             ..Default::default()
         },
@@ -43,7 +43,7 @@ async fn ask_to_join(
     let done = match chat::complete_with_usage(prov, &model, &messages, Some(&bot.id)).await {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("huddle ask {} failed: {e}", bot.id);
+            eprintln!("meeting ask {} failed: {e}", bot.id);
             return (false, "could not be reached".to_string());
         }
     };
@@ -86,15 +86,15 @@ async fn ask_to_join(
     (joined, reason)
 }
 
-/// Core huddle start, shared by the HTTP route and the MCP tool.
-/// Returns the huddle plus every bot's join/decline decision.
-pub async fn start_huddle(
+/// Core meeting start, shared by the HTTP route and the MCP tool.
+/// Returns the meeting plus every bot's join/decline decision.
+pub async fn start_meeting(
     db: &Db,
     user_id: &str,
     team_id: &str,
     topic: &str,
     slavebot_ids: Option<Vec<String>>,
-) -> Result<(store::HuddleRow, Vec<store::HuddleParticipant>), String> {
+) -> Result<(store::MeetingRow, Vec<store::MeetingParticipant>), String> {
     if topic.trim().is_empty() || topic.len() > 500 {
         return Err("topic must be 1..500 characters.".to_string());
     }
@@ -109,7 +109,7 @@ pub async fn start_huddle(
     }
     let mut candidates: Vec<store::BotRow> = Vec::new();
     if let Some(ids) = slavebot_ids {
-        for id in ids.iter().take(MAX_HUDDLE_BOTS) {
+        for id in ids.iter().take(MAX_MEETING_BOTS) {
             if let Some(bot) = store::get_bot(db, user_id, id).await.map_err(|e| e.to_string())? {
                 if bot.archived == 0 {
                     candidates.push(bot);
@@ -121,17 +121,17 @@ pub async fn start_huddle(
             .await
             .map_err(|e| e.to_string())?
             .into_iter()
-            .take(MAX_HUDDLE_BOTS)
+            .take(MAX_MEETING_BOTS)
             .collect();
     }
     if candidates.is_empty() {
-        return Err("No active slaveBots to huddle with.".to_string());
+        return Err("No active slaveBots to meeting with.".to_string());
     }
-    let huddle = store::create_huddle(db, user_id, team_id, topic).await.map_err(|e| e.to_string())?;
-    // Only bots on the huddle's team may be asked.
-    candidates.retain(|b| b.team_id == huddle.team_id);
+    let meeting = store::create_meeting(db, user_id, team_id, topic).await.map_err(|e| e.to_string())?;
+    // Only bots on the meeting's team may be asked.
+    candidates.retain(|b| b.team_id == meeting.team_id);
     if candidates.is_empty() {
-        return Err("None of those bots are on this huddle's team.".to_string());
+        return Err("None of those bots are on this meeting's team.".to_string());
     }
     for bot in &candidates {
         if !prov.own {
@@ -144,41 +144,41 @@ pub async fn start_huddle(
                 break;
             }
         }
-        let (joined, reason) = ask_to_join(&prov, db, user_id, bot, huddle.topic.trim()).await;
-        store::set_participant(db, &huddle.id, &bot.id, if joined { "join" } else { "decline" }, &reason)
+        let (joined, reason) = ask_to_join(&prov, db, user_id, bot, meeting.topic.trim()).await;
+        store::set_participant(db, &meeting.id, &bot.id, if joined { "join" } else { "decline" }, &reason)
             .await
             .map_err(|e| e.to_string())?;
     }
-    store::touch_huddle(db, &huddle.id).await.map_err(|e| e.to_string())?;
-    let participants = store::huddle_participants(db, &huddle.id).await.map_err(|e| e.to_string())?;
-    Ok((huddle, participants))
+    store::touch_meeting(db, &meeting.id).await.map_err(|e| e.to_string())?;
+    let participants = store::meeting_participants(db, &meeting.id).await.map_err(|e| e.to_string())?;
+    Ok((meeting, participants))
 }
 
-pub struct HuddleChatResult {
+pub struct MeetingChatResult {
     pub replies: Vec<serde_json::Value>,
     pub total_cost: f64,
     pub credit: f64,
 }
 
-/// Core huddle fan-out, shared by the HTTP route and the MCP tool.
+/// Core meeting fan-out, shared by the HTTP route and the MCP tool.
 pub async fn post_message(
     db: &Db,
     user_id: &str,
-    huddle_id: &str,
+    meeting_id: &str,
     message: &str,
     model_override: Option<String>,
-) -> Result<HuddleChatResult, String> {
+) -> Result<MeetingChatResult, String> {
     if message.is_empty() || message.len() > 8000 {
         return Err("message must be 1..8000 characters.".to_string());
     }
-    let huddle = store::get_huddle(db, user_id, huddle_id)
+    let meeting = store::get_meeting(db, user_id, meeting_id)
         .await
         .map_err(|e| e.to_string())?;
-    let huddle = match huddle {
+    let meeting = match meeting {
         Some(h) => h,
-        None => return Err("Huddle not found.".to_string()),
+        None => return Err("Meeting not found.".to_string()),
     };
-    let prov = provider::provider_for(db, &huddle.team_id).await.map_err(|e| e.to_string())?;
+    let prov = provider::provider_for(db, &meeting.team_id).await.map_err(|e| e.to_string())?;
     let credit = store::get_user(db, user_id)
         .await
         .map_err(|e| e.to_string())?
@@ -189,7 +189,7 @@ pub async fn post_message(
     }
     // Full bot rows for the joined participants (participants only carry names).
     let mut members: Vec<store::BotRow> = Vec::new();
-    for p in store::huddle_participants(db, huddle_id).await.map_err(|e| e.to_string())? {
+    for p in store::meeting_participants(db, meeting_id).await.map_err(|e| e.to_string())? {
         if p.decision != "join" {
             continue;
         }
@@ -200,13 +200,13 @@ pub async fn post_message(
         }
     }
     if members.is_empty() {
-        return Err("Nobody joined this huddle.".to_string());
+        return Err("Nobody joined this meeting.".to_string());
     }
 
-    store::insert_huddle_message(db, huddle_id, None, "user", message)
+    store::insert_meeting_message(db, meeting_id, None, "user", message)
         .await
         .map_err(|e| e.to_string())?;
-    let thread = store::huddle_history(db, huddle_id, 20).await.map_err(|e| e.to_string())?;
+    let thread = store::meeting_history(db, meeting_id, 20).await.map_err(|e| e.to_string())?;
 
     let mut replies = Vec::new();
     let mut total_cost = 0.0;
@@ -224,7 +224,7 @@ pub async fn post_message(
         let mut history = vec![chat::ChatMessage {
             role: "user".to_string(),
             content: format!(
-                "You are {name}, in a live huddle about the topic above.{role_line} Reply as yourself, briefly.",
+                "You are {name}, in a live meeting about the topic above.{role_line} Reply as yourself, briefly.",
                 name = bot.name,
             ),
             ..Default::default()
@@ -255,10 +255,10 @@ pub async fn post_message(
         }
         with_context.extend(history);
 
-        let done = match chat::complete_with_usage(&prov, &model, &with_context, Some(huddle_id)).await {
+        let done = match chat::complete_with_usage(&prov, &model, &with_context, Some(meeting_id)).await {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("huddle chat bot {} failed: {e}", bot.id);
+                eprintln!("meeting chat bot {} failed: {e}", bot.id);
                 let msg = if e.starts_with("No model") || e.starts_with("No model key") || e.starts_with("This provider") {
                     e
                 } else {
@@ -271,7 +271,7 @@ pub async fn post_message(
                 continue;
             }
         };
-        store::insert_huddle_message(db, huddle_id, Some(bot), "assistant", &done.text)
+        store::insert_meeting_message(db, meeting_id, Some(bot), "assistant", &done.text)
             .await
             .map_err(|e| e.to_string())?;
         let (cost, credit_left) = store::record_usage(
@@ -299,7 +299,7 @@ pub async fn post_message(
             "cost_usd": cost,
         }));
     }
-    store::touch_huddle(db, huddle_id).await.map_err(|e| e.to_string())?;
-    Ok(HuddleChatResult { replies, total_cost, credit: remaining })
+    store::touch_meeting(db, meeting_id).await.map_err(|e| e.to_string())?;
+    Ok(MeetingChatResult { replies, total_cost, credit: remaining })
 
 }

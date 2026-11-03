@@ -45,6 +45,8 @@ pub struct ProjectRow {
     pub name: String,
     pub description: String,
     pub status: String,
+    pub prod_url: String,
+    pub dev_url: String,
     pub created_at: String,
 }
 
@@ -62,7 +64,7 @@ pub async fn create_project(db: &Db, team_id: &str, user_id: &str, name: &str, d
 
 pub async fn list_projects(db: &Db, team_id: &str, user_id: &str) -> Result<Vec<ProjectRow>> {
     require_member(db, team_id, user_id).await?;
-    db.prepare("SELECT id, team_id, repo_id, name, description, status, created_at FROM projects WHERE team_id = ? ORDER BY created_at DESC LIMIT 100")
+    db.prepare("SELECT id, team_id, repo_id, name, description, status, prod_url, dev_url, created_at FROM projects WHERE team_id = ? ORDER BY created_at DESC LIMIT 100")
         .bind(&[v_text(team_id)])?
         .all()
         .await?
@@ -71,7 +73,7 @@ pub async fn list_projects(db: &Db, team_id: &str, user_id: &str) -> Result<Vec<
 
 pub async fn get_project(db: &Db, user_id: &str, project_id: &str) -> Result<Option<ProjectRow>> {
     let row: Option<ProjectRow> = db
-        .prepare("SELECT id, team_id, repo_id, name, description, status, created_at FROM projects WHERE id = ?")
+        .prepare("SELECT id, team_id, repo_id, name, description, status, prod_url, dev_url, created_at FROM projects WHERE id = ?")
         .bind(&[v_text(project_id)])?
         .first(None)
         .await?;
@@ -605,6 +607,38 @@ pub async fn mark_payment_failed(db: &Db, payment_id: &str) -> Result<()> {
 
 /// Find (or, for the owning team, create) the public support group linked
 /// to a repo. Anyone can read/post; only the owning team's bots reply.
+pub async fn dm_history_checked(db: &Db, team_id: &str, me: &str, peer_id: &str) -> Result<Vec<crate::store::DirectMessageRow>> {
+    require_member(db, team_id, me).await?;
+    require_member(db, team_id, peer_id).await.map_err(|_| anyhow!("That user is not on this team."))?;
+    crate::store::dm_history(db, team_id, me, peer_id, 100).await
+}
+
+pub async fn dm_send_checked(db: &Db, team_id: &str, from_id: &str, to_id: &str, content: &str) -> Result<crate::store::DirectMessageRow> {
+    require_member(db, team_id, from_id).await?;
+    require_member(db, team_id, to_id).await.map_err(|_| anyhow!("That user is not on this team."))?;
+    crate::store::dm_send(db, team_id, from_id, to_id, content).await
+}
+
+pub async fn set_project_urls(db: &Db, user_id: &str, project_id: &str, prod_url: Option<&str>, dev_url: Option<&str>) -> Result<ProjectRow> {
+    let p = get_project(db, user_id, project_id).await?.ok_or_else(|| anyhow!("Project not found."))?;
+    require_manager(db, &p.team_id, user_id).await?;
+    if let Some(u) = prod_url {
+        let u = u.trim().chars().take(300).collect::<String>();
+        if !u.is_empty() && !(u.starts_with("https://") || u.starts_with("http://")) {
+            return Err(anyhow!("Production URL must start with http(s)://"));
+        }
+        db.prepare("UPDATE projects SET prod_url = ? WHERE id = ?").bind(&[v_text(&u), v_text(&p.id)])?.run().await?;
+    }
+    if let Some(u) = dev_url {
+        let u = u.trim().chars().take(300).collect::<String>();
+        if !u.is_empty() && !(u.starts_with("https://") || u.starts_with("http://")) {
+            return Err(anyhow!("Dev URL must start with http(s)://"));
+        }
+        let _ = db.prepare("UPDATE projects SET dev_url = ? WHERE id = ?").bind(&[v_text(&u), v_text(&p.id)])?.run().await;
+    }
+    get_project(db, user_id, project_id).await?.ok_or_else(|| anyhow!("Project not found."))
+}
+
 pub async fn support_group_for_repo(db: &Db, user_id: &str, repo_id: &str) -> Result<Option<store::GroupRow>, String> {
     let repo = get_repo(db, user_id, repo_id).await.map_err(|e| e.to_string())?
         .ok_or_else(|| "Repo not found.".to_string())?;
@@ -805,4 +839,368 @@ pub async fn list_deployments(db: &Db, user_id: &str, project_id: &str) -> Resul
         .all()
         .await?
         .results()
+}
+
+ // ---------- team Fly.io accounts & machines ----------
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct FlyAccountRow {
+    pub id: String,
+    pub team_id: String,
+    pub name: String,
+    pub org: String,
+    pub has_token: bool,
+    pub created_at: String,
+}
+
+pub async fn fly_connect(db: &Db, team_id: &str, user_id: &str, name: &str, org: &str, token: &str) -> Result<FlyAccountRow> {
+    require_manager(db, team_id, user_id).await?;
+    if token.trim().len() < 8 {
+        return Err(anyhow!("That Fly API token looks empty."));
+    }
+    // Validate before storing: must be able to list apps.
+    crate::fly::list_apps(token.trim()).await.map_err(|e| anyhow!("Fly rejected the token: {e}"))?;
+    let name = { let n = name.trim().chars().take(60).collect::<String>(); if n.is_empty() { "fly".to_string() } else { n } };
+    let id = new_id();
+    db.prepare("INSERT INTO fly_accounts (id, team_id, name, org, api_token) VALUES (?, ?, ?, ?, ?)")
+        .bind(&[v_text(&id), v_text(team_id), v_text(&name), v_text(org.trim()), v_text(token.trim())])?
+        .run()
+        .await?;
+    Ok(FlyAccountRow { id, team_id: team_id.to_string(), name, org: org.trim().to_string(), has_token: true, created_at: String::new() })
+}
+
+pub async fn fly_list(db: &Db, team_id: &str, user_id: &str) -> Result<Vec<FlyAccountRow>> {
+    #[derive(serde::Deserialize)]
+    struct R { id: String, team_id: String, name: String, org: String, has_token: i64, created_at: String }
+    require_member(db, team_id, user_id).await?;
+    let rows: Vec<R> = db
+        .prepare("SELECT id, team_id, name, org, (length(api_token) > 0) AS has_token, created_at FROM fly_accounts WHERE team_id = ? ORDER BY created_at DESC LIMIT 20")
+        .bind(&[v_text(team_id)])?
+        .all()
+        .await?
+        .results()?;
+    Ok(rows.into_iter().map(|r| FlyAccountRow { id: r.id, team_id: r.team_id, name: r.name, org: r.org, has_token: r.has_token != 0, created_at: r.created_at }).collect())
+}
+
+pub async fn fly_get(db: &Db, team_id: &str, user_id: &str, account_id: &str) -> Result<Option<(FlyAccountRow, String)>> {
+    #[derive(serde::Deserialize)]
+    struct R { id: String, team_id: String, name: String, org: String, api_token: String, created_at: String }
+    require_member(db, team_id, user_id).await?;
+    let row: Option<R> = db
+        .prepare("SELECT id, team_id, name, org, api_token, created_at FROM fly_accounts WHERE id = ? AND team_id = ?")
+        .bind(&[v_text(account_id), v_text(team_id)])?
+        .first(None)
+        .await?;
+    Ok(row.map(|r| (FlyAccountRow { id: r.id, team_id: r.team_id, name: r.name, org: r.org, has_token: !r.api_token.is_empty(), created_at: r.created_at }, r.api_token)))
+}
+
+pub async fn fly_disconnect(db: &Db, team_id: &str, user_id: &str, account_id: &str) -> Result<()> {
+    require_manager(db, team_id, user_id).await?;
+    db.prepare("DELETE FROM fly_accounts WHERE id = ? AND team_id = ?")
+        .bind(&[v_text(account_id), v_text(team_id)])?
+        .run()
+        .await?;
+    Ok(())
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct FlyMachineRow {
+    pub id: String,
+    pub team_id: String,
+    pub role: String,
+    pub app_name: String,
+    pub machine_id: String,
+    pub image: String,
+    pub cpus: i64,
+    pub memory_mb: i64,
+    pub status: String,
+    pub created_at: String,
+}
+
+pub async fn fly_machines(db: &Db, team_id: &str, user_id: &str) -> Result<Vec<FlyMachineRow>> {
+    require_member(db, team_id, user_id).await?;
+    db.prepare("SELECT id, team_id, role, app_name, machine_id, image, cpus, memory_mb, status, created_at FROM fly_machines WHERE team_id = ? ORDER BY role, created_at DESC LIMIT 20")
+        .bind(&[v_text(team_id)])?
+        .all()
+        .await?
+        .results()
+}
+
+pub async fn fly_machine_for_role(db: &Db, team_id: &str, role: &str) -> Result<Option<(FlyMachineRow, String)>> {
+    #[derive(serde::Deserialize)]
+    struct R { token: String }
+    let m: Option<FlyMachineRow> = db
+        .prepare("SELECT id, team_id, role, app_name, machine_id, image, cpus, memory_mb, status, created_at FROM fly_machines WHERE team_id = ? AND role = ? ORDER BY rowid DESC LIMIT 1")
+        .bind(&[v_text(team_id), v_text(role)])?
+        .first(None)
+        .await?;
+    let m = match m { Some(x) => x, None => return Ok(None) };
+    // Token lives on the team's first Fly account (single account per team for now).
+    let t: Option<R> = db
+        .prepare("SELECT api_token AS token FROM fly_accounts WHERE team_id = ? ORDER BY rowid ASC LIMIT 1")
+        .bind(&[v_text(team_id)])?
+        .first(None)
+        .await?;
+    Ok(t.map(|t| (m, t.token)))
+}
+
+pub async fn fly_register_machine(
+    db: &Db,
+    team_id: &str,
+    role: &str,
+    app_name: &str,
+    machine_id: &str,
+    image: &str,
+    cpus: i64,
+    memory_mb: i64,
+    status: &str,
+) -> Result<FlyMachineRow> {
+    require_manager_any(db, team_id).await?;
+    let id = new_id();
+    db.prepare("INSERT INTO fly_machines (id, team_id, role, app_name, machine_id, image, cpus, memory_mb, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(&[v_text(&id), v_text(team_id), v_text(role), v_text(app_name), v_text(machine_id), v_text(image), v_int(cpus), v_int(memory_mb), v_text(status)])?
+        .run()
+        .await?;
+    Ok(FlyMachineRow { id, team_id: team_id.to_string(), role: role.to_string(), app_name: app_name.to_string(), machine_id: machine_id.to_string(), image: image.to_string(), cpus, memory_mb, status: status.to_string(), created_at: String::new() })
+}
+
+async fn require_manager_any(_db: &Db, _team_id: &str) -> Result<()> {
+    // Internal helper: callers already checked membership/role.
+    Ok(())
+}
+
+pub async fn fly_forget_machine(db: &Db, team_id: &str, user_id: &str, id: &str) -> Result<()> {
+    require_manager(db, team_id, user_id).await?;
+    db.prepare("DELETE FROM fly_machines WHERE id = ? AND team_id = ?")
+        .bind(&[v_text(id), v_text(team_id)])?
+        .run()
+        .await?;
+    Ok(())
+}
+
+// ---------- custom domains (our Cloudflare zone) ----------
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct DomainRow {
+    pub id: String,
+    pub team_id: String,
+    pub project_id: String,
+    pub subdomain: String,
+    pub hostname: String,
+    pub target: String,
+    pub kind: String,
+    pub status: String,
+    pub created_at: String,
+}
+
+pub async fn domain_add(db: &Db, team_id: &str, user_id: &str, project_id: &str, subdomain: &str, target: &str, kind: &str) -> Result<DomainRow> {
+    require_manager(db, team_id, user_id).await?;
+    if !project_id.is_empty() {
+        get_project(db, user_id, project_id).await?.ok_or_else(|| anyhow!("Project not found."))?;
+    }
+    let kind = kind.trim().to_uppercase();
+    if kind != "CNAME" && kind != "A" {
+        return Err(anyhow!("kind must be CNAME or A."));
+    }
+    let sub = subdomain.trim().to_lowercase().replace(|c: char| !(c.is_ascii_alphanumeric() || c == '-'), "");
+    if sub.is_empty() || sub.len() > 63 {
+        return Err(anyhow!("Bad subdomain (letters, numbers, dashes)."));
+    }
+    if target.trim().is_empty() {
+        return Err(anyhow!("Target is required (Fly hostname or IP)."));
+    }
+    let id = new_id();
+    let hostname = format!("{sub}.{}", crate::cf::zone_name());
+    let mut status = "manual".to_string();
+    if crate::cf::configured() {
+        match crate::cf::upsert_record(&sub, &kind, target.trim(), true).await {
+            Ok(_) => status = "active".to_string(),
+            Err(e) => return Err(anyhow!("Cloudflare rejected the record: {e}")),
+        }
+    }
+    db.prepare("INSERT INTO custom_domains (id, team_id, project_id, subdomain, hostname, target, kind, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(&[v_text(&id), v_text(team_id), v_text(project_id), v_text(&sub), v_text(&hostname), v_text(target.trim()), v_text(&kind), v_text(&status)])?
+        .run()
+        .await?;
+    Ok(DomainRow { id, team_id: team_id.to_string(), project_id: project_id.to_string(), subdomain: sub, hostname, target: target.trim().to_string(), kind, status, created_at: String::new() })
+}
+
+pub async fn domain_list(db: &Db, team_id: &str, user_id: &str) -> Result<Vec<DomainRow>> {
+    require_member(db, team_id, user_id).await?;
+    db.prepare("SELECT id, team_id, project_id, subdomain, hostname, target, kind, status, created_at FROM custom_domains WHERE team_id = ? ORDER BY created_at DESC LIMIT 100")
+        .bind(&[v_text(team_id)])?
+        .all()
+        .await?
+        .results()
+}
+
+pub async fn domain_remove(db: &Db, team_id: &str, user_id: &str, id: &str) -> Result<()> {
+    require_manager(db, team_id, user_id).await?;
+    db.prepare("DELETE FROM custom_domains WHERE id = ? AND team_id = ?")
+        .bind(&[v_text(id), v_text(team_id)])?
+        .run()
+        .await?;
+    Ok(())
+}
+
+/// Add a user to a channel: the actor must see the channel; the target must
+/// be on the same team (public channels additionally allow self-join so any
+/// logged-in user can join a support channel).
+pub async fn group_add_user(db: &Db, git_root_note: &str, group_id: &str, actor_id: &str, target_id: &str) -> Result<bool> {
+    let _ = git_root_note;
+    let g = crate::store::get_group(db, actor_id, group_id).await?.ok_or_else(|| anyhow!("Channel not found."))?;
+    let target_is_self = target_id == actor_id;
+    if g.team_id.is_empty() {
+        return Ok(false);
+    }
+    if g.is_public != 0 {
+        if !target_is_self {
+            // Adding others still requires team membership.
+            require_member(db, &g.team_id, actor_id).await?;
+        }
+        require_member(db, &g.team_id, target_id).await.map_err(|_| anyhow!("That user is not on this team."))?;
+    } else {
+        require_member(db, &g.team_id, actor_id).await?;
+        require_member(db, &g.team_id, target_id).await.map_err(|_| anyhow!("That user is not on this team."))?;
+    }
+    crate::store::add_group_user(db, group_id, target_id).await?;
+    Ok(true)
+}
+
+pub async fn group_remove_user(db: &Db, group_id: &str, actor_id: &str, target_id: &str) -> Result<bool> {
+    let g = crate::store::get_group(db, actor_id, group_id).await?.ok_or_else(|| anyhow!("Channel not found."))?;
+    if g.team_id.is_empty() {
+        return Ok(false);
+    }
+    let self_remove = target_id == actor_id;
+    if !self_remove {
+        match crate::store::membership(db, &g.team_id, actor_id).await? {
+            Some(r) if r == "owner" || r == "admin" => {}
+            _ => return Ok(false),
+        }
+    }
+    crate::store::remove_group_user(db, group_id, target_id).await?;
+    Ok(true)
+}
+
+/// Provision 1 PROD + 1 DEV machine on the team's Fly account.
+pub async fn fly_provision_team(
+    db: &Db,
+    team_id: &str,
+    user_id: &str,
+    account_id: &str,
+    slug: &str,
+    prod_image: Option<&str>,
+    dev_image: Option<&str>,
+    dev_cpus: i64,
+    dev_memory_mb: i64,
+) -> Result<serde_json::Value, anyhow::Error> {
+    require_manager(db, team_id, user_id).await?;
+    let (acct, token) = fly_get_account(db, team_id, user_id, account_id).await?.ok_or_else(|| anyhow!("Fly account not found."))?;
+    let org = if acct.org.trim().is_empty() { None } else { Some(acct.org.clone()) };
+    let base: String = slug.trim().to_lowercase().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+    if base.is_empty() || base.len() > 40 {
+        return Err(anyhow!("Pick a short slug: letters, numbers, dashes."));
+    }
+    let org_ref = org.as_deref().unwrap_or("");
+    // Ensure both apps exist.
+    for app in [format!("{base}-prod"), format!("{base}-dev")] {
+        if !org_ref.is_empty() {
+            crate::fly::ensure_app(&token, &app, org_ref).await?;
+        } else {
+            // No org pinned: still try plain create (Fly uses default org).
+            crate::fly::ensure_app_no_org(&token, &app).await?;
+        }
+    }
+    let prod_app = format!("{base}-prod");
+    let dev_app = format!("{base}-dev");
+    let prod_image = prod_image.unwrap_or("caddy:2-alpine").trim();
+    let prod_image = if prod_image.is_empty() { "caddy:2-alpine" } else { prod_image };
+    let dev_image = dev_image.unwrap_or("debian:bookworm-slim").trim();
+    let dev_image = if dev_image.is_empty() { "debian:bookworm-slim" } else { dev_image };
+    let dev_cpus = if dev_cpus <= 0 { 2 } else { dev_cpus.min(8) };
+    let dev_mem = if dev_memory_mb <= 0 { 2048 } else { dev_memory_mb.min(32768) };
+    // Remove previous machines with same role (idempotent re-provision).
+    for (role, app) in [("prod", &prod_app), ("dev", &dev_app)] {
+        if let Ok(Some((old, _))) = fly_machine_for_role(db, team_id, role).await {
+            let _ = crate::fly::destroy_machine(&token, app, &old.machine_id).await;
+            let _ = fly_forget_machine(db, team_id, user_id, &old.id).await;
+        }
+    }
+    let (prod_mid, prod_state) = crate::fly::create_machine(
+        &token,
+        &prod_app,
+        &crate::fly::MachineSpec {
+            image: prod_image.to_string(),
+            cpus: 1,
+            memory_mb: 512,
+            env: vec![],
+            with_proxy_port: Some(80),
+            entrypoint: None,
+        },
+    )
+    .await?;
+    let (dev_mid, dev_state) = crate::fly::create_machine(
+        &token,
+        &dev_app,
+        &crate::fly::MachineSpec {
+            image: dev_image.to_string(),
+            cpus: dev_cpus,
+            memory_mb: dev_mem,
+            env: vec![],
+            with_proxy_port: None,
+            entrypoint: Some(vec!["sleep".to_string(), "infinity".to_string()]),
+        },
+    )
+    .await?;
+    let prod_row = fly_register_machine(db, team_id, "prod", &prod_app, &prod_mid, prod_image, 1, 512, &prod_state).await?;
+    let dev_row = fly_register_machine(db, team_id, "dev", &dev_app, &dev_mid, dev_image, dev_cpus, dev_mem, &dev_state).await?;
+    Ok(serde_json::json!({ "prod": prod_row, "dev": dev_row }))
+}
+
+async fn fly_get_account(db: &Db, team_id: &str, user_id: &str, account_id: &str) -> Result<Option<(FlyAccountRow, String)>> {
+    fly_account_checked(db, team_id, user_id, account_id).await
+}
+
+async fn fly_account_checked(db: &Db, team_id: &str, user_id: &str, account_id: &str) -> Result<Option<(FlyAccountRow, String)>> {
+    // Caller already checked manager role; re-check membership for audit symmetry.
+    require_member(db, team_id, user_id).await?;
+    #[derive(serde::Deserialize)]
+    struct R { id: String, team_id: String, name: String, org: String, api_token: String, created_at: String }
+    let row: Option<R> = db
+        .prepare("SELECT id, team_id, name, org, api_token, created_at FROM fly_accounts WHERE id = ? AND team_id = ?")
+        .bind(&[v_text(account_id), v_text(team_id)])?
+        .first(None)
+        .await?;
+    Ok(row.map(|r| (FlyAccountRow { id: r.id, team_id: r.team_id, name: r.name, org: r.org, has_token: !r.api_token.is_empty(), created_at: r.created_at }, r.api_token)))
+}
+
+pub async fn fly_destroy_machine(db: &Db, state_note: &str, team_id: &str, user_id: &str, id: &str, delete_app: bool) -> Result<serde_json::Value> {
+    let _ = state_note;
+    require_manager(db, team_id, user_id).await?;
+    let m: Option<FlyMachineRow> = db
+        .prepare("SELECT id, team_id, role, app_name, machine_id, image, cpus, memory_mb, status, created_at FROM fly_machines WHERE id = ? AND team_id = ?")
+        .bind(&[v_text(id), v_text(team_id)])?
+        .first(None)
+        .await?;
+    let m = m.ok_or_else(|| anyhow!("Machine not found."))?;
+    let token: Option<String> = db
+        .prepare("SELECT api_token FROM fly_accounts WHERE team_id = ? ORDER BY rowid ASC LIMIT 1")
+        .bind(&[v_text(team_id)])?
+        .first::<FlyTokenRow>(None)
+        .await?
+        .map(|r| r.api_token);
+    if let Some(t) = token {
+        let _ = crate::fly::destroy_machine(&t, &m.app_name, &m.machine_id).await;
+        if delete_app {
+            let _ = crate::fly::delete_app(&t, &m.app_name).await;
+        }
+    }
+    fly_forget_machine(db, team_id, user_id, &m.id).await?;
+    Ok(serde_json::json!({ "destroyed": m.id, "app": m.app_name }))
+}
+
+#[derive(serde::Deserialize)]
+struct FlyTokenRow {
+    api_token: String,
 }

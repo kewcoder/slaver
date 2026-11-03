@@ -236,7 +236,7 @@ export interface ActivityItem {
   created_at: string;
 }
 
-export interface Huddle {
+export interface Meeting {
   id: string;
   user_id: string;
   team_id: string;
@@ -246,8 +246,8 @@ export interface Huddle {
   updated_at: string;
 }
 
-export interface HuddleParticipant {
-  huddle_id: string;
+export interface MeetingParticipant {
+  meeting_id: string;
   slavebot_id: string;
   bot_name: string | null;
   decision: string;
@@ -255,9 +255,9 @@ export interface HuddleParticipant {
   created_at: string;
 }
 
-export interface HuddleMessage {
+export interface MeetingMessage {
   id: number;
-  huddle_id: string;
+  meeting_id: string;
   slavebot_id: string | null;
   bot_name: string | null;
   role: string;
@@ -265,10 +265,10 @@ export interface HuddleMessage {
   created_at: string;
 }
 
-export interface HuddleDetail {
-  huddle: Huddle;
-  participants: HuddleParticipant[];
-  messages: HuddleMessage[];
+export interface MeetingDetail {
+  meeting: Meeting;
+  participants: MeetingParticipant[];
+  messages: MeetingMessage[];
 }
 
 export interface TranscribeResult {
@@ -604,33 +604,33 @@ export async function broadcast(
   return callTool("groups_broadcast", { group_id: groupId, text, save_to_memory: saveToMemory });
 }
 
-// ---------- huddles ----------
+// ---------- meetings ----------
 
-export async function fetchHuddles(): Promise<Huddle[]> {
-  const data = await callTool<{ huddles: Huddle[] }>("huddle_list");
-  return data.huddles;
+export async function fetchMeetings(): Promise<Meeting[]> {
+  const data = await callTool<{ meetings: Meeting[] }>("meeting_list");
+  return data.meetings;
 }
 
-export async function createHuddle(topic: string, slavebot_ids?: string[], team_id?: string): Promise<HuddleDetail> {
+export async function createMeeting(topic: string, slavebot_ids?: string[], team_id?: string): Promise<MeetingDetail> {
   const args: Record<string, unknown> = { topic };
   if (slavebot_ids) args.slavebot_ids = slavebot_ids;
   if (team_id) args.team_id = team_id;
-  return callTool<HuddleDetail>("huddle_start", args);
+  return callTool<MeetingDetail>("meeting_start", args);
 }
 
-export async function fetchHuddleDetail(huddleId: string): Promise<HuddleDetail> {
-  return callTool<HuddleDetail>("huddle_get", { huddle_id: huddleId });
+export async function fetchMeetingDetail(meetingId: string): Promise<MeetingDetail> {
+  return callTool<MeetingDetail>("meeting_get", { meeting_id: meetingId });
 }
 
-export async function deleteHuddle(huddleId: string): Promise<void> {
-  await callTool("huddle_delete", { huddle_id: huddleId });
+export async function deleteMeeting(meetingId: string): Promise<void> {
+  await callTool("meeting_delete", { meeting_id: meetingId });
 }
 
-export async function huddleChat(
-  huddleId: string,
+export async function meetingChat(
+  meetingId: string,
   message: string,
 ): Promise<{ replies: GroupReply[]; total_cost_usd: number; credit_usd: number }> {
-  return callTool("huddle_chat", { huddle_id: huddleId, message });
+  return callTool("meeting_chat", { meeting_id: meetingId, message });
 }
 
 // ---------- summaries ----------
@@ -940,6 +940,43 @@ export async function startDeploy(projectId: string, vpsId: string): Promise<Dep
 export async function fetchDeployments(projectId: string): Promise<Deployment[]> {
   const data = await callTool<{ deployments: Deployment[] }>("deployments_list", { project_id: projectId });
   return data.deployments;
+}
+
+export interface FlyAccount { id: string; team_id: string; name: string; org: string; has_token: boolean; created_at: string; }
+export interface FlyMachine { id: string; team_id: string; role: string; app_name: string; machine_id: string; image: string; cpus: number; memory_mb: number; status: string; live?: unknown; created_at: string; }
+export interface CustomDomain { id: string; team_id: string; project_id: string; subdomain: string; hostname: string; target: string; kind: string; status: string; created_at: string; }
+
+export async function fetchFlyAccounts(teamId: string): Promise<FlyAccount[]> {
+  const data = await callTool<{ accounts: FlyAccount[] }>("fly_accounts", { team_id: teamId });
+  return data.accounts;
+}
+export async function connectFly(teamId: string, v: { name: string; org: string; api_token: string }): Promise<FlyAccount> {
+  const data = await callTool<{ account: FlyAccount }>("fly_connect", { team_id: teamId, ...v });
+  return data.account;
+}
+export async function disconnectFly(teamId: string, accountId: string): Promise<void> {
+  await callTool("fly_disconnect", { team_id: teamId, account_id: accountId });
+}
+export async function provisionFly(teamId: string, v: { account_id: string; name: string; prod_image?: string; dev_image?: string; dev_cpus?: number; dev_memory?: number }): Promise<{ prod: FlyMachine; dev: FlyMachine }> {
+  return callTool("fly_provision", { team_id: teamId, ...v });
+}
+export async function fetchFlyMachines(teamId: string): Promise<FlyMachine[]> {
+  const data = await callTool<{ machines: FlyMachine[] }>("fly_machines", { team_id: teamId });
+  return data.machines;
+}
+export async function destroyFlyMachine(teamId: string, machineId: string, deleteApp?: boolean): Promise<void> {
+  await callTool("fly_destroy", { team_id: teamId, machine_id: machineId, delete_app: !!deleteApp });
+}
+export async function fetchDomains(teamId: string): Promise<CustomDomain[]> {
+  const data = await callTool<{ domains: CustomDomain[] }>("domains_list", { team_id: teamId });
+  return data.domains;
+}
+export async function addDomain(teamId: string, v: { project_id?: string; subdomain: string; target: string; kind?: string }): Promise<CustomDomain> {
+  const data = await callTool<{ domain: CustomDomain }>("domains_add", { team_id: teamId, project_id: v.project_id ?? "", subdomain: v.subdomain, target: v.target, kind: v.kind ?? "CNAME" });
+  return data.domain;
+}
+export async function removeDomain(teamId: string, domainId: string): Promise<void> {
+  await callTool("domains_remove", { team_id: teamId, domain_id: domainId });
 }
 
 // ---------- harness (Codex-like agent runs in Sandbox containers) ----------
