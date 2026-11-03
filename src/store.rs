@@ -47,21 +47,6 @@ pub struct BotRow {
 
 
 
-#[derive(Deserialize, Serialize)]
-pub struct UsageRow {
-    pub id: i64,
-    pub slavebot_id: Option<String>,
-    pub slavebot_name: Option<String>,
-    pub model: String,
-    pub prompt_tokens: i64,
-    pub completion_tokens: i64,
-    pub total_tokens: i64,
-    pub cost_usd: f64,
-    pub estimated: i64,
-    pub audio_seconds: f64,
-    pub created_at: String,
-}
-
 pub async fn get_user(db: &Db, id: &str) -> Result<Option<UserRecord>> {
     db.prepare("SELECT id, email, name FROM users WHERE id = ?")
         .bind(&[v_text(id)])?
@@ -688,11 +673,12 @@ pub async fn insert_group_message(
     role: &str,
     content: &str,
 ) -> Result<()> {
+    // user_id is NOT NULL ('' = bot message): never bind an explicit NULL.
     db.prepare("INSERT INTO group_messages (group_id, slavebot_id, user_id, role, content) VALUES (?, ?, ?, ?, ?)")
         .bind(&[
             v_text(group_id),
         slavebot_id.map(v_text).unwrap_or(v_null()),
-            user_id.map(v_text).unwrap_or(v_null()),
+            user_id.map(v_text).unwrap_or_else(|| v_text("")),
             v_text(role),
             v_text(content),
         ])?

@@ -3,7 +3,7 @@
 //! Requires CF_API_TOKEN (Zone:DNS:Edit) + CF_ZONE_ID env vars. When unset,
 //! domain records are stored as "manual" and the owner points DNS by hand.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 
 pub fn configured() -> bool {
     !std::env::var("CF_API_TOKEN").unwrap_or_default().trim().is_empty()

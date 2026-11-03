@@ -55,27 +55,12 @@ impl Db {
         setup.execute_batch(
             "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));",
         )?;
-        let mut applied: std::collections::HashSet<String> = {
+        let applied: std::collections::HashSet<String> = {
             let mut stmt = setup.prepare("SELECT name FROM _migrations")?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
             rows.filter_map(|r| r.ok()).collect()
         };
-        if applied.is_empty() {
-            // Legacy database migrated without tracking (e.g. by wrangler or an
-            // older binary): if the core tables already exist, treat the base
-            // schema files as applied so their non-idempotent ALTERs don't re-run.
-            let has_runs: bool = setup
-                .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'")
-                .and_then(|mut s| s.exists([]))
-                .unwrap_or(false);
-            if has_runs {
-                for legacy in ["0001_schema.sql", "0002_runs.sql"] {
-                    let _ = setup.execute("INSERT OR IGNORE INTO _migrations (name) VALUES (?1)", [legacy]);
-                    applied.insert(legacy.to_string());
-                }
-                eprintln!("migrate: baselined legacy database at 0002");
-            }
-        }
+
         for f in files {
             let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
             if applied.contains(&name) {
@@ -143,7 +128,7 @@ impl Bound<'_> {
     }
 
     pub async fn first<T: DeserializeOwned>(self, _opt: Option<()>) -> Result<Option<T>> {
-        let mut rows = self.fetch().await?;
+        let rows = self.fetch().await?;
         match rows.into_iter().next() {
             Some(v) => Ok(Some(serde_json::from_value(v)?)),
             None => Ok(None),

@@ -58,7 +58,7 @@ pub(crate) async fn transcribe_core(
     body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
 
     let client = reqwest::Client::new();
-    let mut upstream = client
+    let upstream = client
         .post(TRANSCRIBE_URL)
         .header("Authorization", format!("Bearer {key}"))
         .header("Content-Type", format!("multipart/form-data; boundary={boundary}"))
@@ -113,11 +113,6 @@ pub(crate) async fn transcribe_core(
     }))
 }
 
-
-fn base64_decode(s: &str) -> Option<Vec<u8>> {
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD.decode(s).ok()
-}
 
 pub(crate) fn base64_encode(bytes: &[u8]) -> String {
     use base64::Engine;

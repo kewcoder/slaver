@@ -211,10 +211,11 @@ function TypingDots() {
 }
 
 function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
+  // Demo-first: reviewer langsung login tanpa registrasi.
   const [mode, setMode] = useState<"login" | "register">("login");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState("resto@slaver.app");
   const [name, setName] = useState("");
-  const [password, setPassword] = useState("");
+  const [password, setPassword] = useState("demo1234");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [pendingUser, setPendingUser] = useState<User | null>(null);

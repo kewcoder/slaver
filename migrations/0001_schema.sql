@@ -1,10 +1,9 @@
--- Slaver D1 schema (single file).
--- Fresh databases: `wrangler d1 migrations apply slaver_db [--local|--remote]`.
--- All statements are IF NOT EXISTS / additive; apply exactly once on an empty database.
+-- Slaver schema (single file, SQLite).
+-- Fresh databases apply this once; every statement is IF NOT EXISTS so
+-- re-running is safe. No credit system: teams bring their own provider keys.
 
--- ---- 0001_users.sql ----
--- Users table for simple email+password auth (hackathon skeleton).
--- Passwords stored as salted SHA-256 (demo grade; swap to bcrypt/scrypt for production).
+-- ---- users ----
+-- Email+password auth. Passwords are salted SHA-256 (demo grade).
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
@@ -14,64 +13,61 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
--- ---- 0002_credits_history.sql ----
--- Demo credit ledger + persisted chat history.
-ALTER TABLE users ADD COLUMN credit_usd REAL NOT NULL DEFAULT 10.0;
-
-CREATE TABLE IF NOT EXISTS chats (
+-- ---- slavebots ----
+-- Named agents with owner-set memory/role. team_id '' = legacy pre-team row.
+CREATE TABLE IF NOT EXISTS slavebots (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id),
-  title TEXT NOT NULL DEFAULT 'New chat',
-  model TEXT NOT NULL DEFAULT 'muse-spark-1.3',
+  team_id TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  memory TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT '',
+  parent_id TEXT NOT NULL DEFAULT '',
+  owner_user_id TEXT NOT NULL DEFAULT '',
+  pinned INTEGER NOT NULL DEFAULT 0,
+  pinned_by TEXT NOT NULL DEFAULT '',
+  archived INTEGER NOT NULL DEFAULT 0,
+  relay INTEGER NOT NULL DEFAULT 1,
+  avatar_key TEXT NOT NULL DEFAULT '',
+  voice TEXT NOT NULL DEFAULT 'luna',
+  active_days TEXT NOT NULL DEFAULT 'all',
+  active_start TEXT NOT NULL DEFAULT '',
+  active_end TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-CREATE INDEX IF NOT EXISTS idx_chats_user ON chats(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_slavebots_user ON slavebots(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_slavebots_team ON slavebots(team_id);
+CREATE INDEX IF NOT EXISTS idx_slavebots_parent ON slavebots(parent_id);
 
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  chat_id TEXT NOT NULL REFERENCES chats(id),
+  slavebot_id TEXT NOT NULL REFERENCES slavebots(id),
   role TEXT NOT NULL,
   content TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, id);
+CREATE INDEX IF NOT EXISTS idx_messages_bot ON messages(slavebot_id, id);
 
+-- Token/cost telemetry per call (no balances, no deductions).
 CREATE TABLE IF NOT EXISTS usage_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id TEXT NOT NULL REFERENCES users(id),
-  chat_id TEXT REFERENCES chats(id),
+  slavebot_id TEXT REFERENCES slavebots(id),
   model TEXT NOT NULL,
   prompt_tokens INTEGER NOT NULL,
   completion_tokens INTEGER NOT NULL,
   total_tokens INTEGER NOT NULL,
   cost_usd REAL NOT NULL,
   estimated INTEGER NOT NULL DEFAULT 0,
+  audio_seconds REAL NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_usage_user ON usage_logs(user_id, id DESC);
 
--- ---- 0003_voice_usage.sql ----
--- Voice transcription cost tracking (seconds of audio).
-ALTER TABLE usage_logs ADD COLUMN audio_seconds REAL NOT NULL DEFAULT 0;
-
--- ---- 0004_slavebots.sql ----
--- SlaveBots: named agents with user-set memory (previously: chats).
-ALTER TABLE chats RENAME TO slavebots;
-ALTER TABLE slavebots ADD COLUMN name TEXT NOT NULL DEFAULT '';
-ALTER TABLE slavebots ADD COLUMN memory TEXT NOT NULL DEFAULT '';
-ALTER TABLE messages RENAME COLUMN chat_id TO slavebot_id;
-ALTER TABLE usage_logs RENAME COLUMN chat_id TO slavebot_id;
-UPDATE slavebots SET name = substr(title, 1, 30) WHERE name = '';
-DROP INDEX IF EXISTS idx_chats_user;
-DROP INDEX IF EXISTS idx_messages_chat;
-DROP INDEX IF EXISTS idx_usage_user;
-CREATE INDEX IF NOT EXISTS idx_slavebots_user ON slavebots(user_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_messages_bot ON messages(slavebot_id, id);
-CREATE INDEX IF NOT EXISTS idx_usage_user ON usage_logs(user_id, id DESC);
-
--- ---- 0005_summaries_avatars.sql ----
--- Conversation summaries (daily / weekly / monthly rollups per slaveBot).
+-- ---- summaries / schedules ----
 CREATE TABLE IF NOT EXISTS summaries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   slavebot_id TEXT NOT NULL REFERENCES slavebots(id),
@@ -83,47 +79,6 @@ CREATE TABLE IF NOT EXISTS summaries (
 );
 CREATE INDEX IF NOT EXISTS idx_summaries_bot ON summaries(slavebot_id, period, period_key);
 
--- Avatar object key in R2 (empty = initial-letter fallback).
-ALTER TABLE slavebots ADD COLUMN avatar_key TEXT NOT NULL DEFAULT '';
-
--- ---- 0006_groups.sql ----
--- Group missions: one task to many slaveBots, shared discussion thread.
-CREATE TABLE IF NOT EXISTS groups (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL REFERENCES users(id),
-  name TEXT NOT NULL DEFAULT 'New group',
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-CREATE TABLE IF NOT EXISTS group_members (
-  group_id TEXT NOT NULL REFERENCES groups(id),
-  slavebot_id TEXT NOT NULL REFERENCES slavebots(id),
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  UNIQUE (group_id, slavebot_id)
-);
-CREATE INDEX IF NOT EXISTS idx_group_members ON group_members(group_id);
-CREATE INDEX IF NOT EXISTS idx_groups_user ON groups(user_id, updated_at DESC);
-CREATE TABLE IF NOT EXISTS group_messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  group_id TEXT NOT NULL REFERENCES groups(id),
-  slavebot_id TEXT REFERENCES slavebots(id),
-  role TEXT NOT NULL,
-  content TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-CREATE INDEX IF NOT EXISTS idx_group_messages ON group_messages(group_id, id);
-
--- ---- 0007_archive_voice.sql ----
--- Archive flag: archived bots are hidden and skipped, never deleted.
-ALTER TABLE slavebots ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE slavebots ADD COLUMN voice TEXT NOT NULL DEFAULT 'luna';
-ALTER TABLE slavebots ADD COLUMN active_days TEXT NOT NULL DEFAULT 'all';
-ALTER TABLE slavebots ADD COLUMN active_start TEXT NOT NULL DEFAULT '';
-ALTER TABLE slavebots ADD COLUMN active_end TEXT NOT NULL DEFAULT '';
-
--- ---- 0008_schedules.sql ----
--- Bot-managed schedules: reminders and briefings the bot runs by itself.
--- Times are wall-clock in the bot's timezone (default Asia/Jakarta, WIB, no DST).
 CREATE TABLE IF NOT EXISTS schedules (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id),
@@ -142,64 +97,93 @@ CREATE TABLE IF NOT EXISTS schedules (
 CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(active, next_run_at);
 CREATE INDEX IF NOT EXISTS idx_schedules_bot ON schedules(slavebot_id);
 
--- ---- 0009_huddles.sql ----
--- Personal identity (role), manager/sub-bot hierarchy, and Slack-style huddles.
-ALTER TABLE slavebots ADD COLUMN role TEXT NOT NULL DEFAULT '';
-ALTER TABLE slavebots ADD COLUMN parent_id TEXT NOT NULL DEFAULT '';
-CREATE INDEX IF NOT EXISTS idx_slavebots_parent ON slavebots(parent_id);
-
--- A huddle: one topic broadcast to bots, each deciding by itself to join.
-CREATE TABLE IF NOT EXISTS huddles (
+-- ---- groups (channels: bots and/or users) ----
+CREATE TABLE IF NOT EXISTS groups (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id),
+  team_id TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL DEFAULT 'New group',
+  is_public INTEGER NOT NULL DEFAULT 0,
+  repo_id TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_groups_user ON groups(user_id, updated_at DESC);
+
+-- One row per member; bot members use slavebot_id, human members use user_id.
+CREATE TABLE IF NOT EXISTS group_members (
+  group_id TEXT NOT NULL REFERENCES groups(id),
+  slavebot_id TEXT REFERENCES slavebots(id),
+  user_id TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_group_members ON group_members(group_id);
+
+-- user_id '' = bot message (slavebot_id set); slavebot_id NULL = human message.
+CREATE TABLE IF NOT EXISTS group_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_id TEXT NOT NULL REFERENCES groups(id),
+  slavebot_id TEXT REFERENCES slavebots(id),
+  user_id TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_group_messages ON group_messages(group_id, id);
+
+-- ---- meetings (Slack-style: bots decide to join) ----
+CREATE TABLE IF NOT EXISTS meetings (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  team_id TEXT NOT NULL DEFAULT '',
   topic TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'open',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-CREATE INDEX IF NOT EXISTS idx_huddles_user ON huddles(user_id);
+CREATE INDEX IF NOT EXISTS idx_meetings_user ON meetings(user_id);
 
-CREATE TABLE IF NOT EXISTS huddle_participants (
-  huddle_id TEXT NOT NULL REFERENCES huddles(id),
+CREATE TABLE IF NOT EXISTS meeting_participants (
+  meeting_id TEXT NOT NULL REFERENCES meetings(id),
   slavebot_id TEXT NOT NULL REFERENCES slavebots(id),
   decision TEXT NOT NULL DEFAULT 'pending',
   reason TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  PRIMARY KEY (huddle_id, slavebot_id)
+  PRIMARY KEY (meeting_id, slavebot_id)
 );
 
-CREATE TABLE IF NOT EXISTS huddle_messages (
+CREATE TABLE IF NOT EXISTS meeting_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  huddle_id TEXT NOT NULL REFERENCES huddles(id),
+  meeting_id TEXT NOT NULL REFERENCES meetings(id),
   slavebot_id TEXT REFERENCES slavebots(id),
   bot_name TEXT,
   role TEXT NOT NULL DEFAULT 'user',
   content TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-CREATE INDEX IF NOT EXISTS idx_huddle_messages ON huddle_messages(huddle_id, id);
+CREATE INDEX IF NOT EXISTS idx_meeting_messages ON meeting_messages(meeting_id, id);
 
--- ---- 0010_byok.sql ----
--- BYOK: each user can store their own OpenRouter key. When set, all of
--- that user's model calls use it (and their key pays OpenRouter directly,
--- so those calls skip demo-credit deduction). Never returned by any API.
-ALTER TABLE users ADD COLUMN openrouter_key TEXT NOT NULL DEFAULT '';
+-- ---- user-to-user direct messages (same team) ----
+CREATE TABLE IF NOT EXISTS direct_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  team_id TEXT NOT NULL DEFAULT '',
+  from_user_id TEXT NOT NULL,
+  to_user_id TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_dm_pair ON direct_messages(team_id, from_user_id, to_user_id, id);
+CREATE INDEX IF NOT EXISTS idx_dm_pair_rev ON direct_messages(team_id, to_user_id, from_user_id, id);
 
--- ---- 0011_pin.sql ----
--- Pinned bot: each user pins their own auto-open bot (pinned_by tracks whose
--- pin it is, so teammates don't clobber each other). Archiving clears it.
-ALTER TABLE slavebots ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE slavebots ADD COLUMN pinned_by TEXT NOT NULL DEFAULT '';
-
--- ---- 0012_teams_providers.sql ----
--- Teams with roles, per-bot staff grants, and per-user AI provider config.
--- Legacy rows keep team_id '' (personal): resolved to an explicit personal
--- team on demand by ensure_personal_team() in the backend.
+-- ---- teams ----
 CREATE TABLE IF NOT EXISTS teams (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL DEFAULT '',
   owner_user_id TEXT NOT NULL REFERENCES users(id),
   personal INTEGER NOT NULL DEFAULT 0,
+  provider TEXT NOT NULL DEFAULT 'meta',
+  provider_base_url TEXT NOT NULL DEFAULT '',
+  provider_api_key TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
@@ -221,45 +205,199 @@ CREATE TABLE IF NOT EXISTS bot_grants (
 );
 CREATE INDEX IF NOT EXISTS idx_bot_grants_user ON bot_grants(user_id);
 
-ALTER TABLE slavebots ADD COLUMN team_id TEXT NOT NULL DEFAULT '';
-CREATE INDEX IF NOT EXISTS idx_slavebots_team ON slavebots(team_id);
-ALTER TABLE groups ADD COLUMN team_id TEXT NOT NULL DEFAULT '';
-ALTER TABLE huddles ADD COLUMN team_id TEXT NOT NULL DEFAULT '';
+-- ---- harness runs ----
+CREATE TABLE IF NOT EXISTS runs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  team_id TEXT NOT NULL,
+  model TEXT NOT NULL DEFAULT '',
+  prompt TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'running',
+  issue_id TEXT NOT NULL DEFAULT '',
+  repo_id TEXT NOT NULL DEFAULT '',
+  branch TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_runs_user ON runs(user_id, id DESC);
 
--- Per-user AI provider. Default is Meta (hackathon); OpenRouter stays as
--- the last-resort preset; Baseten/Modal/custom need the user's own key+URL.
-ALTER TABLE users ADD COLUMN provider TEXT NOT NULL DEFAULT 'meta';
-ALTER TABLE users ADD COLUMN provider_base_url TEXT NOT NULL DEFAULT '';
-ALTER TABLE users ADD COLUMN provider_api_key TEXT NOT NULL DEFAULT '';
--- Carry over OpenRouter BYOK keys into the new generic column.
-UPDATE users SET provider = 'openrouter', provider_api_key = openrouter_key WHERE openrouter_key <> '';
+CREATE TABLE IF NOT EXISTS run_steps (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL REFERENCES runs(id),
+  kind TEXT NOT NULL DEFAULT 'text',
+  name TEXT NOT NULL DEFAULT '',
+  output TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, id);
 
--- ---- 0013_team_providers.sql ----
--- AI provider config moves from per-user/per-env to per-team.
--- Every team owns its preset + base URL + key; only JWT_SECRET stays in env.
-ALTER TABLE teams ADD COLUMN provider TEXT NOT NULL DEFAULT 'meta';
-ALTER TABLE teams ADD COLUMN provider_base_url TEXT NOT NULL DEFAULT '';
-ALTER TABLE teams ADD COLUMN provider_api_key TEXT NOT NULL DEFAULT '';
+-- ---- platform: projects / kanban / repos / marketplace ----
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id),
+  repo_id TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL DEFAULT 'Project',
+  description TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',
+  prod_url TEXT NOT NULL DEFAULT '',
+  dev_url TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_projects_team ON projects(team_id, created_at DESC);
 
--- Carry existing personal-team keys forward where a personal team already exists.
-UPDATE teams SET provider = (SELECT u.provider FROM users u WHERE u.id = teams.owner_user_id),
-                provider_base_url = (SELECT u.provider_base_url FROM users u WHERE u.id = teams.owner_user_id),
-                provider_api_key = (SELECT u.provider_api_key FROM users u WHERE u.id = teams.owner_user_id)
-WHERE personal = 1;
+CREATE TABLE IF NOT EXISTS issues (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  title TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL DEFAULT 'backlog',
+  assignee_bot_id TEXT NOT NULL DEFAULT '',
+  priority TEXT NOT NULL DEFAULT 'medium',
+  labels TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_issues_project ON issues(project_id, created_at ASC);
 
--- User-level provider columns are no longer read; drop them.
-ALTER TABLE users DROP COLUMN provider;
-ALTER TABLE users DROP COLUMN provider_base_url;
-ALTER TABLE users DROP COLUMN provider_api_key;
-ALTER TABLE users DROP COLUMN openrouter_key;
+CREATE TABLE IF NOT EXISTS repos (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id),
+  name TEXT NOT NULL DEFAULT 'repo',
+  description TEXT NOT NULL DEFAULT '',
+  price_cents INTEGER NOT NULL DEFAULT 4900,
+  template INTEGER NOT NULL DEFAULT 0,
+  fork_of TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_repos_team ON repos(team_id, created_at DESC);
 
--- ---- 0014_bot_ownership.sql ----
--- SlaveBot ownership: the team member this bot partners with.
--- Owners/admins can transfer it; creators start as the owner.
-ALTER TABLE slavebots ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT '';
-UPDATE slavebots SET owner_user_id = user_id WHERE owner_user_id = '';
+CREATE TABLE IF NOT EXISTS licenses (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id),
+  repo_id TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL DEFAULT 'perpetual',
+  support_until TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',
+  provider TEXT NOT NULL DEFAULT 'mock',
+  amount_cents INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_licenses_team ON licenses(team_id, created_at DESC);
 
--- ---- 0015_bot_relay.sql ----
--- Agent-initiated relay: when 1, the bot may consult peer bots on its own
--- before replying (recorded in both histories, billed normally).
-ALTER TABLE slavebots ADD COLUMN relay INTEGER NOT NULL DEFAULT 1;
+-- ---- VPS targets & deployments ----
+CREATE TABLE IF NOT EXISTS vps_targets (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id),
+  name TEXT NOT NULL DEFAULT 'vps',
+  host TEXT NOT NULL DEFAULT '',
+  ssh_user TEXT NOT NULL DEFAULT 'root',
+  ssh_key TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_vps_team ON vps_targets(team_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS deployments (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  vps_target_id TEXT NOT NULL DEFAULT '',
+  commit_sha TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  log TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_deploy_project ON deployments(project_id, id DESC);
+
+-- ---- HitPay checkout ----
+CREATE TABLE IF NOT EXISTS payments (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id),
+  repo_id TEXT NOT NULL DEFAULT '',
+  hitpay_request_id TEXT NOT NULL DEFAULT '',
+  reference TEXT NOT NULL DEFAULT '',
+  amount_cents INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'USD',
+  status TEXT NOT NULL DEFAULT 'pending',
+  license_id TEXT NOT NULL DEFAULT '',
+  fork_repo_id TEXT NOT NULL DEFAULT '',
+  project_id TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL DEFAULT '',
+  provider TEXT NOT NULL DEFAULT 'hitpay',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  paid_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_payments_hitpay ON payments(hitpay_request_id);
+CREATE INDEX IF NOT EXISTS idx_payments_team ON payments(team_id, created_at DESC);
+
+-- ---- OAuth: Login with Slaver ----
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id),
+  name TEXT NOT NULL DEFAULT 'app',
+  secret_hash TEXT NOT NULL DEFAULT '',
+  redirect_uris TEXT NOT NULL DEFAULT '[]',
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_clients_team ON oauth_clients(team_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS oauth_codes (
+  code_hash TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES oauth_clients(id),
+  user_id TEXT NOT NULL REFERENCES users(id),
+  team_id TEXT NOT NULL DEFAULT '',
+  redirect_uri TEXT NOT NULL DEFAULT '',
+  scope TEXT NOT NULL DEFAULT '',
+  expires_at INTEGER NOT NULL DEFAULT 0,
+  used INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+  token_hash TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES oauth_clients(id),
+  user_id TEXT NOT NULL REFERENCES users(id),
+  team_id TEXT NOT NULL DEFAULT '',
+  scope TEXT NOT NULL DEFAULT '',
+  expires_at INTEGER NOT NULL DEFAULT 0,
+  revoked INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_client ON oauth_tokens(client_id, created_at DESC);
+
+-- ---- team Fly.io accounts & provisioned machines ----
+CREATE TABLE IF NOT EXISTS fly_accounts (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id),
+  name TEXT NOT NULL DEFAULT 'fly',
+  org TEXT NOT NULL DEFAULT '',
+  api_token TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_fly_team ON fly_accounts(team_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS fly_machines (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id),
+  role TEXT NOT NULL DEFAULT 'dev',
+  app_name TEXT NOT NULL DEFAULT '',
+  machine_id TEXT NOT NULL DEFAULT '',
+  image TEXT NOT NULL DEFAULT '',
+  cpus INTEGER NOT NULL DEFAULT 1,
+  memory_mb INTEGER NOT NULL DEFAULT 512,
+  status TEXT NOT NULL DEFAULT 'unknown',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_fly_machines_team ON fly_machines(team_id, role);
+
+-- ---- custom domains on our Cloudflare zone (e.g. {uuid}.slaver.app) ----
+CREATE TABLE IF NOT EXISTS custom_domains (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id),
+  project_id TEXT NOT NULL DEFAULT '',
+  subdomain TEXT NOT NULL DEFAULT '',
+  hostname TEXT NOT NULL DEFAULT '',
+  target TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL DEFAULT 'CNAME',
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_domains_team ON custom_domains(team_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_domains_host ON custom_domains(hostname);
