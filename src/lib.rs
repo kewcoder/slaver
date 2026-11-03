@@ -9,6 +9,8 @@ pub mod group;
 pub mod harness;
 pub mod huddle;
 pub mod mcp;
+pub mod oauth;
+pub mod oauth_http;
 pub mod platform;
 pub mod platform_api;
 pub mod pricing;

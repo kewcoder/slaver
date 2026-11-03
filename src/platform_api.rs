@@ -56,6 +56,9 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "groups_public", "description": "List public support channels across all teams (anyone can read/post; owning teams bots reply).", "inputSchema": { "type": "object", "properties": {} } }),
         json!({ "name": "groups_set_visibility", "description": "Make a group public (support channel) or private. Owner/admin only.", "inputSchema": { "type": "object", "required": ["group_id", "public"], "properties": { "group_id": { "type": "string" }, "public": { "type": "boolean" } } } }),
         json!({ "name": "groups_support", "description": "Get (or, as the owning team, create) the public support channel for a repo/template.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
+        json!({ "name": "oauth_clients_create", "description": "Create a Login with Slaver OAuth client for deployed apps. Owner/admin only; secret is shown once.", "inputSchema": { "type": "object", "required": ["team_id", "name", "redirect_uris"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "redirect_uris": { "type": "string", "description": "Comma-separated https:// URLs (or http://localhost)" } } } }),
+        json!({ "name": "oauth_clients_list", "description": "List a team’s OAuth clients (no secrets). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
+        json!({ "name": "oauth_clients_revoke", "description": "Delete an OAuth client and all its tokens. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "client_id"], "properties": { "team_id": { "type": "string" }, "client_id": { "type": "string" } } } }),
     ]
 }
 
@@ -386,6 +389,45 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             match platform::support_group_for_repo(db, user_id, &rid).await {
                 Ok(Some(g)) => mcp_data(id, "Support channel.".to_string(), json!({ "group": g })),
                 Ok(None) => rpc_err(id, -32602, "No support channel yet — ask the owning team to open one."),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "oauth_clients_create" => {
+            let (tid, name) = (arg_str(args, "team_id"), arg_str(args, "name"));
+            let uris: Vec<String> = arg_str(args, "redirect_uris")
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if tid.is_empty() || name.trim().is_empty() {
+                return Some(rpc_err(id, -32602, "team_id and name are required."));
+            }
+            match crate::oauth::create_client(db, &tid, user_id, &name, &uris).await {
+                Ok((c, secret)) => mcp_data(
+                    id,
+                    "OAuth client created. Copy the secret now — it is shown only once.".to_string(),
+                    json!({ "client": c, "client_secret": secret }),
+                ),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "oauth_clients_list" => {
+            let tid = arg_str(args, "team_id");
+            if tid.is_empty() {
+                return Some(rpc_err(id, -32602, "team_id is required."));
+            }
+            match crate::oauth::list_clients(db, &tid, user_id).await {
+                Ok(rows) => mcp_data(id, format!("{} client(s).", rows.len()), json!({ "clients": rows })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "oauth_clients_revoke" => {
+            let (tid, cid) = (arg_str(args, "team_id"), arg_str(args, "client_id"));
+            if tid.is_empty() || cid.is_empty() {
+                return Some(rpc_err(id, -32602, "team_id and client_id are required."));
+            }
+            match crate::oauth::revoke_client(db, &tid, user_id, &cid).await {
+                Ok(()) => mcp_data(id, "Client revoked.".to_string(), json!({ "revoked": true })),
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }

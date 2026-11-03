@@ -1,6 +1,6 @@
 use axum::{routing::{get, post}, Router};
 use chrono::Datelike;
-use slaver::{db::Db, git_http, harness, mcp, schedule, store, summarize, AppState};
+use slaver::{db::Db, git_http, harness, mcp, oauth_http, schedule, store, summarize, AppState};
 use std::{collections::HashMap, time::Duration};
 use tower_http::{cors::CorsLayer, services::{ServeDir, ServeFile}};
 
@@ -162,6 +162,11 @@ async fn main() {
             "/git/:repo/git-receive-pack",
             post(git_receive_pack),
         )
+        .route("/oauth/authorize", get(oauth_http::authorize_get).post(oauth_http::authorize_post))
+        .route("/oauth/approve", post(oauth_http::approve_post))
+        .route("/oauth/deny", post(oauth_http::deny_post))
+        .route("/oauth/token", post(oauth_http::token_post))
+        .route("/oauth/userinfo", get(oauth_http::userinfo_get))
         .fallback_service(
             ServeDir::new(&state.frontend_dir)
                 .not_found_service(ServeFile::new(&index)),

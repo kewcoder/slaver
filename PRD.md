@@ -177,6 +177,8 @@ Workspace dan Team terlalu mirip untuk dipisah: user memberi perintah di Team, a
 - **Fork mechanics:** beli → fork otomatis ke org user → Team langsung bisa customize. Update template upstream → user dapat "update run" (agent merge + resolve konflik + test) selama entitlement aktif.
 - **Publisher flow:** submit repo template → review kurasi (kualitas + keamanan + bisa jalan di VPS 1GB) → publish → dashboard penjualan + support queue. Revenue split awal: **85% publisher / 15% platform** (dari lisensi + perpanjangan support).
 - **Distribusi tanpa runtime kita:** yang didistribusikan = source + compose + migrasi. User bebas pindah VPS kapan saja — ini argumen penjualan utama vs Shopify.
+- **Public support channels (lintas team):** tiap template/repo bisa punya channel support publik — user dari team mana pun bisa bertanya, bot milik team penjual yang menjawab (dibiayai key penjual). Diatur per-group oleh owner/admin; auto-suggest saat publish template.
+- **Login with Slaver (OAuth team-level):** app yang di-deploy di VPS user bisa pakai "Login with Slaver" — end user login dengan akun Slaver dan app menerima `{ sub, email, name, team_id, team_name, role }`, sehingga permission/role Slaver berlaku di app customer tanpa user database terpisah. Client dibuat per team di Settings → Developer; flow standar authorize → code → token → userinfo.
 
 ---
 

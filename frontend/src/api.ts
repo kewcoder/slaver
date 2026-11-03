@@ -162,6 +162,27 @@ export async function fetchSupportGroup(repoId: string): Promise<Group> {
   return data.group;
 }
 
+export interface OAuthClient {
+  id: string;
+  team_id: string;
+  name: string;
+  redirect_uris: string;
+  created_at: string;
+}
+
+export async function createOAuthClient(teamId: string, name: string, redirectUris: string): Promise<{ client: OAuthClient; client_secret: string }> {
+  return callTool("oauth_clients_create", { team_id: teamId, name, redirect_uris: redirectUris });
+}
+
+export async function fetchOAuthClients(teamId: string): Promise<OAuthClient[]> {
+  const data = await callTool<{ clients: OAuthClient[] }>("oauth_clients_list", { team_id: teamId });
+  return data.clients;
+}
+
+export async function revokeOAuthClient(teamId: string, clientId: string): Promise<void> {
+  await callTool("oauth_clients_revoke", { team_id: teamId, client_id: clientId });
+}
+
 export interface GroupMessage {
   id: number;
   slavebot_id: string | null;

@@ -4,6 +4,7 @@ import {
   appendMemory,
   fetchAvatar,
   createBot,
+  createOAuthClient,
   createGroup,
   createHuddle,
   createSchedule,
@@ -21,6 +22,7 @@ import {
   fetchHuddleDetail,
   fetchHuddles,
   fetchMe,
+  fetchOAuthClients,
   fetchProviderModels,
   fetchPublicGroups,
   fetchSchedules,
@@ -34,6 +36,7 @@ import {
   inviteMember,
   removeMember,
   revokeBotAccess,
+  revokeOAuthClient,
   setGroupVisibility,
   setMemberRole,
   formatUsd,
@@ -61,6 +64,7 @@ import {
   type Huddle,
   type HuddleDetail,
   type ActivityItem,
+  type OAuthClient,
   type ProviderInfo,
   type PublicGroup,
   type SlaveBot,
@@ -1977,6 +1981,115 @@ function BotView({
   );
 }
 
+function DeveloperSection({ teamId }: { teamId: string | null }) {
+  const [clients, setClients] = useState<OAuthClient[]>([]);
+  const [name, setName] = useState("");
+  const [redirects, setRedirects] = useState("");
+  const [newSecret, setNewSecret] = useState<{ id: string; secret: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const refresh = useCallback(async () => {
+    if (!teamId) {
+      setClients([]);
+      return;
+    }
+    try {
+      setClients(await fetchOAuthClients(teamId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load OAuth clients.");
+    }
+  }, [teamId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  async function create(e: React.FormEvent) {
+    e.preventDefault();
+    if (!teamId || !name.trim() || !redirects.trim() || busy) return;
+    setBusy(true);
+    setError("");
+    setNewSecret(null);
+    try {
+      const res = await createOAuthClient(teamId, name.trim(), redirects.trim());
+      setNewSecret({ id: res.client.id, secret: res.client_secret });
+      setName("");
+      setRedirects("");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create client.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revoke(clientId: string) {
+    if (!teamId || !window.confirm("Revoke this client? Its tokens stop working immediately.")) return;
+    setError("");
+    try {
+      await revokeOAuthClient(teamId, clientId);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not revoke client.");
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+      <h3 className="mb-1 text-sm font-bold uppercase tracking-wide text-zinc-500">Developer — Login with Slaver</h3>
+      <p className="mb-2 text-xs text-zinc-500">
+        Let users log in to your deployed app with their Slaver account. The app receives their name, email, team, and role.
+        Authorize endpoint: <span className="font-mono">/oauth/authorize</span> · Token: <span className="font-mono">/oauth/token</span> · Profile: <span className="font-mono">/oauth/userinfo</span>
+      </p>
+      {error && <p className="mb-2 text-sm text-red-400">{error}</p>}
+      {newSecret && (
+        <div className="mb-2 rounded-md border border-amber-700 bg-amber-950/60 p-2 text-xs text-amber-200">
+          <div className="font-bold">Copy the secret now — it is shown only once.</div>
+          <div className="mt-1 break-all font-mono">client_id: {newSecret.id}</div>
+          <div className="break-all font-mono">client_secret: {newSecret.secret}</div>
+        </div>
+      )}
+      <form onSubmit={create} className="flex flex-col gap-2">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="App name, e.g. My Warung POS"
+          disabled={!teamId}
+          className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40"
+        />
+        <input
+          value={redirects}
+          onChange={(e) => setRedirects(e.target.value)}
+          placeholder="Redirect URIs, comma-separated — https://app.example.com/oauth/callback"
+          disabled={!teamId}
+          className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40"
+        />
+        <div>
+          <button type="submit" disabled={!name.trim() || !redirects.trim() || !teamId || busy} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
+            {busy ? "Creating..." : "Create OAuth client"}
+          </button>
+        </div>
+      </form>
+      {clients.length > 0 && (
+        <ul className="mt-3 flex flex-col gap-1">
+          {clients.map((c) => (
+            <li key={c.id} className="flex flex-wrap items-center gap-2 rounded-md bg-zinc-800/60 px-3 py-2 text-xs">
+              <span className="font-semibold text-zinc-100">{c.name}</span>
+              <span className="font-mono text-zinc-500">{c.id}</span>
+              <span className="truncate text-zinc-500">{c.redirect_uris}</span>
+              <button type="button" onClick={() => revoke(c.id)} className="ml-auto text-zinc-500 hover:text-red-400">
+                Revoke
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!teamId && <p className="mt-1 text-xs text-zinc-500">Pick a team first (owners/admins only).</p>}
+    </div>
+  );
+}
+
 function SettingsView({
   user,
   teams,
@@ -2062,6 +2175,8 @@ function SettingsView({
           onSelect={onPickTeam}
         />
       </div>
+
+      <DeveloperSection teamId={teamId} />
 
       <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
         <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-zinc-500">Usage &amp; logs</h3>
