@@ -192,7 +192,17 @@ pub async fn run_now(mut req: Request, ctx: RouteContext<()>) -> Result<Response
         Some(b) => b,
         None => return util::err(404, "SlaveBot not found."),
     };
-    match run_daily(&ctx.env, &db, &bot, &user_id).await? {
+    let summary = match run_daily(&ctx.env, &db, &bot, &user_id).await {
+        Ok(s) => s,
+        Err(e) => {
+            console_error!("summarize now failed: {e}");
+            return util::json(
+                502,
+                &serde_json::json!({ "error": format!("Summarization failed: {e}") }),
+            );
+        }
+    };
+    match summary {
         Some(summary) => util::json(200, &serde_json::json!({ "summary": summary })),
         None => util::json(200, &serde_json::json!({ "summary": null, "note": "No new messages to summarize." })),
     }
