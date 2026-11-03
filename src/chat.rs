@@ -11,7 +11,7 @@ pub struct ChatMessage {
 
 #[derive(Deserialize)]
 struct ChatRequest {
-    chat_id: Option<String>,
+    slavebot_id: Option<String>,
     message: Option<String>,
     model: Option<String>,
     stream: Option<bool>,
@@ -26,19 +26,53 @@ pub struct ClientUsage {
 
 #[derive(Deserialize)]
 struct FinishRequest {
-    chat_id: Option<String>,
+    slavebot_id: Option<String>,
     content: Option<String>,
     usage: Option<ClientUsage>,
 }
 
-fn valid_model(model: &str) -> bool {
+#[derive(Deserialize)]
+struct CreateBotRequest {
+    model: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UpdateBotRequest {
+    name: Option<String>,
+    memory: Option<String>,
+    model: Option<String>,
+}
+
+pub fn valid_model(model: &str) -> bool {
     model == "muse-spark-1.3" || model == "muse-wonder-1.0"
 }
 
-/// POST /api/chat — persisted chat. Body: {chat_id?, message, model?, stream?}.
-/// Non-streaming returns the reply + updated credit inline. Streaming returns
-/// an SSE response with an X-Chat-Id header — the client then POSTs the final
-/// text to /api/chat/finish so usage is logged and credit deducted.
+/// Build the upstream message list: bot memory and past-conversation recaps
+/// first (as system context), then the saved history (which already ends with
+/// the new user message).
+fn with_memory(memory: &str, recaps: &str, history: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    let mut msgs = Vec::with_capacity(history.len() + 2);
+    let memory = memory.trim();
+    if !memory.is_empty() {
+        msgs.push(ChatMessage {
+            role: "system".to_string(),
+            content: format!("Bot memory set by the owner (treat as persistent facts about the user and past conversations):\n{memory}"),
+        });
+    }
+    let recaps = recaps.trim();
+    if !recaps.is_empty() {
+        msgs.push(ChatMessage {
+            role: "system".to_string(),
+            content: recaps.to_string(),
+        });
+    }
+    msgs.extend(history);
+    msgs
+}
+
+/// POST /api/chat — chat with a slaveBot. Body: {slavebot_id, message, model?, stream?}.
+/// Non-streaming returns the reply + cost inline. Streaming returns SSE with an
+/// X-Chat-Id header — the client then POSTs the final text to /api/chat/finish.
 pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let user_id = match auth::bearer_sub(&req, &ctx.env)? {
         Some(id) => id,
@@ -57,16 +91,30 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
         Ok(b) => b,
         Err(_) => return util::err(400, "Invalid JSON body."),
     };
+    let bot_id = body.slavebot_id.unwrap_or_default();
     let message = body.message.unwrap_or_default();
+    if bot_id.is_empty() {
+        return util::err(400, "Select a slaveBot first.");
+    }
     if message.is_empty() || message.len() > 8000 {
         return util::err(400, "message must be 1..8000 characters.");
     }
-    let model = body.model.filter(|m| valid_model(m)).unwrap_or_else(|| meta::default_model(&ctx.env));
+    let bot = match store::get_bot(&db, &user_id, &bot_id).await? {
+        Some(b) => b,
+        None => return util::err(404, "SlaveBot not found."),
+    };
+    let model = body
+        .model
+        .filter(|m| valid_model(m))
+        .unwrap_or(bot.model.clone());
     let stream = body.stream.unwrap_or(true);
 
-    let chat_id = store::ensure_chat(&db, &user_id, body.chat_id.as_deref(), &model, &message).await?;
-    store::insert_message(&db, &chat_id, "user", &message).await?;
-    let history = store::recent_messages(&db, &chat_id, 20).await?;
+    store::insert_message(&db, &bot_id, "user", &message).await?;
+    store::maybe_title_bot(&db, &bot_id, &message).await?;
+    let recaps = crate::summarize::context_block(&db, &bot_id)
+        .await
+        .unwrap_or_default();
+    let history = with_memory(&bot.memory, &recaps, store::recent_messages(&db, &bot_id, 20).await?);
 
     let mut upstream =
         match meta::post_chat_completions(&ctx.env, &model, &history, stream).await {
@@ -115,19 +163,19 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
             .and_then(|v| v.as_u64())
             .unwrap_or_else(|| pricing::estimate_tokens(&reply));
         let estimated = usage.is_none();
-        store::insert_message(&db, &chat_id, "assistant", &reply).await?;
-        store::touch_chat(&db, &chat_id).await?;
+        store::insert_message(&db, &bot_id, "assistant", &reply).await?;
+        store::touch_bot(&db, &bot_id).await?;
         let (cost, remaining) = store::record_usage(
             &db,
             &user_id,
-            Some(&chat_id),
-            &store::UsageInput { model: model.clone(), prompt_tokens: prompt, cached_tokens: cached, completion_tokens: completion, estimated },
+            Some(&bot_id),
+            &store::UsageInput { model: model.clone(), prompt_tokens: prompt, cached_tokens: cached, completion_tokens: completion, estimated, audio_seconds: 0.0, cost_override: None },
         )
         .await?;
         return util::json(
             200,
             &serde_json::json!({
-                "chat_id": chat_id,
+                "slavebot_id": bot_id,
                 "reply": reply,
                 "usage": { "prompt_tokens": prompt, "completion_tokens": completion, "estimated": estimated },
                 "cost_usd": cost,
@@ -144,7 +192,7 @@ pub async fn chat(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
         h.set("Cache-Control", "no-cache, no-transform")?;
         h.set("Connection", "keep-alive")?;
         h.set("X-Accel-Buffering", "no")?;
-        h.set("X-Chat-Id", &chat_id)?;
+        h.set("X-Chat-Id", &bot_id)?;
     }
     util::cors(&mut resp)?;
     Ok(resp)
@@ -161,26 +209,21 @@ pub async fn finish(mut req: Request, ctx: RouteContext<()>) -> Result<Response>
         Ok(b) => b,
         Err(_) => return util::err(400, "Invalid JSON body."),
     };
-    let chat_id = body.chat_id.unwrap_or_default();
+    let bot_id = body.slavebot_id.unwrap_or_default();
     let content = body.content.unwrap_or_default();
-    if chat_id.is_empty() || content.is_empty() || content.len() > 200_000 {
-        return util::err(400, "chat_id and content are required.");
+    if bot_id.is_empty() || content.is_empty() || content.len() > 200_000 {
+        return util::err(400, "slavebot_id and content are required.");
     }
     let db = ctx.env.d1("DB")?;
-    let chat: Option<store::ChatRow> = db
-        .prepare("SELECT id, title, model, created_at, updated_at FROM chats WHERE id = ? AND user_id = ?")
-        .bind(&[wasm_bindgen::JsValue::from_str(&chat_id), wasm_bindgen::JsValue::from_str(&user_id)])?
-        .first(None)
-        .await?;
-    let chat = match chat {
-        Some(c) => c,
-        None => return util::err(404, "Chat not found."),
+    let bot = match store::get_bot(&db, &user_id, &bot_id).await? {
+        Some(b) => b,
+        None => return util::err(404, "SlaveBot not found."),
     };
 
     let prompt = match body.usage.as_ref().and_then(|u| u.prompt_tokens) {
         Some(p) => p,
         None => {
-            let chars = store::prompt_chars(&db, &chat_id).await?;
+            let chars = store::prompt_chars(&db, &bot_id).await?;
             (chars as f64 / 4.0).ceil() as u64
         }
     };
@@ -193,19 +236,19 @@ pub async fn finish(mut req: Request, ctx: RouteContext<()>) -> Result<Response>
     };
     let estimated = body.usage.is_none();
 
-    store::insert_message(&db, &chat_id, "assistant", &content).await?;
-    store::touch_chat(&db, &chat_id).await?;
+    store::insert_message(&db, &bot_id, "assistant", &content).await?;
+    store::touch_bot(&db, &bot_id).await?;
     let (cost, remaining) = store::record_usage(
         &db,
         &user_id,
-        Some(&chat_id),
-        &store::UsageInput { model: chat.model.clone(), prompt_tokens: prompt, cached_tokens: 0, completion_tokens: completion, estimated },
+        Some(&bot_id),
+        &store::UsageInput { model: bot.model.clone(), prompt_tokens: prompt, cached_tokens: 0, completion_tokens: completion, estimated, audio_seconds: 0.0, cost_override: None },
     )
     .await?;
     util::json(
         200,
         &serde_json::json!({
-            "chat_id": chat_id,
+            "slavebot_id": bot_id,
             "usage": { "prompt_tokens": prompt, "completion_tokens": completion, "estimated": estimated },
             "cost_usd": cost,
             "credit_usd": remaining,
@@ -213,28 +256,74 @@ pub async fn finish(mut req: Request, ctx: RouteContext<()>) -> Result<Response>
     )
 }
 
-/// GET /api/chats — the user's saved chats, most recent first.
-pub async fn list_chats(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+/// GET /api/slavebots — the user's bots, most recently active first.
+pub async fn list_bots(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let user_id = match auth::bearer_sub(&req, &ctx.env)? {
         Some(id) => id,
         None => return util::err(401, "Unauthorized."),
     };
     let db = ctx.env.d1("DB")?;
-    let chats = store::list_chats(&db, &user_id).await?;
-    util::json(200, &serde_json::json!({ "chats": chats }))
+    let bots = store::list_bots(&db, &user_id).await?;
+    util::json(200, &serde_json::json!({ "slavebots": bots }))
 }
 
-/// GET /api/chats/:id — one chat with its full message history.
-pub async fn chat_detail(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+/// POST /api/slavebots — create a new bot. Body: {model?}.
+pub async fn create_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let user_id = match auth::bearer_sub(&req, &ctx.env)? {
         Some(id) => id,
         None => return util::err(401, "Unauthorized."),
     };
-    let chat_id = ctx.param("id").cloned().unwrap_or_default();
+    let body: CreateBotRequest = match req.json().await {
+        Ok(b) => b,
+        Err(_) => CreateBotRequest { model: None },
+    };
+    let model = body
+        .model
+        .filter(|m| valid_model(m))
+        .unwrap_or_else(|| meta::default_model(&ctx.env));
     let db = ctx.env.d1("DB")?;
-    match store::chat_messages(&db, &user_id, &chat_id).await? {
-        Some((chat, messages)) => util::json(200, &serde_json::json!({ "chat": chat, "messages": messages })),
-        None => util::err(404, "Chat not found."),
+    let bot = store::create_bot(&db, &user_id, &model).await?;
+    util::json(201, &serde_json::json!({ "slavebot": bot }))
+}
+
+/// GET /api/slavebots/:id — one bot with its full message history.
+pub async fn bot_detail(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
+        Some(id) => id,
+        None => return util::err(401, "Unauthorized."),
+    };
+    let bot_id = ctx.param("id").cloned().unwrap_or_default();
+    let db = ctx.env.d1("DB")?;
+    match store::bot_messages(&db, &user_id, &bot_id).await? {
+        Some((bot, messages)) => util::json(200, &serde_json::json!({ "slavebot": bot, "messages": messages })),
+        None => util::err(404, "SlaveBot not found."),
+    }
+}
+
+/// PUT /api/slavebots/:id — rename, set memory, or change model. Body: {name?, memory?, model?}.
+pub async fn update_bot(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let user_id = match auth::bearer_sub(&req, &ctx.env)? {
+        Some(id) => id,
+        None => return util::err(401, "Unauthorized."),
+    };
+    let body: UpdateBotRequest = match req.json().await {
+        Ok(b) => b,
+        Err(_) => return util::err(400, "Invalid JSON body."),
+    };
+    let bot_id = ctx.param("id").cloned().unwrap_or_default();
+    let db = ctx.env.d1("DB")?;
+    match store::update_bot(
+        &db,
+        &user_id,
+        &bot_id,
+        body.name.as_deref(),
+        body.memory.as_deref(),
+        body.model.as_deref(),
+    )
+    .await?
+    {
+        Some(bot) => util::json(200, &serde_json::json!({ "slavebot": bot })),
+        None => util::err(404, "SlaveBot not found."),
     }
 }
 
@@ -322,7 +411,7 @@ fn upstream_message(text: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-fn describe_upstream_error(status: u16, text: &str) -> String {
+pub(crate) fn describe_upstream_error(status: u16, text: &str) -> String {
     let hint = match status {
         401 => " Check that META_API_KEY is valid.",
         404 => " The model or endpoint may not exist.",

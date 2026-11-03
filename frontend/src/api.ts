@@ -5,29 +5,47 @@ export interface User {
   credit_usd: number;
 }
 
-export interface ChatSummary {
+export interface SlaveBot {
   id: string;
+  name: string;
   title: string;
   model: string;
+  memory: string;
+  avatar_key: string;
   created_at: string;
   updated_at: string;
 }
 
-export interface ChatDetail {
-  chat: ChatSummary;
+export interface BotDetail {
+  slavebot: SlaveBot;
   messages: { role: string; content: string; created_at: string }[];
+}
+
+export interface SummaryRow {
+  id: number;
+  period: string;
+  period_key: string;
+  content: string;
+  created_at: string;
+}
+
+export interface Summaries {
+  daily: SummaryRow[];
+  weekly: SummaryRow[];
+  monthly: SummaryRow[];
 }
 
 export interface UsageLog {
   id: number;
-  chat_id: string | null;
-  chat_title: string | null;
+  slavebot_id: string | null;
+  slavebot_name: string | null;
   model: string;
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   cost_usd: number;
   estimated: number;
+  audio_seconds: number;
   created_at: string;
 }
 
@@ -38,7 +56,7 @@ export interface UsageSummary {
 }
 
 export interface ChatResult {
-  chat_id: string;
+  slavebot_id: string;
   reply?: string;
   usage: { prompt_tokens: number; completion_tokens: number; estimated?: boolean };
   cost_usd: number;
@@ -109,17 +127,68 @@ export async function fetchMe(): Promise<User> {
   return data.user;
 }
 
-export async function fetchChats(): Promise<ChatSummary[]> {
-  const data = await request<{ chats: ChatSummary[] }>("/api/chats");
-  return data.chats;
+export async function fetchBots(): Promise<SlaveBot[]> {
+  const data = await request<{ slavebots: SlaveBot[] }>("/api/slavebots");
+  return data.slavebots;
 }
 
-export async function fetchChatDetail(chatId: string): Promise<ChatDetail> {
-  return request<ChatDetail>(`/api/chats/${encodeURIComponent(chatId)}`);
+export async function createBot(model: string): Promise<SlaveBot> {
+  const data = await request<{ slavebot: SlaveBot }>("/api/slavebots", {
+    method: "POST",
+    body: JSON.stringify({ model }),
+  });
+  return data.slavebot;
+}
+
+export async function fetchBotDetail(botId: string): Promise<BotDetail> {
+  return request<BotDetail>(`/api/slavebots/${encodeURIComponent(botId)}`);
+}
+
+export async function updateBot(
+  botId: string,
+  patch: { name?: string; memory?: string; model?: string },
+): Promise<SlaveBot> {
+  const data = await request<{ slavebot: SlaveBot }>(
+    `/api/slavebots/${encodeURIComponent(botId)}`,
+    { method: "PUT", body: JSON.stringify(patch) },
+  );
+  return data.slavebot;
 }
 
 export async function fetchUsage(): Promise<UsageSummary> {
   return request<UsageSummary>("/api/usage");
+}
+
+export async function fetchSummaries(botId: string): Promise<Summaries> {
+  return request<Summaries>(`/api/summaries?slavebot_id=${encodeURIComponent(botId)}`);
+}
+
+export async function runSummary(botId: string): Promise<{ summary: SummaryRow | null; note?: string }> {
+  return request("/api/summaries/run", {
+    method: "POST",
+    body: JSON.stringify({ slavebot_id: botId }),
+  });
+}
+
+export async function uploadAvatar(botId: string, file: File): Promise<void> {
+  const token = getToken();
+  const form = new FormData();
+  form.append("avatar", file);
+  const res = await fetch(`/api/slavebots/${encodeURIComponent(botId)}/avatar`, {
+    method: "POST",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: form,
+  });
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) {
+    throw new Error(data.error ?? `Avatar upload failed (${res.status}).`);
+  }
+}
+
+export function avatarUrl(botId: string): string {
+  return `/api/slavebots/${encodeURIComponent(botId)}/avatar`;
 }
 
 export interface StreamHandlers {
@@ -132,9 +201,9 @@ export interface StreamHandlers {
   signal: AbortSignal;
 }
 
-/** POST /api/chat with stream:true. Resolves with the chat id (X-Chat-Id). */
+/** POST /api/chat with stream:true. Resolves with the bot id (X-Chat-Id). */
 export async function streamChat(
-  chatId: string | null,
+  botId: string,
   message: string,
   model: string,
   handlers: StreamHandlers,
@@ -147,7 +216,7 @@ export async function streamChat(
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ chat_id: chatId, message, model, stream: true }),
+    body: JSON.stringify({ slavebot_id: botId, message, model, stream: true }),
   });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -194,19 +263,19 @@ export async function streamChat(
 
 /** Non-streaming chat: single call, reply + cost inline. */
 export async function plainChat(
-  chatId: string | null,
+  botId: string,
   message: string,
   model: string,
 ): Promise<ChatResult> {
   return request<ChatResult>("/api/chat", {
     method: "POST",
-    body: JSON.stringify({ chat_id: chatId, message, model, stream: false }),
+    body: JSON.stringify({ slavebot_id: botId, message, model, stream: false }),
   });
 }
 
 /** Called after an SSE stream ends: persists the reply, logs usage, deducts credit. */
 export async function finishChat(
-  chatId: string,
+  botId: string,
   content: string,
   usage: {
     prompt_tokens?: number;
@@ -216,8 +285,35 @@ export async function finishChat(
 ): Promise<ChatResult> {
   return request<ChatResult>("/api/chat/finish", {
     method: "POST",
-    body: JSON.stringify({ chat_id: chatId, content, usage }),
+    body: JSON.stringify({ slavebot_id: botId, content, usage }),
   });
+}
+
+export interface TranscribeResult {
+  transcript: string;
+  audio_seconds: number;
+  estimated?: boolean;
+  cost_usd: number;
+  credit_usd: number;
+}
+
+/** POST /api/voice/transcribe — multipart upload of a WAV clip. */
+export async function transcribeVoice(audio: Blob): Promise<TranscribeResult> {
+  const token = getToken();
+  const form = new FormData();
+  form.append("audio", audio, "audio.wav");
+  const res = await fetch("/api/voice/transcribe", {
+    method: "POST",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: form,
+  });
+  const data = (await res.json().catch(() => ({}))) as TranscribeResult & { error?: string };
+  if (!res.ok) {
+    throw new Error(data.error ?? `Transcription failed (${res.status}).`);
+  }
+  return data;
 }
 
 export function formatUsd(n: number): string {

@@ -28,5 +28,14 @@
       "database_id": "715313cd-e33e-432d-bfc2-c03222437800",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+  "r2_buckets": [
+    {
+      "binding": "AVATARS",
+      "bucket_name": "slaver-avatars"
+    }
+  ],
+  "triggers": {
+    "crons": ["5 0 * * *", "10 0 * * 1", "15 0 1 * *"]
+  }
 }

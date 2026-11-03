@@ -1,10 +1,13 @@
 mod auth;
+mod avatar;
 mod chat;
 mod mcp;
 mod meta;
 mod pricing;
 mod store;
+mod summarize;
 mod util;
+mod voice;
 
 use worker::*;
 
@@ -31,11 +34,66 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/api/me", auth::me)
         .post_async("/api/chat", chat::chat)
         .post_async("/api/chat/finish", chat::finish)
-        .get_async("/api/chats", chat::list_chats)
-        .get_async("/api/chats/:id", chat::chat_detail)
+        .get_async("/api/slavebots", chat::list_bots)
+        .post_async("/api/slavebots", chat::create_bot)
+        .get_async("/api/slavebots/:id", chat::bot_detail)
+        .put_async("/api/slavebots/:id", chat::update_bot)
         .get_async("/api/usage", chat::usage)
+        .post_async("/api/voice/transcribe", voice::transcribe)
+        .post_async("/api/slavebots/:id/avatar", avatar::upload)
+        .get_async("/api/slavebots/:id/avatar", avatar::serve)
+        .get_async("/api/summaries", summarize::list)
+        .post_async("/api/summaries/run", summarize::run_now)
         .get("/mcp", |_, _| mcp::info())
         .post_async("/mcp", mcp::rpc)
         .run(req, env)
         .await
+}
+
+/// Cron triggers (see `triggers.crons` in wrangler.jsonc):
+/// - `5 0 * * *`   daily rollup of yesterday's messages
+/// - `10 0 * * 1`  weekly rollup of the last 7 dailies
+/// - `15 0 1 * *`  monthly rollup of recent weeklies
+#[event(scheduled)]
+async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
+    let cron = event.cron();
+    let db = match env.d1("DB") {
+        Ok(db) => db,
+        Err(e) => {
+            console_error!("scheduled: no D1: {e}");
+            return;
+        }
+    };
+    let scopes = match store::all_bot_scopes(&db).await {
+        Ok(s) => s,
+        Err(e) => {
+            console_error!("scheduled: list bots failed: {e}");
+            return;
+        }
+    };
+    for scope in scopes {
+        let bot = match store::get_bot(&db, &scope.user_id, &scope.id).await {
+            Ok(Some(b)) => b,
+            Ok(None) => continue,
+            Err(e) => {
+                console_error!("scheduled: get bot failed: {e}");
+                continue;
+            }
+        };
+        let job: &str = if cron.contains(" 1 * *") {
+            "monthly"
+        } else if cron.contains("* * 1") {
+            "weekly"
+        } else {
+            "daily"
+        };
+        let result = match job {
+            "monthly" => summarize::run_monthly(&env, &db, &bot, &scope.user_id).await.map(|_| ()),
+            "weekly" => summarize::run_weekly(&env, &db, &bot, &scope.user_id).await.map(|_| ()),
+            _ => summarize::run_daily(&env, &db, &bot, &scope.user_id).await.map(|_| ()),
+        };
+        if let Err(e) = result {
+            console_error!("scheduled: {job} summary failed for {}: {e}", bot.id);
+        }
+    }
 }

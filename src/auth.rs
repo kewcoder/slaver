@@ -29,6 +29,7 @@ struct UserRow {
     name: String,
     password_salt: String,
     password_hash: String,
+    credit_usd: f64,
 }
 
 fn b64url(data: &[u8]) -> String {
@@ -128,7 +129,7 @@ pub async fn register(mut req: Request, ctx: RouteContext<()>) -> Result<Respons
 
     let db = ctx.env.d1("DB")?;
     let existing: Option<UserRow> = db
-        .prepare("SELECT id, email, name, password_salt, password_hash FROM users WHERE email = ?")
+        .prepare("SELECT id, email, name, password_salt, password_hash, credit_usd FROM users WHERE email = ?")
         .bind(&[JsValue::from_str(&email)])?
         .first(None)
         .await?;
@@ -154,7 +155,7 @@ pub async fn register(mut req: Request, ctx: RouteContext<()>) -> Result<Respons
     let token = sign_jwt(&secret, &id, &email)?;
     util::json(
         201,
-        &serde_json::json!({ "token": token, "user": { "id": id, "email": email, "name": name } }),
+        &serde_json::json!({ "token": token, "user": { "id": id, "email": email, "name": name, "credit_usd": 10.0 } }),
     )
 }
 
@@ -171,7 +172,7 @@ pub async fn login(mut req: Request, ctx: RouteContext<()>) -> Result<Response> 
 
     let db = ctx.env.d1("DB")?;
     let row: Option<UserRow> = db
-        .prepare("SELECT id, email, name, password_salt, password_hash FROM users WHERE email = ?")
+        .prepare("SELECT id, email, name, password_salt, password_hash, credit_usd FROM users WHERE email = ?")
         .bind(&[JsValue::from_str(&email)])?
         .first(None)
         .await?;
@@ -187,7 +188,7 @@ pub async fn login(mut req: Request, ctx: RouteContext<()>) -> Result<Response> 
     let token = sign_jwt(&secret, &row.id, &row.email)?;
     util::json(
         200,
-        &serde_json::json!({ "token": token, "user": { "id": row.id, "email": row.email, "name": row.name } }),
+        &serde_json::json!({ "token": token, "user": { "id": row.id, "email": row.email, "name": row.name, "credit_usd": row.credit_usd } }),
     )
 }
 

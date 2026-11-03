@@ -2,7 +2,9 @@
   "name": "slaver",
   "private": true,
   "type": "module",
-  "workspaces": ["frontend"],
+  "workspaces": [
+    "frontend"
+  ],
   "scripts": {
     "dev": "wrangler dev",
     "dev:frontend": "npm --workspace frontend run dev",
@@ -17,6 +19,8 @@
     "cf:types": "wrangler types"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.4",
+    "tailwindcss": "^4.3.4",
     "wrangler": "^4.156.2"
   }
 }

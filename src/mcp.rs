@@ -140,6 +140,8 @@ async fn call_chat(id: Value, env: &Env, user_id: &str, args: &Value) -> Result<
                     cached_tokens: done.cached_tokens,
                     completion_tokens: done.completion_tokens,
                     estimated: done.estimated,
+                    audio_seconds: 0.0,
+                    cost_override: None,
                 },
             )
             .await

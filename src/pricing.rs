@@ -29,6 +29,12 @@ pub fn rates_for(model: &str) -> Rates {
     }
 }
 
+/// Cost of speech-to-text in USD for a clip of `seconds` length.
+/// Muse Voice Transcribe is $3.00 per 1000 minutes of audio.
+pub fn stt_cost_usd(seconds: f64) -> f64 {
+    seconds.max(0.0) * 3.0 / 60_000.0
+}
+
 /// Rough token estimate from text length (OpenAI's ~4 chars/token rule).
 /// Used only when the provider does not report exact usage.
 pub fn estimate_tokens(text: &str) -> u64 {
@@ -66,6 +72,14 @@ mod tests {
         let spark = cost_usd(&rates_for("muse-spark-1.3"), 10_000, 0, 5_000);
         let wonder = cost_usd(&rates_for("muse-wonder-1.0"), 10_000, 0, 5_000);
         assert!(wonder > spark * 10.0, "spark={spark} wonder={wonder}");
+    }
+
+    #[test]
+    fn stt_cost_math() {
+        // 60 s at $3/1000 min = $0.003.
+        let cost = stt_cost_usd(60.0);
+        assert!((cost - 0.003).abs() < 1e-12, "got {cost}");
+        assert_eq!(stt_cost_usd(-5.0), 0.0);
     }
 
     #[test]

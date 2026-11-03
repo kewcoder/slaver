@@ -25,7 +25,7 @@ pub fn model_list(env: &Env) -> serde_json::Value {
     let default = default_model(env);
     serde_json::json!({
         "models": [
-            { "id": "muse-spark-1.3", "label": "Muse Spark 1.3 (default, murah)", "default": default == "muse-spark-1.3" },
+            { "id": "muse-spark-1.3", "label": "Muse Spark 1.3 (default)", "default": default == "muse-spark-1.3" },
             { "id": "muse-wonder-1.0", "label": "Muse Wonder (marathon / agent)", "default": default == "muse-wonder-1.0" },
         ]
     })
