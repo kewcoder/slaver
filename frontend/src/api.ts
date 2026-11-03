@@ -762,9 +762,52 @@ export interface Repo {
   team_id: string;
   name: string;
   description: string;
+  price_cents?: number;
   template: number;
   fork_of: string;
   created_at: string;
+}
+
+export interface Checkout {
+  payment_id: string;
+  hitpay_request_id: string;
+  checkout_url: string;
+  redirect_url: string;
+  amount_cents: number;
+  currency: string;
+  sandbox: boolean;
+  mock?: boolean;
+  license?: License;
+  repo?: Repo;
+  project?: Project;
+}
+
+export async function checkoutLicense(teamId: string, repoId: string): Promise<Checkout & { license?: License; repo?: Repo; project?: Project }> {
+  const data = await callTool<{ license?: License; repo?: Repo; project?: Project } & Checkout>("licenses_checkout", { team_id: teamId, repo_id: repoId });
+  return data as Checkout & { license?: License; repo?: Repo; project?: Project };
+}
+
+export async function activateLicense(paymentId: string): Promise<{ license: License; repo: Repo; project: Project }> {
+  const data = await callTool<{ license: License; repo: Repo; project: Project }>("licenses_activate", { payment_id: paymentId });
+  return data;
+}
+
+export async function fetchPaymentStatus(paymentId: string): Promise<{ payment: Payment; hitpay_status: string }> {
+  const data = await callTool<{ payment: Payment; hitpay_status: string }>("payments_status", { payment_id: paymentId });
+  return data;
+}
+
+export interface Payment {
+  id: string;
+  team_id: string;
+  repo_id: string;
+  hitpay_request_id: string;
+  amount_cents: number;
+  currency: string;
+  status: string;
+  license_id: string;
+  created_at: string;
+  paid_at: string;
 }
 
 export interface License {

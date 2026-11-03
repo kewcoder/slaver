@@ -186,7 +186,7 @@ Workspace dan Team terlalu mirip untuk dipisah: user memberi perintah di Team, a
 
 | Aliran | Mekanisme | Gateway |
 |---|---|---|
-| Beli lisensi template | Sekali bayar per app | HitPay (ASEAN incl. QRIS/VA/e-wallet) + Stripe (global, kartu) |
+| Beli lisensi template | Sekali bayar via hosted checkout HitPay (sandbox dulu; mock bila tanpa API key) | HitPay (ASEAN incl. QRIS/VA/e-wallet) + Stripe (global, kartu) |
 | Perpanjangan support/update | Subscription tahunan per lisensi aktif | sama |
 | Platform fee | 15% dari lisensi + support | dipotong otomatis saat payout publisher |
 | Build/preview minutes (opsional, fase 2) | Kuota gratis + top-up | sama |

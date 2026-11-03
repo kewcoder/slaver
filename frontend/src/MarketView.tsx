@@ -1,14 +1,22 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  buyLicense,
+  activateLicense,
+  checkoutLicense,
   fetchLicenses,
+  fetchPaymentStatus,
   fetchProjects,
   fetchTemplates,
   type License,
+  type Payment,
   type Project,
   type ProjectStats,
   type Repo,
 } from "./api";
+
+function formatPrice(cents?: number): string {
+  if (cents === undefined || cents === null) return "";
+  return `$${(cents / 100).toFixed(cents % 100 === 0 ? 0 : 2)}`;
+}
 
 export default function MarketView({
   teamId,
@@ -25,6 +33,72 @@ export default function MarketView({
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [supportBusy, setSupportBusy] = useState<string | null>(null);
+  const [pending, setPending] = useState<{ payment: Payment; checkoutUrl: string; sandbox: boolean; repoName: string } | null>(null);
+  const pollRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current !== null) window.clearInterval(pollRef.current);
+    };
+  }, []);
+
+  async function pollPayment(paymentId: string, repoName: string, checkoutUrl: string, sandbox: boolean) {
+    if (pollRef.current !== null) window.clearInterval(pollRef.current);
+    const check = async () => {
+      try {
+        const { payment, hitpay_status } = await fetchPaymentStatus(paymentId);
+        if (hitpay_status === "paid" || payment.status === "paid") {
+          if (pollRef.current !== null) window.clearInterval(pollRef.current);
+          const res = await activateLicense(paymentId);
+          setPending(null);
+          await refresh();
+          onOpenProject(res.project.id);
+          return;
+        }
+        if (hitpay_status === "failed" || payment.status === "failed") {
+          if (pollRef.current !== null) window.clearInterval(pollRef.current);
+          setPending(null);
+          setError("Payment failed or expired. Please try again.");
+          return;
+        }
+        setPending({ payment, checkoutUrl, sandbox, repoName });
+      } catch (err) {
+        // Keep polling on transient errors; surface only auth/config errors.
+        if (err instanceof Error && /not found|team/i.test(err.message)) {
+          if (pollRef.current !== null) window.clearInterval(pollRef.current);
+          setPending(null);
+          setError(err.message);
+        }
+      }
+    };
+    await check();
+    pollRef.current = window.setInterval(check, 5000);
+  }
+
+  // Handle return from HitPay: /market?payment=<id>
+  useEffect(() => {
+    const pid = new URLSearchParams(window.location.search).get("payment");
+    if (!pid) return;
+    window.history.replaceState({}, "", window.location.pathname);
+    if (!teamId) {
+      setError("Payment detected — pick your team, then open Marketplace again to finish activation.");
+      return;
+    }
+    (async () => {
+      setBusyId("return");
+      setError("");
+      try {
+        const { payment } = await fetchPaymentStatus(pid);
+        setPending({ payment, checkoutUrl: "", sandbox: false, repoName: "" });
+        await pollPayment(pid, "", "", false);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not verify payment.");
+      } finally {
+        setBusyId(null);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function openSupport(repoId: string) {
     setError("");
@@ -65,9 +139,16 @@ export default function MarketView({
     setBusyId(repo.id);
     setError("");
     try {
-      const res = await buyLicense(teamId, repo.id);
-      await refresh();
-      onOpenProject(res.project.id);
+      const res = await checkoutLicense(teamId, repo.id);
+      if (res.mock || res.license) {
+        // Instant (mock / no-key) checkout: already provisioned.
+        await refresh();
+        if (res.project) onOpenProject(res.project.id);
+        return;
+      }
+      window.open(res.checkout_url, "_blank", "noopener");
+      setPending({ payment: { id: res.payment_id, team_id: teamId, repo_id: repo.id, hitpay_request_id: res.hitpay_request_id, amount_cents: res.amount_cents, currency: res.currency, status: "pending", license_id: "", created_at: "", paid_at: "" }, checkoutUrl: res.checkout_url, sandbox: res.sandbox, repoName: repo.name });
+      await pollPayment(res.payment_id, repo.name, res.checkout_url, res.sandbox);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Checkout failed.");
     } finally {
@@ -83,6 +164,25 @@ export default function MarketView({
       </p>
       {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
 
+      {pending && (
+        <div className="mt-3 rounded-lg border border-amber-700 bg-amber-950/40 p-3 text-sm">
+          <div className="font-bold text-amber-200">Waiting for HitPay payment… {pending.sandbox && <span className="rounded bg-zinc-800 px-1 text-[11px] text-zinc-300">SANDBOX TEST MODE</span>}</div>
+          <div className="mt-1 text-xs text-amber-200/80">
+            {pending.repoName ? `“${pending.repoName}” · ` : ""}A payment tab was opened — complete it there, then come back here. We detect payment automatically.
+          </div>
+          <div className="mt-2 flex gap-2">
+            {pending.checkoutUrl && (
+              <a href={pending.checkoutUrl} target="_blank" rel="noreferrer" className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500">
+                Re-open payment page
+              </a>
+            )}
+            <button type="button" onClick={() => { if (pollRef.current !== null) window.clearInterval(pollRef.current); setPending(null); }} className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       <h3 className="mb-2 mt-5 text-sm font-bold uppercase tracking-wide text-zinc-500">Templates</h3>
       {templates.length === 0 ? (
         <p className="text-sm text-zinc-500">No templates published yet — check back soon.</p>
@@ -95,6 +195,9 @@ export default function MarketView({
               <div key={t.id} className="flex flex-col rounded-xl border border-zinc-800 bg-zinc-900 p-4">
                 <div className="flex items-center justify-between">
                   <h4 className="font-bold text-zinc-100">{t.name}</h4>
+                  <span className="text-sm font-bold text-emerald-400">{formatPrice(t.price_cents)}</span>
+                </div>
+                <div className="mt-0.5">
                   {owned ? (
                     <span className="rounded bg-emerald-950 px-2 py-0.5 text-[11px] font-bold text-emerald-300">OWNED</span>
                   ) : (
@@ -126,10 +229,10 @@ export default function MarketView({
                       type="button"
                       onClick={() => buy(t)}
                       disabled={!teamId || busyId === t.id}
-                      title={!teamId ? "Pick a team first" : "Mock checkout — includes fork + project + 12mo support"}
+                      title={!teamId ? "Pick a team first" : "Pay with HitPay — includes fork + project + 12mo support"}
                       className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40"
                     >
-                      {busyId === t.id ? "Processing…" : "Buy & fork"}
+                      {busyId === t.id ? "Processing…" : `Buy & fork · ${formatPrice(t.price_cents)}`}
                     </button>
                   )}
                   <span className="text-[11px] text-zinc-500">Includes 12 months updates + support</span>

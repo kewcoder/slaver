@@ -1,7 +1,12 @@
 //! MCP tools for the Slaver platform layer: projects/kanban, git repos,
 //! marketplace licenses, VPS targets, deployments. Dispatched from mcp.rs.
 
-use axum::response::Response;
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    Json,
+};
 use serde_json::{json, Value};
 
 use crate::{platform, store, AppState};
@@ -48,6 +53,9 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "repos_fork", "description": "Fork a template repo into your team.", "inputSchema": { "type": "object", "required": ["repo_id", "team_id"], "properties": { "repo_id": { "type": "string" }, "team_id": { "type": "string" } } } }),
         json!({ "name": "repos_publish", "description": "Publish/unpublish a team repo as a marketplace template. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id", "template"], "properties": { "repo_id": { "type": "string" }, "template": { "type": "boolean" } } } }),
         json!({ "name": "licenses_buy", "description": "Buy a perpetual license for a template (mock checkout), auto-forks the repo and creates a project. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "repo_id"], "properties": { "team_id": { "type": "string" }, "repo_id": { "type": "string" }, "provider": { "type": "string" } } } }),
+        json!({ "name": "licenses_checkout", "description": "Start a HitPay checkout for a template license. Returns a payment URL (or instant mock license when HitPay is not configured). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "repo_id"], "properties": { "team_id": { "type": "string" }, "repo_id": { "type": "string" } } } }),
+        json!({ "name": "payments_status", "description": "Live status of a checkout payment (refreshes from HitPay when pending).", "inputSchema": { "type": "object", "required": ["payment_id"], "properties": { "payment_id": { "type": "string" } } } }),
+        json!({ "name": "licenses_activate", "description": "Verify a paid checkout and mint the license + fork + project. Idempotent.", "inputSchema": { "type": "object", "required": ["payment_id"], "properties": { "payment_id": { "type": "string" } } } }),
         json!({ "name": "licenses_list", "description": "List a team's licenses.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
         json!({ "name": "vps_add", "description": "Register a VPS deploy target (SSH key stored server-side). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "host", "ssh_key"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "host": { "type": "string" }, "ssh_user": { "type": "string" }, "ssh_key": { "type": "string" } } } }),
         json!({ "name": "vps_list", "description": "List a team's VPS targets (keys never leave the server).", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
@@ -284,36 +292,53 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             }
         }
         "licenses_buy" => {
+            // Mock/instant checkout (tests, demos). Real money goes through
+            // licenses_checkout + HitPay + licenses_activate.
             let (team_id, rid) = (arg_str(args, "team_id"), arg_str(args, "repo_id"));
             if team_id.is_empty() || rid.is_empty() {
                 return Some(rpc_err(id, -32602, "team_id and repo_id are required."));
             }
-            let provider = {
-                let p = arg_str(args, "provider");
-                if p.is_empty() { "mock".to_string() } else { p }
-            };
-            if provider != "mock" {
-                return Some(rpc_err(id, -32602, "Real payment providers (HitPay/Stripe) are not connected yet — use provider \"mock\" for now."));
-            }
-            // Buy-once: license (12 months support) + auto-fork + auto-project.
-            match platform::buy_license(db, &team_id, user_id, &rid, &provider, 0, 12).await {
-                Ok(lic) => {
-                    let fork = match platform::fork_repo(db, user_id, &team_id, &rid, &state.git_root.to_string_lossy()).await {
-                        Ok(f) => f,
-                        Err(e) => return Some(rpc_err(id, -32602, &e.to_string())),
-                    };
-                    let tpl_name = platform::get_repo(db, user_id, &rid).await.ok().flatten().map(|r| r.name).unwrap_or_else(|| "app".to_string());
-                    let project = match platform::create_project(db, &team_id, user_id, &format!("{tpl_name} (custom)"), "Forked from marketplace template.").await {
-                        Ok(p) => p,
-                        Err(e) => return Some(rpc_err(id, -32602, &e.to_string())),
-                    };
-                    let project = match platform::set_project_repo(db, user_id, &project.id, &fork.id).await {
-                        Ok(p) => p,
-                        Err(e) => return Some(rpc_err(id, -32602, &e.to_string())),
-                    };
-                    mcp_data(id, "License active — repo forked and project created.".to_string(), json!({ "license": lic, "repo": fork, "project": project }))
-                }
+            match platform::buy_bundle(db, &state.git_root.to_string_lossy(), &team_id, user_id, &rid, "mock", 0).await {
+                Ok((lic, fork, project)) => mcp_data(id, "License active — repo forked and project created.".to_string(), json!({ "license": lic, "repo": fork, "project": project })),
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "licenses_checkout" => {
+            let (team_id, rid) = (arg_str(args, "team_id"), arg_str(args, "repo_id"));
+            if team_id.is_empty() || rid.is_empty() {
+                return Some(rpc_err(id, -32602, "team_id and repo_id are required."));
+            }
+            if !crate::hitpay::configured() {
+                // No HitPay key configured: fall back to instant mock checkout.
+                match platform::buy_bundle(db, &state.git_root.to_string_lossy(), &team_id, user_id, &rid, "mock", 0).await {
+                    Ok((lic, fork, project)) => mcp_data(id, "License active (mock checkout — no HitPay key configured).".to_string(), json!({ "license": lic, "repo": fork, "project": project, "mock": true })),
+                    Err(e) => rpc_err(id, -32602, &e.to_string()),
+                }
+            } else {
+                match checkout_start(&state, db, user_id, &team_id, &rid).await {
+                    Ok(v) => mcp_data(id, "Complete your payment with HitPay to activate the license.".to_string(), v),
+                    Err(e) => rpc_err(id, -32602, &e),
+                }
+            }
+        }
+        "payments_status" => {
+            let pid = arg_str(args, "payment_id");
+            if pid.is_empty() {
+                return Some(rpc_err(id, -32602, "payment_id is required."));
+            }
+            match payment_status_live(&state, db, &pid).await {
+                Ok(v) => mcp_data(id, "Payment status.".to_string(), v),
+                Err(e) => rpc_err(id, -32602, &e),
+            }
+        }
+        "licenses_activate" => {
+            let pid = arg_str(args, "payment_id");
+            if pid.is_empty() {
+                return Some(rpc_err(id, -32602, "payment_id is required."));
+            }
+            match activate_paid(&state, db, user_id, &pid).await {
+                Ok(v) => mcp_data(id, "License active — repo forked and project created.".to_string(), v),
+                Err(e) => rpc_err(id, -32602, &e),
             }
         }
         "licenses_list" => {
@@ -434,4 +459,263 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
         _ => return None,
     };
     Some(out)
+}
+
+/// Create a HitPay payment request for a template license. Returns checkout
+/// details; the license is only minted after payment (see activate_paid).
+async fn checkout_start(
+    state: &AppState,
+    db: &crate::db::Db,
+    user_id: &str,
+    team_id: &str,
+    repo_id: &str,
+) -> Result<Value, String> {
+    if platform::license_for_repo(db, team_id, repo_id).await.map_err(|e| e.to_string())?.is_some() {
+        return Err("Your team already owns an active license for this app.".to_string());
+    }
+    let tpl = platform::get_repo(db, user_id, repo_id).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "Template not found.".to_string())?;
+    if tpl.template == 0 {
+        return Err("That repo is not a published template.".to_string());
+    }
+    let price_cents = platform::repo_price_cents(db, repo_id).await.map_err(|e| e.to_string())?;
+    let currency = "USD";
+    let reference = format!("slv-{}", &crate::db::now_millis());
+    let app_base = crate::hitpay::app_base_url();
+    let webhook = format!("{app_base}/hooks/hitpay");
+    let (hitpay_id, checkout_url) = crate::hitpay::create_payment_request(
+        price_cents as f64 / 100.0,
+        currency,
+        &tpl.name,
+        "",
+        &reference,
+        &format!("Slaver license: {}", tpl.name),
+        "",
+        &webhook,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let pay = platform::create_payment(db, team_id, user_id, repo_id, price_cents, currency, &reference, &hitpay_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(json!({
+        "payment_id": pay.id,
+        "hitpay_request_id": hitpay_id,
+        "checkout_url": checkout_url,
+        "redirect_url": format!("{app_base}/market?payment={}", pay.id),
+        "amount_cents": price_cents,
+        "currency": currency,
+        "sandbox": crate::hitpay::is_sandbox(),
+    }))
+}
+
+/// Live status of a payment (refreshes from HitPay when still pending).
+async fn payment_status_live(
+    _state: &AppState,
+    db: &crate::db::Db,
+    payment_id: &str,
+) -> Result<Value, String> {
+    let pay = platform::get_payment(db, payment_id).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "Payment not found.".to_string())?;
+    let mut status = pay.status.clone();
+    if status == "pending" && !pay.hitpay_request_id.is_empty() && crate::hitpay::configured() {
+        match crate::hitpay::payment_status(&pay.hitpay_request_id).await {
+            Ok((s, paid)) => {
+                if paid {
+                    status = "paid".to_string();
+                } else if ["failed", "expired", "canceled", "cancelled"].contains(&s.as_str()) {
+                    let _ = platform::mark_payment_failed(db, payment_id).await;
+                    status = "failed".to_string();
+                }
+            }
+            Err(_) => {}
+        }
+    }
+    let pay = platform::get_payment(db, payment_id).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "Payment not found.".to_string())?;
+    Ok(json!({ "payment": pay, "hitpay_status": status }))
+}
+
+/// Verify payment with HitPay and mint license + fork + project. Idempotent:
+/// re-running returns the already-provisioned bundle.
+async fn activate_paid(
+    state: &AppState,
+    db: &crate::db::Db,
+    user_id: &str,
+    payment_id: &str,
+) -> Result<Value, String> {
+    let pay = platform::get_payment(db, payment_id).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "Payment not found.".to_string())?;
+    store::membership(db, &pay.team_id, user_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "You are not on that team.".to_string())?;
+    if pay.status == "paid" && !pay.license_id.is_empty() {
+        return existing_bundle(db, user_id, &pay).await;
+    }
+    if pay.hitpay_request_id.is_empty() {
+        return Err("This payment has no HitPay request — use mock checkout instead.".to_string());
+    }
+    if !crate::hitpay::configured() {
+        return Err("HitPay is not configured.".to_string());
+    }
+    let (status, paid) = crate::hitpay::payment_status(&pay.hitpay_request_id).await.map_err(|e| e.to_string())?;
+    if !paid {
+        if ["failed", "expired", "canceled", "cancelled"].contains(&status.as_str()) {
+            let _ = platform::mark_payment_failed(db, payment_id).await;
+        }
+        return Err(format!("Payment is not completed yet (HitPay status: {status})."));
+    }
+    let (lic, fork, project) = platform::buy_bundle(
+        db,
+        &state.git_root.to_string_lossy(),
+        &pay.team_id,
+        user_id,
+        &pay.repo_id,
+        "hitpay",
+        pay.amount_cents,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    platform::mark_payment_paid(db, payment_id, &lic.id, &fork.id, &project.id).await.map_err(|e| e.to_string())?;
+    Ok(json!({ "license": lic, "repo": fork, "project": project }))
+}
+
+async fn existing_bundle(db: &crate::db::Db, user_id: &str, pay: &platform::PaymentRow) -> Result<Value, String> {
+    let lic: Option<platform::LicenseRow> = db
+        .prepare("SELECT id, team_id, repo_id, kind, support_until, status, provider, amount_cents, created_at FROM licenses WHERE id = ?")
+        .bind(&[crate::db::v_text(&pay.license_id)])
+        .map_err(|e| e.to_string())?
+        .first(None)
+        .await
+        .map_err(|e| e.to_string())?;
+    let lic = lic.ok_or_else(|| "License record missing.".to_string())?;
+    let fork = platform::get_repo(db, user_id, &pay.fork_repo_id).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "Forked repo not found.".to_string())?;
+    let project = platform::get_project(db, user_id, &pay.project_id).await.map_err(|e| e.to_string())?
+        .ok_or_else(|| "Project not found.".to_string())?;
+    Ok(json!({ "license": lic, "repo": fork, "project": project, "already_active": true }))
+}
+
+/// HitPay webhook receiver. Never trusts the payload alone: the configured
+/// salt is checked when present, and the payment is ALWAYS re-verified
+/// server-side before anything is minted.
+pub async fn hitpay_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    let raw = body.to_vec();
+    let v: Value = serde_json::from_slice(&raw).unwrap_or(Value::Null);
+    // Candidate HitPay request ids across payload shapes.
+    let mut candidates: Vec<String> = Vec::new();
+    for key in ["id", "payment_request_id", "payment_request"] {
+        if let Some(x) = v.get(key).and_then(|x| x.as_str()) {
+            if !x.is_empty() {
+                candidates.push(x.to_string());
+            }
+        }
+    }
+    if let Some(o) = v.get("payment_request").and_then(|x| x.as_object()) {
+        for k in ["id", "payment_request_id"] {
+            if let Some(x) = o.get(k).and_then(|x| x.as_str()) {
+                if !x.is_empty() {
+                    candidates.push(x.to_string());
+                }
+            }
+        }
+    }
+    // Our own payment reference (set as reference_number at creation).
+    let mut reference = v.get("reference_number").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    if reference.is_empty() {
+        reference = v
+            .get("payment_request")
+            .and_then(|o| o.get("reference_number"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+    }
+    let salt = crate::hitpay::webhook_salt();
+    if !salt.is_empty() {
+        let sig = headers
+            .get("hitpay-signature")
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("");
+        if !crate::hitpay::verify_event_signature(&raw, sig, &salt) {
+            return (StatusCode::UNAUTHORIZED, Json(json!({ "ok": false }))).into_response();
+        }
+    }
+    let db = &state.db;
+    // Resolve the local payment row.
+    let mut pay: Option<platform::PaymentRow> = None;
+    for cand in &candidates {
+        if let Ok(Some(p)) = platform::find_payment_by_hitpay(db, cand).await {
+            pay = Some(p);
+            break;
+        }
+    }
+    if pay.is_none() && !reference.is_empty() {
+        pay = platform::find_payment_by_reference(db, &reference).await.unwrap_or(None);
+    }
+    let pay = match pay {
+        Some(p) => p,
+        None => return (StatusCode::OK, Json(json!({ "ok": true, "ignored": true }))).into_response(),
+    };
+    if pay.status == "paid" {
+        return (StatusCode::OK, Json(json!({ "ok": true, "already": true }))).into_response();
+    }
+    // Server-side truth: only a completed upstream payment mints a license.
+    let verified = if pay.hitpay_request_id.is_empty() || !crate::hitpay::configured() {
+        false
+    } else {
+        match crate::hitpay::payment_status(&pay.hitpay_request_id).await {
+            Ok((_, true)) => true,
+            Ok((s, false)) => {
+                if ["failed", "expired", "canceled", "cancelled"].contains(&s.as_str()) {
+                    let _ = platform::mark_payment_failed(db, &pay.id).await;
+                }
+                false
+            }
+            Err(_) => false,
+        }
+    };
+    if !verified {
+        return (StatusCode::OK, Json(json!({ "ok": true, "pending": true }))).into_response();
+    }
+    // Activate as the payment creator (owner/admin at checkout time).
+    let creator = if pay.created_by.is_empty() { String::new() } else { pay.created_by.clone() };
+    let _ = creator;
+    match activate_paid_internal(&state, db, &pay).await {
+        Ok(_) => (StatusCode::OK, Json(json!({ "ok": true, "activated": true }))).into_response(),
+        Err(e) => (StatusCode::OK, Json(json!({ "ok": false, "error": e }))).into_response(),
+    }
+}
+
+/// Activation used by the webhook (no caller user): the payment creator acts.
+async fn activate_paid_internal(
+    state: &AppState,
+    db: &crate::db::Db,
+    pay: &platform::PaymentRow,
+) -> Result<(), String> {
+    if pay.created_by.is_empty() {
+        return Err("Payment has no creator; activate manually via licenses_activate.".to_string());
+    }
+    // Idempotent: a previous webhook (or manual activation) may have finished already.
+    if pay.status == "paid" && !pay.license_id.is_empty() {
+        return Ok(());
+    }
+    let user_id = pay.created_by.clone();
+    let (lic, fork, project) = platform::buy_bundle(
+        db,
+        &state.git_root.to_string_lossy(),
+        &pay.team_id,
+        &user_id,
+        &pay.repo_id,
+        "hitpay",
+        pay.amount_cents,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    platform::mark_payment_paid(db, &pay.id, &lic.id, &fork.id, &project.id).await.map_err(|e| e.to_string())?;
+    Ok(())
 }

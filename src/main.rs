@@ -1,6 +1,6 @@
 use axum::{routing::{get, post}, Router};
 use chrono::Datelike;
-use slaver::{db::Db, git_http, harness, mcp, oauth_http, schedule, store, summarize, AppState};
+use slaver::{db::Db, git_http, harness, mcp, oauth_http, platform_api, schedule, store, summarize, AppState};
 use std::{collections::HashMap, time::Duration};
 use tower_http::{cors::CorsLayer, services::{ServeDir, ServeFile}};
 
@@ -167,6 +167,7 @@ async fn main() {
         .route("/oauth/deny", post(oauth_http::deny_post))
         .route("/oauth/token", post(oauth_http::token_post))
         .route("/oauth/userinfo", get(oauth_http::userinfo_get))
+        .route("/hooks/hitpay", post(platform_api::hitpay_webhook))
         .fallback_service(
             ServeDir::new(&state.frontend_dir)
                 .not_found_service(ServeFile::new(&index)),

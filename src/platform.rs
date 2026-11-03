@@ -291,6 +291,7 @@ pub struct RepoRow {
     pub team_id: String,
     pub name: String,
     pub description: String,
+    pub price_cents: i64,
     pub template: i64,
     pub fork_of: String,
     pub created_at: String,
@@ -312,14 +313,14 @@ pub async fn list_repos(db: &Db, team_id: &str, user_id: &str, templates_only: b
     if templates_only {
         // Public templates are visible to every logged-in user.
         return db
-            .prepare("SELECT id, team_id, name, description, template, fork_of, created_at FROM repos WHERE template = 1 ORDER BY created_at DESC LIMIT 100")
+            .prepare("SELECT id, team_id, name, description, price_cents, template, fork_of, created_at FROM repos WHERE template = 1 ORDER BY created_at DESC LIMIT 100")
             .bind(&[])?
             .all()
             .await?
             .results();
     }
     require_member(db, team_id, user_id).await?;
-    db.prepare("SELECT id, team_id, name, description, template, fork_of, created_at FROM repos WHERE team_id = ? ORDER BY created_at DESC LIMIT 100")
+    db.prepare("SELECT id, team_id, name, description, price_cents, template, fork_of, created_at FROM repos WHERE team_id = ? ORDER BY created_at DESC LIMIT 100")
         .bind(&[v_text(team_id)])?
         .all()
         .await?
@@ -328,7 +329,7 @@ pub async fn list_repos(db: &Db, team_id: &str, user_id: &str, templates_only: b
 
 pub async fn get_repo(db: &Db, user_id: &str, repo_id: &str) -> Result<Option<RepoRow>> {
     let row: Option<RepoRow> = db
-        .prepare("SELECT id, team_id, name, description, template, fork_of, created_at FROM repos WHERE id = ?")
+        .prepare("SELECT id, team_id, name, description, price_cents, template, fork_of, created_at FROM repos WHERE id = ?")
         .bind(&[v_text(repo_id)])?
         .first(None)
         .await?;
@@ -417,6 +418,24 @@ pub async fn fork_repo(db: &Db, user_id: &str, team_id: &str, source_repo_id: &s
 // ---------- licenses (marketplace buy-once) ----------
 
 #[derive(Deserialize, Serialize, Clone)]
+pub struct PaymentRow {
+    pub id: String,
+    pub team_id: String,
+    pub repo_id: String,
+    pub hitpay_request_id: String,
+    pub amount_cents: i64,
+    pub currency: String,
+    pub status: String,
+    pub license_id: String,
+    pub reference: String,
+    pub fork_repo_id: String,
+    pub project_id: String,
+    pub created_by: String,
+    pub provider: String,
+    pub created_at: String,
+    pub paid_at: String,
+}
+#[derive(Deserialize, Serialize, Clone)]
 pub struct LicenseRow {
     pub id: String,
     pub team_id: String,
@@ -428,6 +447,111 @@ pub struct LicenseRow {
     pub amount_cents: i64,
     pub created_at: String,
 }
+
+pub async fn list_licenses(db: &Db, team_id: &str, user_id: &str) -> Result<Vec<LicenseRow>> {
+    require_member(db, team_id, user_id).await?;
+    db.prepare("SELECT id, team_id, repo_id, kind, support_until, status, provider, amount_cents, created_at FROM licenses WHERE team_id = ? ORDER BY created_at DESC LIMIT 100")
+        .bind(&[v_text(team_id)])?
+        .all()
+        .await?
+        .results()
+}
+
+pub async fn license_for_repo(db: &Db, team_id: &str, repo_id: &str) -> Result<Option<LicenseRow>> {
+    db.prepare("SELECT id, team_id, repo_id, kind, support_until, status, provider, amount_cents, created_at FROM licenses WHERE team_id = ? AND repo_id = ? AND status = 'active' LIMIT 1")
+        .bind(&[v_text(team_id), v_text(repo_id)])?
+        .first(None)
+        .await
+        .map_err(|e| anyhow!("{e}"))
+}
+
+pub async fn repo_price_cents(db: &Db, repo_id: &str) -> Result<i64> {
+    #[derive(serde::Deserialize)]
+    struct R {
+        price_cents: i64,
+    }
+    let row: Option<R> = db
+        .prepare("SELECT price_cents FROM repos WHERE id = ?")
+        .bind(&[v_text(repo_id)])?
+        .first(None)
+        .await?;
+    Ok(row.map(|r| r.price_cents).unwrap_or(4900).max(0))
+}
+
+pub async fn create_payment(
+    db: &Db,
+    team_id: &str,
+    user_id: &str,
+    repo_id: &str,
+    amount_cents: i64,
+    currency: &str,
+    reference: &str,
+    hitpay_request_id: &str,
+) -> Result<PaymentRow> {
+    require_manager(db, team_id, user_id).await?;
+    let id = new_id();
+    db.prepare("INSERT INTO payments (id, team_id, repo_id, hitpay_request_id, reference, amount_cents, currency, status, provider, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'hitpay', ?)")
+        .bind(&[v_text(&id), v_text(team_id), v_text(repo_id), v_text(hitpay_request_id), v_text(reference), v_int(amount_cents), v_text(currency), v_text(user_id)])?
+        .run()
+        .await?;
+    get_payment(db, &id).await?.ok_or_else(|| anyhow!("payment insert failed"))
+}
+
+pub async fn find_payment_by_reference(db: &Db, reference: &str) -> Result<Option<PaymentRow>> {
+    if reference.trim().is_empty() {
+        return Ok(None);
+    }
+    get_payment_by(db, "reference", reference).await
+}
+
+async fn get_payment_by(db: &Db, col: &str, val: &str) -> Result<Option<PaymentRow>> {
+    let allowed = ["hitpay_request_id", "reference", "id"];
+    if !allowed.contains(&col) {
+        return Err(anyhow!("bad lookup column"));
+    }
+    let sql = format!("SELECT id, team_id, repo_id, hitpay_request_id, reference, amount_cents, currency, status, license_id, fork_repo_id, project_id, created_by, provider, created_at, paid_at FROM payments WHERE {} = ? ORDER BY rowid DESC LIMIT 1", col);
+    db.prepare(&sql)
+        .bind(&[v_text(val)])?
+        .first(None)
+        .await
+        .map_err(|e| anyhow!("{e}"))
+}
+
+pub async fn get_payment(db: &Db, id: &str) -> Result<Option<PaymentRow>> {
+    db.prepare("SELECT id, team_id, repo_id, hitpay_request_id, reference, amount_cents, currency, status, license_id, fork_repo_id, project_id, created_by, provider, created_at, paid_at FROM payments WHERE id = ?")
+        .bind(&[v_text(id)])?
+        .first(None)
+        .await
+        .map_err(|e| anyhow!("{e}"))
+}
+
+pub async fn find_payment_by_hitpay(db: &Db, hitpay_request_id: &str) -> Result<Option<PaymentRow>> {
+    if hitpay_request_id.trim().is_empty() {
+        return Ok(None);
+    }
+    db.prepare("SELECT id, team_id, repo_id, hitpay_request_id, reference, amount_cents, currency, status, license_id, fork_repo_id, project_id, created_by, provider, created_at, paid_at FROM payments WHERE hitpay_request_id = ? ORDER BY rowid DESC LIMIT 1")
+        .bind(&[v_text(hitpay_request_id)])?
+        .first(None)
+        .await
+        .map_err(|e| anyhow!("{e}"))
+}
+
+pub async fn mark_payment_paid(db: &Db, payment_id: &str, license_id: &str, fork_repo_id: &str, project_id: &str) -> Result<()> {
+    db.prepare("UPDATE payments SET status = 'paid', license_id = ?, fork_repo_id = ?, project_id = ?, paid_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ? AND status <> 'paid'")
+        .bind(&[v_text(license_id), v_text(fork_repo_id), v_text(project_id), v_text(payment_id)])?
+        .run()
+        .await?;
+    Ok(())
+}
+
+pub async fn mark_payment_failed(db: &Db, payment_id: &str) -> Result<()> {
+    db.prepare("UPDATE payments SET status = 'failed' WHERE id = ? AND status = 'pending'")
+        .bind(&[v_text(payment_id)])?
+        .run()
+        .await?;
+    Ok(())
+}
+
 
 /// Find (or, for the owning team, create) the public support group linked
 /// to a repo. Anyone can read/post; only the owning team's bots reply.
@@ -460,7 +584,9 @@ pub async fn support_group_for_repo(db: &Db, user_id: &str, repo_id: &str) -> Re
     store::get_group(db, user_id, &id).await.map_err(|e| e.to_string())
 }
 
-pub async fn buy_license(
+/// Core license insert shared by mock + paid checkouts. Creates the license
+/// row only (no fork/project — the caller composes those).
+pub async fn buy_license_inner(
     db: &Db,
     team_id: &str,
     user_id: &str,
@@ -504,21 +630,64 @@ pub async fn buy_license(
     row.ok_or_else(|| anyhow!("license insert failed"))
 }
 
-pub async fn list_licenses(db: &Db, team_id: &str, user_id: &str) -> Result<Vec<LicenseRow>> {
-    require_member(db, team_id, user_id).await?;
-    db.prepare("SELECT id, team_id, repo_id, kind, support_until, status, provider, amount_cents, created_at FROM licenses WHERE team_id = ? ORDER BY created_at DESC LIMIT 100")
-        .bind(&[v_text(team_id)])?
-        .all()
+/// Full buy-once bundle: license + fork + project. Shared by the mock
+/// checkout and the paid (HitPay) activation path.
+pub async fn buy_bundle(
+    db: &Db,
+    git_root: &str,
+    team_id: &str,
+    user_id: &str,
+    template_repo_id: &str,
+    provider: &str,
+    amount_cents: i64,
+) -> Result<(LicenseRow, RepoRow, ProjectRow)> {
+    let lic = buy_license_inner(db, team_id, user_id, template_repo_id, provider, amount_cents, 12).await?;
+    let fork = fork_repo(db, user_id, team_id, template_repo_id, git_root).await?;
+    let tpl_name = get_repo(db, user_id, template_repo_id)
         .await?
-        .results()
+        .map(|r| r.name)
+        .unwrap_or_else(|| "app".to_string());
+    let project = create_project(db, team_id, user_id, &format!("{tpl_name} (custom)"), "Forked from marketplace template.").await?;
+    let project = set_project_repo(db, user_id, &project.id, &fork.id).await?;
+    Ok((lic, fork, project))
 }
 
-pub async fn license_for_repo(db: &Db, team_id: &str, repo_id: &str) -> Result<Option<LicenseRow>> {
-    db.prepare("SELECT id, team_id, repo_id, kind, support_until, status, provider, amount_cents, created_at FROM licenses WHERE team_id = ? AND repo_id = ? AND status = 'active' LIMIT 1")
-        .bind(&[v_text(team_id), v_text(repo_id)])?
-        .first(None)
-        .await
-        .map_err(|e| anyhow!("{e}"))
+fn fork_placeholder() -> crate::store::GroupRow {
+    crate::store::GroupRow {
+        id: String::new(),
+        team_id: String::new(),
+        name: String::new(),
+        is_public: 0,
+        repo_id: String::new(),
+        created_at: String::new(),
+        updated_at: String::new(),
+    }
+}
+
+fn bot_placeholder() -> crate::store::BotRow {
+    crate::store::BotRow {
+        id: String::new(),
+        user_id: String::new(),
+        team_id: String::new(),
+        name: String::new(),
+        title: String::new(),
+        model: String::new(),
+        memory: String::new(),
+        role: String::new(),
+        parent_id: String::new(),
+        pinned: 0,
+        pinned_by: String::new(),
+        owner_user_id: String::new(),
+        relay: 0,
+        avatar_key: String::new(),
+        archived: 0,
+        voice: String::new(),
+        active_days: String::new(),
+        active_start: String::new(),
+        active_end: String::new(),
+        created_at: String::new(),
+        updated_at: String::new(),
+    }
 }
 
 // ---------- VPS targets & deployments ----------

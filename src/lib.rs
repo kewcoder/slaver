@@ -8,6 +8,7 @@ pub mod git_http;
 pub mod group;
 pub mod harness;
 pub mod huddle;
+pub mod hitpay;
 pub mod mcp;
 pub mod oauth;
 pub mod oauth_http;

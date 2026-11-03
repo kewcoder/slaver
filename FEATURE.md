@@ -139,7 +139,7 @@
 - Header + tagline buy-once. **Template cards**: nama, deskripsi, badge OWNED / BUY ONCE, tombol **💬 Support** (buka support channel template; dibuatkan otomatis saat butuh oleh owner), tombol **Buy & fork** (mock checkout → lisensi + fork + project) atau **Open project** bila sudah punya.
 - Catatan kecil: "Includes 12 months updates + support".
 - **My licenses**: list lisensi (repo short-id, kind, status, support-until, provider).
-- Flow beli (v1 mock): klik → license perpetual + support 12 bulan + fork repo + project "X (custom)" → lompat ke Projects.
+- Flow beli: klik → checkout HitPay (atau mock instan bila tanpa API key) → bayar di tab HitPay → webhook + polling verifikasi status server-side → license perpetual + support 12 bulan + fork repo + project "X (custom)" → lompat ke Projects. Kembali dari HitPay (`?payment=`): aktivasi otomatis bila sudah lunas. Webhook tanpa HMAC valid / payment gagal tidak pernah membuat lisensi.
 
 ---
 
