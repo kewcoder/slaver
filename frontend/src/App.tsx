@@ -41,18 +41,50 @@ function avatarColor(id: string): string {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 }
 
+const avatarCache = new Map<string, string>();
+
 function BotAvatar({ bot, size = "md" }: { bot: SlaveBot; size?: "sm" | "md" | "lg" }) {
-  const [broken, setBroken] = useState(false);
+  const [url, setUrl] = useState<string | null>(null);
   const dims = size === "lg" ? "h-16 w-16 text-2xl" : size === "sm" ? "h-8 w-8 text-sm" : "h-10 w-10 text-base";
   useEffect(() => {
-    setBroken(false);
+    if (!bot.avatar_key) {
+      setUrl(null);
+      return;
+    }
+    let cancelled = false;
+    const cacheKey = `${bot.id}:${bot.avatar_key}`;
+    const cached = avatarCache.get(cacheKey);
+    if (cached) {
+      setUrl(cached);
+      return;
+    }
+    const headers: Record<string, string> = {};
+    const t = localStorage.getItem("slaver_token");
+    if (t) headers.Authorization = `Bearer ${t}`;
+    fetch(avatarUrl(bot.id), { headers })
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((blob) => {
+        if (cancelled) return;
+        if (blob) {
+          const objectUrl = URL.createObjectURL(blob);
+          avatarCache.set(cacheKey, objectUrl);
+          setUrl(objectUrl);
+        } else {
+          setUrl(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [bot.id, bot.avatar_key]);
-  if (bot.avatar_key && !broken) {
+  if (url) {
     return (
       <img
-        src={`${avatarUrl(bot.id)}?v=${encodeURIComponent(bot.avatar_key)}`}
+        src={url}
         alt={bot.name}
-        onError={() => setBroken(true)}
         className={`${dims} shrink-0 rounded-full object-cover`}
       />
     );
@@ -293,7 +325,7 @@ function BotView({
               ref={fileRef}
               type="file"
               accept="image/png,image/jpeg,image/webp,image/gif"
-              className="hidden"
+              className="sr-only"
               onChange={(e) => onAvatarFile(e.target.files?.[0])}
             />
             <button type="button" disabled={avatarBusy} onClick={() => fileRef.current?.click()} className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800 disabled:opacity-50">
@@ -402,8 +434,12 @@ export default function App() {
     warmUpVoices();
     refreshUser().finally(() => setChecking(false));
     fetchModels().then(setModels).catch(() => {});
-    refreshBots();
-  }, [refreshUser, refreshBots]);
+  }, [refreshUser]);
+
+  useEffect(() => {
+    if (user) refreshBots();
+    else setBots([]);
+  }, [user, refreshBots]);
 
   useEffect(() => {
     if (view === "logs" && user) {
