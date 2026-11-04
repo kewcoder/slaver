@@ -1,4 +1,4 @@
-//! Seed marketplace templates on first boot: each seeds/<name>/ dir becomes
+//! Seed marketplace templates on first boot: each apps/<name>/ dir becomes
 //! a public template repo (bare git + initial commit).
 
 use std::path::{Path, PathBuf};
@@ -9,11 +9,10 @@ fn new_id() -> String {
 
 const SEEDS: &[(&str, &str)] = &[
     ("resto-ops", "Resto Ops — super-app restoran dine-in: kasir + 2 area meja + booking online + stok + MCP, siap docker"),
-    ("mail-app", "Mail App — email usaha sendiri: inbox, balas, tulis baru, siap docker"),
 ];
 
-pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, seeds_dir: &str) {
-    eprintln!("seed: checking templates (dir={seeds_dir})");
+pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, apps_dir: &str) {
+    eprintln!("seed: checking templates (dir={apps_dir})");
     // Seed per template name so new templates still land on old databases.
     let existing: Vec<String> = match db
         .prepare("SELECT name FROM repos WHERE template = 1")
@@ -61,7 +60,7 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, seeds_dir: &str
         return;
     }
     for (dir_name, desc) in SEEDS {
-        let src = PathBuf::from(seeds_dir).join(dir_name);
+        let src = PathBuf::from(apps_dir).join(dir_name);
         let src = match std::fs::canonicalize(&src) {
             Ok(p) => p,
             Err(_) => {
@@ -71,7 +70,6 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, seeds_dir: &str
         };
         let name = match *dir_name {
             "resto-ops" => "Resto Ops",
-            "mail-app" => "Mail App",
             other => other,
         };
         if existing.iter().any(|n| n == name) {

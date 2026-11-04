@@ -23,7 +23,7 @@ Semua agen = slaveBot dalam 1 team milik owner. Owner atur model/provider per ag
 
 ## 3. Aplikasi pendukung (Marketplace → fork → customize)
 
-**Template: Resto Ops** (`seeds/resto-ops`) — 1 docker compose:
+**Template: Resto Ops** (`apps/resto-ops`) — 1 docker compose:
 - `web` (Caddy, static): tab **Kasir** (menu, keranjang, total), **Meja** (peta status Kosong/Terisi/Booked, klik toggle), **Booking** (nama/WA/tanggal/jam/meja + DP), **Stok** (peringatan menipis + opname).
 - `pay` (Node 1-file `server.js`): `POST /api/pay` → HitPay payment-request (sandbox default; ganti `HITPAY_BASE_URL` + key untuk produksi), `GET /api/status?reference=`, `POST /api/hook` (verifikasi server-side sebelum tandai lunas).
 - State operasional di `localStorage` (1 outlet). Scale-up path: ganti ke DB + sinkron multi-kasir.

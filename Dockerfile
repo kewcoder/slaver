@@ -26,13 +26,13 @@ WORKDIR /app
 COPY --from=backend /app/target/release/slaver ./slaver
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 COPY migrations ./migrations
-COPY seeds ./seeds
+COPY apps ./apps
 ENV PORT=8080 \
     DB_PATH=/data/slaver.db \
     AVATAR_DIR=/data/avatars \
     WORK_DIR=/data/workspaces \
     MIGRATIONS_DIR=./migrations \
-    SEEDS_DIR=./seeds \
+    APPS_DIR=./apps \
     FRONTEND_DIR=./frontend/dist
 EXPOSE 8080
 VOLUME ["/data"]
