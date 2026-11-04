@@ -8,6 +8,7 @@ pub mod deploy;
 pub mod git;
 pub mod git_http;
 pub mod group;
+pub mod hosting;
 pub mod inbox;
 pub mod meeting;
 pub mod hitpay;

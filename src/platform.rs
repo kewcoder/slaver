@@ -288,7 +288,24 @@ pub struct RepoRow {
     pub price_cents: i64,
     pub template: i64,
     pub fork_of: String,
+    #[serde(default)]
+    pub category: String,
     pub created_at: String,
+}
+
+/// Edit a listing's storefront fields. Owner/admin of the owning team only.
+pub async fn update_repo(db: &Db, user_id: &str, repo_id: &str, name: Option<&str>, description: Option<&str>, price_cents: Option<i64>, category: Option<&str>) -> Result<RepoRow> {
+    let r = get_repo(db, user_id, repo_id).await?.ok_or_else(|| anyhow!("Repo not found."))?;
+    require_manager(db, &r.team_id, user_id).await?;
+    let name: String = name.map(|n| n.trim().chars().take(80).collect()).filter(|n: &String| !n.is_empty()).unwrap_or(r.name);
+    let description: String = description.map(|d| d.trim().chars().take(2000).collect()).unwrap_or(r.description);
+    let price = price_cents.map(|p| p.clamp(0, 10_000_000)).unwrap_or(r.price_cents);
+    let category: String = category.map(|c| c.trim().chars().take(40).collect()).unwrap_or(r.category);
+    db.prepare("UPDATE repos SET name = ?, description = ?, price_cents = ?, category = ? WHERE id = ?")
+        .bind(&[v_text(&name), v_text(&description), v_int(price), v_text(&category), v_text(repo_id)])?
+        .run()
+        .await?;
+    get_repo(db, user_id, repo_id).await?.ok_or_else(|| anyhow!("Repo not found."))
 }
 
 pub async fn create_repo(db: &Db, team_id: &str, user_id: &str, name: &str, description: &str) -> Result<RepoRow> {
@@ -307,14 +324,14 @@ pub async fn list_repos(db: &Db, team_id: &str, user_id: &str, templates_only: b
     if templates_only {
         // Public templates are visible to every logged-in user.
         return db
-            .prepare("SELECT id, team_id, name, description, price_cents, template, fork_of, created_at FROM repos WHERE template = 1 ORDER BY created_at DESC LIMIT 100")
+            .prepare("SELECT id, team_id, name, description, price_cents, template, fork_of, category, created_at FROM repos WHERE template = 1 ORDER BY created_at DESC LIMIT 100")
             .bind(&[])?
             .all()
             .await?
             .results();
     }
     require_member(db, team_id, user_id).await?;
-    db.prepare("SELECT id, team_id, name, description, price_cents, template, fork_of, created_at FROM repos WHERE team_id = ? ORDER BY created_at DESC LIMIT 100")
+    db.prepare("SELECT id, team_id, name, description, price_cents, template, fork_of, category, created_at FROM repos WHERE team_id = ? ORDER BY created_at DESC LIMIT 100")
         .bind(&[v_text(team_id)])?
         .all()
         .await?
@@ -323,7 +340,7 @@ pub async fn list_repos(db: &Db, team_id: &str, user_id: &str, templates_only: b
 
 pub async fn get_repo(db: &Db, user_id: &str, repo_id: &str) -> Result<Option<RepoRow>> {
     let row: Option<RepoRow> = db
-        .prepare("SELECT id, team_id, name, description, price_cents, template, fork_of, created_at FROM repos WHERE id = ?")
+        .prepare("SELECT id, team_id, name, description, price_cents, template, fork_of, category, created_at FROM repos WHERE id = ?")
         .bind(&[v_text(repo_id)])?
         .first(None)
         .await?;

@@ -185,7 +185,11 @@ async fn main() {
         )
         .route(
             "/git/:repo/git-receive-pack",
-            post(git_receive_pack),
+            post(git_receive_pack).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)),
+        )
+        .route(
+            "/api/repos/:repo/upload",
+            post(slaver::hosting::upload_http).layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024)),
         )
         .route("/oauth/authorize", get(oauth_http::authorize_get).post(oauth_http::authorize_post))
         .route("/oauth/approve", post(oauth_http::approve_post))

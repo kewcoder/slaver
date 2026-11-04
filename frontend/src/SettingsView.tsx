@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLang } from "./i18n";
+import { HostingAccountsManager } from "./HostingPanel";
 import {
   addDomain,
   clearTeamProvider,
@@ -713,7 +714,7 @@ export function SettingsView({
             onClick={() => setSection(s)}
             className={`shrink-0 rounded-md px-3 py-1.5 text-xs font-bold ${section === s ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-200"}`}
           >
-            {s === "profile" ? t("settings.profile") : s === "teams" ? t("settings.teamsTitle") : s === "fly" ? t("settings.flyTitle") : t("settings.devTitle")}
+            {s === "profile" ? t("settings.profile") : s === "teams" ? t("settings.teamsTitle") : s === "fly" ? t("host.navTitle") : t("settings.devTitle")}
           </button>
         ))}
       </div>
@@ -729,7 +730,7 @@ export function SettingsView({
                 onClick={() => setSection(s)}
                 className={`rounded-md px-3 py-2 text-left text-sm ${section === s ? "bg-zinc-800 font-semibold text-zinc-100" : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"}`}
               >
-                {s === "profile" ? t("settings.profile") : s === "teams" ? t("settings.teamsTitle") : s === "fly" ? t("settings.flyTitle") : t("settings.devTitle")}
+                {s === "profile" ? t("settings.profile") : s === "teams" ? t("settings.teamsTitle") : s === "fly" ? t("host.navTitle") : t("settings.devTitle")}
               </button>
             ))}
           </nav>
@@ -802,7 +803,15 @@ export function SettingsView({
       />
       )}
 
-      {section === "fly" && <FlySection teamId={teamId} />}
+      {section === "fly" && (
+        <div className="flex flex-col gap-6">
+          <HostingAccountsManager teamId={teamId} canManage={["owner", "admin"].includes(teams.find((x) => x.id === teamId)?.role ?? "")} />
+          <details className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <summary className="cursor-pointer text-sm font-semibold text-zinc-300">{t("host.advancedFly")}</summary>
+            <div className="mt-4"><FlySection teamId={teamId} /></div>
+          </details>
+        </div>
+      )}
 
       {section === "dev" && <DeveloperSection teamId={teamId} />}
         </div>

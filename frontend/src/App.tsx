@@ -93,7 +93,7 @@ import {
   type TeamTemplate,
   type User,
 } from "./api";
-import { ArrowUpIcon, BotAvatar, MicIcon, PlusIcon, Spinner, TypingDots, WaveIcon, dayKey, dayLabel, renderMentions } from "./ui";
+import { ArrowUpIcon, BotAvatar, Brand, Icon, MicIcon, PlusIcon, Spinner, TypingDots, WaveIcon, dayKey, dayLabel, renderMentions, type IconName } from "./ui";
 import { AuthView, OnboardingView } from "./AuthView";
 import { BotView } from "./BotView";
 import { GroupView } from "./GroupView";
@@ -112,7 +112,7 @@ import {
 import { setUserLang } from "./api";
 import AppsView from "./AppsView";
 import { DmView } from "./DmView";
-import CodeView from "./CodeView";
+import PublishView from "./PublishView";
 import MarketView from "./MarketView";
 
 
@@ -141,7 +141,7 @@ function AppShell() {
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
-  const [view, setView] = useState<"apps" | "chat" | "group" | "meeting" | "bot" | "dm" | "settings" | "code" | "market">("apps");
+  const [view, setView] = useState<"apps" | "chat" | "group" | "meeting" | "bot" | "dm" | "settings" | "publish" | "market">("apps");
   const [bots, setBots] = useState<SlaveBot[]>([]);
   const [botId, setBotId] = useState<string | null>(null);
   const [bot, setBot] = useState<SlaveBot | null>(null);
@@ -195,6 +195,13 @@ function AppShell() {
     setDmPeer(null);
     setMessages([]);
     setTeamMenuOpen(false);
+  }
+
+  function goTo(next: typeof view) {
+    setView(next);
+    setSideOpen(false);
+    setTeamMenuOpen(false);
+    setUserMenuOpen(false);
   }
   const [plusOpen, setPlusOpen] = useState(false);
   const [memberNames, setMemberNames] = useState<Record<string, string>>({});
@@ -875,7 +882,7 @@ function AppShell() {
         type="button"
         onClick={() => openBot(b.id)}
         title={(b.role ? `${b.role} — ` : "") + (b.title || b.name) + (partner ? ` ${t("top.partnerTag", { name: partner })}` : "")}
-        className={`flex items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-zinc-800 ${b.id === botId ? "bg-zinc-800" : ""} ${indented ? "ml-5 border-l border-zinc-800" : ""}`}
+        className={`group flex items-center gap-2.5 rounded-xl border px-2.5 py-2 text-left ${b.id === botId && view === "chat" ? "border-[#62d89d]/20 bg-[#62d89d]/[0.08]" : "border-transparent hover:border-white/[0.06] hover:bg-white/[0.035]"} ${indented ? "ml-5 border-l border-l-white/10" : ""}`}
       >
         <span className="relative shrink-0">
           <BotAvatar bot={b} size="sm" />
@@ -901,78 +908,60 @@ function AppShell() {
   }
 
   const topBtn = (active: boolean) =>
-    `flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-2 text-sm ${active ? "bg-zinc-800 font-semibold text-zinc-100" : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"}`;
+    `flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-[13px] font-semibold ${active ? "bg-[#1c2922] text-[#a2ecc3] shadow-[0_0_0_1px_rgba(98,216,157,0.12)_inset]" : "text-[#8f9d96] hover:bg-white/[0.04] hover:text-[#edf4ef]"}`;
+
+  const isConversationView = view === "chat" || view === "group" || view === "meeting" || view === "bot" || view === "dm";
+  const activeTeam = teams.find((team) => team.id === teamId);
+  const navItems: { id: "apps" | "chat" | "publish" | "market"; icon: IconName; label: string; active: boolean }[] = [
+    { id: "apps", icon: "home", label: t("nav.apps"), active: view === "apps" },
+    { id: "chat", icon: "chat", label: t("nav.chat"), active: isConversationView },
+    { id: "market", icon: "market", label: t("nav.market"), active: view === "market" },
+    { id: "publish", icon: "upload", label: t("nav.publish"), active: view === "publish" },
+  ];
+
+  const pageMeta = (() => {
+    if (view === "apps") return { title: t("apps.title"), sub: t("apps.sub") };
+    if (view === "settings") return { title: t("settings.title"), sub: activeTeam?.name ?? t("shell.workspace") };
+    if (view === "publish") return { title: t("pub.title"), sub: t("shell.publishSub") };
+    if (view === "market") return { title: t("market.title"), sub: t("shell.marketSub") };
+    if (view === "group") return { title: groups.find((g) => g.id === groupId)?.name ?? t("top.mainTitleGroup"), sub: t("side.groups") };
+    if (view === "dm" && dmPeer) return { title: dmPeer.name, sub: t("dm.title") };
+    if (view === "meeting") return { title: meetings.find((h) => h.id === meetingId)?.topic ?? t("mtg.newTitle"), sub: t("side.meetings") };
+    if (view === "bot" && bot) return { title: bot.name, sub: t("top.botSettings") };
+    return { title: bot?.name ?? t("nav.chat"), sub: bot?.role || bot?.title || t("shell.chatSub") };
+  })();
+
+  function mainNav(mobile = false) {
+    return navItems.map((item) => (
+      <button key={item.id} type="button" onClick={() => goTo(item.id)} className={topBtn(item.active)}>
+        <Icon name={item.icon} size={17} />
+        <span className={mobile ? "" : "hidden lg:inline"}>{item.label}</span>
+      </button>
+    ));
+  }
 
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
-      {/* Top bar — logo = team switcher, then workspace nav */}
-      <header className="flex h-13 shrink-0 items-center gap-1 border-b border-zinc-800 bg-zinc-950 px-2 py-1">
-        <button type="button" onClick={() => setSideOpen((v) => !v)} title={t("nav.conversations")} className="shrink-0 rounded-md px-2 py-2 text-lg text-zinc-300 hover:bg-zinc-800 md:hidden">
-          ☰
+    <div className="app-backdrop flex h-dvh flex-col text-[#f1f5f1]">
+      {/* Global navigation */}
+      <header className="flex h-16 shrink-0 items-center gap-2 border-b border-white/[0.07] bg-[#0b100e]/95 px-3 backdrop-blur-xl sm:px-5">
+        <button type="button" onClick={() => setSideOpen((v) => !v)} title={t("nav.conversations")} className="icon-button md:hidden">
+          <Icon name="menu" size={20} />
         </button>
-        <div className="relative shrink-0">
-          <button
-            type="button"
-            onClick={() => setTeamMenuOpen((v) => !v)}
-            title={teams.find((t) => t.id === teamId)?.name ? t("nav.changeTeam", { name: teams.find((t) => t.id === teamId)!.name }) : t("nav.pickTeam")}
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-sm font-black text-white hover:bg-emerald-500"
-          >
-            {(teams.find((t) => t.id === teamId)?.name || "S").slice(0, 1).toUpperCase()}
-          </button>
-          {teamMenuOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setTeamMenuOpen(false)} />
-              <div className="absolute left-0 top-10 z-50 w-60 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-xl">
-                <div className="border-b border-zinc-800 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-zinc-500">{t("nav.teamsTitle")}</div>
-                <div className="max-h-64 overflow-y-auto p-1">
-                  {teams.map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => pickTeam(t.id)}
-                      className={`flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-zinc-800 ${t.id === teamId ? "bg-zinc-800" : ""}`}
-                    >
-                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-900 text-xs font-black text-emerald-300">
-                        {t.name.slice(0, 1).toUpperCase()}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-semibold text-zinc-100">{t.name}</span>
-                        <span className="block text-[11px] text-zinc-500">{t.role}</span>
-                      </span>
-                      {t.id === teamId && <span className="shrink-0 text-xs text-emerald-400">✓</span>}
-                    </button>
-                  ))}
-                  {teams.length === 0 && <p className="px-3 py-2 text-xs text-zinc-500">{t("nav.noTeam")}</p>}
-                </div>
-                <div className="border-t border-zinc-800 p-1">
-                  <button
-                    type="button"
-                    onClick={() => { setTeamMenuOpen(false); setView("settings"); }}
-                    className={`flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm hover:bg-zinc-800 ${view === "settings" ? "bg-zinc-800 font-semibold text-zinc-100" : "text-zinc-300"}`}
-                  >
-                    <span aria-hidden="true">⚙</span> {t("nav.settings")}
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-        <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
-          <button type="button" onClick={() => setView("apps")} className={topBtn(view === "apps")}><span aria-hidden="true">⌂</span> {t("nav.apps")}</button>
-          <button type="button" onClick={() => setView("chat")} className={topBtn(view === "chat" || view === "group" || view === "bot" || view === "meeting" || view === "dm")}><span aria-hidden="true">💬</span> {t("nav.chat")}</button>
-          <button type="button" onClick={() => setView("code")} className={topBtn(view === "code")}><span aria-hidden="true">{"</>"}</span> {t("nav.files")}</button>
-          <button type="button" onClick={() => setView("market")} className={topBtn(view === "market")}><span aria-hidden="true">◈</span> {t("nav.market")}</button>
+        <div className="mr-2 hidden sm:block"><Brand /></div>
+        <div className="sm:hidden"><Brand compact /></div>
+        <nav className="flex min-w-0 flex-1 items-center justify-center gap-1 overflow-x-auto">
+          {mainNav()}
         </nav>
         <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
-          <div className="flex rounded-md bg-zinc-800 p-0.5 text-[11px] font-bold" title={t("settings.langTitle")}>
+          <div className="flex rounded-lg border border-white/[0.07] bg-white/[0.025] p-0.5 text-[10px] font-bold" title={t("settings.langTitle")}>
             {(["en", "id"] as const).map((l) => (
               <button
                 key={l}
                 type="button"
                 disabled={langBusy}
                 onClick={() => switchLang(l)}
-                className={`rounded px-2 py-1 uppercase ${lang === l ? "bg-zinc-950 text-emerald-300" : "text-zinc-500 hover:text-zinc-200"} disabled:opacity-40`}
+                className={`rounded-md px-2 py-1.5 uppercase ${lang === l ? "bg-[#223229] text-[#8ce6b8]" : "text-[#718078] hover:text-[#e5ede8]"} disabled:opacity-40`}
               >
                 {l}
               </button>
@@ -983,14 +972,14 @@ function AppShell() {
               type="button"
               onClick={() => setUserMenuOpen((v) => !v)}
               title={user.email}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800 text-sm font-bold text-zinc-200 hover:bg-zinc-700"
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-[#1b2821] text-sm font-bold text-[#b9e7cd] hover:border-[#62d89d]/35 hover:bg-[#23362a]"
             >
               {(user.name || user.email || "?").slice(0, 1).toUpperCase()}
             </button>
             {userMenuOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
-                <div className="absolute right-0 top-10 z-50 w-56 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-xl">
+                <div className="surface-raised absolute right-0 top-12 z-50 w-60 overflow-hidden rounded-xl">
                   <div className="border-b border-zinc-800 px-3 py-2">
                     <div className="truncate text-sm font-semibold text-zinc-100">{user.name || user.email}</div>
                     <div className="truncate text-[11px] text-zinc-500">{user.email}</div>
@@ -999,9 +988,9 @@ function AppShell() {
                     <button
                       type="button"
                       onClick={logout}
-                      className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-red-400"
+                      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-[#b8c4bd] hover:bg-white/[0.05] hover:text-red-300"
                     >
-                      <span aria-hidden="true">⏻</span> {t("settings.logout")}
+                      <Icon name="logout" size={16} /> {t("settings.logout")}
                     </button>
                   </div>
                 </div>
@@ -1015,11 +1004,68 @@ function AppShell() {
       {sideOpen && (
         <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setSideOpen(false)} />
       )}
-      <aside className={`${sideOpen ? "fixed inset-y-0 left-0 z-40 flex w-72" : "hidden"} shrink-0 flex-col border-r border-zinc-800 bg-zinc-950 md:static md:flex md:w-60`}>
-        <div className="flex items-center justify-between px-4 pb-1 pt-3">
-          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">{t("side.chat")}</div>
-          <button type="button" onClick={() => { setView("settings"); setSideOpen(false); }} title={t("nav.newBotTitle")} className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-            +
+      <aside className={`${sideOpen ? "fixed inset-y-0 left-0 z-40 flex w-[290px]" : "hidden"} shrink-0 flex-col border-r border-white/[0.07] bg-[#0c1210] md:static md:flex md:w-[264px]`}>
+        <div className="relative border-b border-white/[0.07] p-3">
+          <button
+            type="button"
+            onClick={() => setTeamMenuOpen((v) => !v)}
+            title={activeTeam?.name ? t("nav.changeTeam", { name: activeTeam.name }) : t("nav.pickTeam")}
+            className="flex w-full items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.025] p-2.5 text-left hover:border-white/[0.14] hover:bg-white/[0.045]"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#244431] text-sm font-black text-[#a2ecc3]">
+              {(activeTeam?.name || "S").slice(0, 1).toUpperCase()}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-bold text-[#e9f0ec]">{activeTeam?.name ?? t("nav.pickTeam")}</span>
+              <span className="mt-0.5 block text-[11px] capitalize text-[#718078]">{activeTeam?.role ?? t("shell.workspace")}</span>
+            </span>
+            <Icon name="chevron" size={16} className="text-[#718078]" />
+          </button>
+          {teamMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setTeamMenuOpen(false)} />
+              <div className="surface-raised absolute left-3 right-3 top-[72px] z-50 overflow-hidden rounded-xl">
+                <div className="border-b border-white/[0.07] px-3 py-2.5 panel-title">{t("nav.teamsTitle")}</div>
+                <div className="max-h-64 overflow-y-auto p-1.5">
+                  {teams.map((team) => (
+                    <button
+                      key={team.id}
+                      type="button"
+                      onClick={() => pickTeam(team.id)}
+                      className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left hover:bg-white/[0.05] ${team.id === teamId ? "bg-[#62d89d]/[0.07]" : ""}`}
+                    >
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#244431] text-xs font-black text-[#a2ecc3]">
+                        {team.name.slice(0, 1).toUpperCase()}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold text-[#e8efeb]">{team.name}</span>
+                        <span className="block text-[11px] text-[#718078]">{team.role}</span>
+                      </span>
+                      {team.id === teamId && <Icon name="check" size={15} className="text-[#62d89d]" />}
+                    </button>
+                  ))}
+                  {teams.length === 0 && <p className="px-3 py-2 text-xs text-[#718078]">{t("nav.noTeam")}</p>}
+                </div>
+                <div className="border-t border-white/[0.07] p-1.5">
+                  <button
+                    type="button"
+                    onClick={() => goTo("settings")}
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-white/[0.05] ${view === "settings" ? "bg-[#62d89d]/[0.08] font-semibold text-[#a2ecc3]" : "text-[#b8c4bd]"}`}
+                  >
+                    <Icon name="settings" size={16} /> {t("nav.settings")}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {isConversationView ? (
+        <>
+        <div className="flex items-center justify-between px-4 pb-1 pt-4">
+          <div className="panel-title">{t("side.chat")}</div>
+          <button type="button" onClick={() => goTo("settings")} title={t("nav.newBotTitle")} className="icon-button h-7 w-7">
+            <Icon name="plus" size={15} />
           </button>
         </div>
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
@@ -1145,53 +1191,70 @@ function AppShell() {
           ))}
           {supportGroups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">{t("side.noSupport")}</p>}
         </nav>
-      </aside>
-
-      {/* Main */}
-      <div className="flex min-w-0 flex-1 flex-col bg-zinc-900">
-        <header className="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2 md:px-4">
-          <div className="flex min-w-0 items-center gap-1">
-            {view === "bot" && bot ? (
-              <button type="button" onClick={() => setView("chat")} title={t("top.backChat")} className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800">
-                ← {bot.name} <span className="text-xs font-normal text-zinc-500">{t("top.botSettings")}</span>
-              </button>
-            ) : view === "group" ? (
-              <span className="truncate px-1 font-semibold"><span className="mr-1 font-bold text-zinc-300">#</span>{groups.find((g) => g.id === groupId)?.name ?? t("top.mainTitleGroup")}</span>
-            ) : view === "dm" && dmPeer ? (
-              <span className="truncate px-1 font-semibold"><span className="mr-1 text-teal-300">✉</span>{dmPeer.name}</span>
-            ) : view === "meeting" ? (
-              <span className="truncate px-1 font-semibold"><span className="mr-1 text-zinc-300">◉</span>{meetings.find((h) => h.id === meetingId)?.topic.slice(0, 40) ?? t("top.mainTitleMeeting")}</span>
-            ) : view === "settings" ? (
-              <span className="px-1 font-semibold">{t("top.mainTitleSettings")}</span>
-            ) : view === "code" ? (
-              <span className="px-1 font-semibold">{t("top.mainTitleFiles")}</span>
-            ) : view === "market" ? (
-              <span className="px-1 font-semibold">{t("top.mainTitleMarket")}</span>
-            ) : view === "apps" ? (
-              <span className="px-1 font-semibold">{t("top.mainTitleApps")}</span>
-            ) : (
-              <button type="button" onClick={() => bot && setView("bot")} disabled={!bot} title={bot ? t("top.botSettings") : undefined} className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800 disabled:hover:bg-transparent">
-                <span className="mr-1 font-bold text-zinc-300">#</span>{bot ? bot.name : t("top.pickAssistant")}
+        </>
+        ) : (
+          <div className="flex flex-1 flex-col justify-between p-3">
+            <div className="rounded-2xl border border-[#62d89d]/15 bg-gradient-to-b from-[#62d89d]/[0.07] to-transparent p-4">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#62d89d]/10 text-[#8ce6b8]"><Icon name="spark" size={18} /></span>
+              <h3 className="mt-4 text-sm font-bold leading-5 text-[#e4ede8]">{t("shell.ownershipTitle")}</h3>
+              <p className="mt-2 text-xs leading-5 text-[#82958a]">{t("shell.ownershipBody")}</p>
+              <div className="mt-4 border-t border-[#62d89d]/10 pt-3 font-mono text-[10px] font-semibold text-[#62d89d]">{t("shell.flow")}</div>
+            </div>
+            {view !== "market" && (
+              <button type="button" onClick={() => goTo("market")} className="btn-secondary mt-3 w-full text-xs">
+                <Icon name="market" size={15} /> {t("shell.browseMarket")}
               </button>
             )}
           </div>
-          <button
-            type="button"
-            onClick={() => { if (voiceOn) stopSpeaking(); setVoiceOn((v) => !v); }}
-            title={t("top.voiceTitle")}
-            className={`rounded-md border px-2 py-1 text-xs font-semibold ${voiceOn ? "border-emerald-600 text-emerald-400" : "border-zinc-700 text-zinc-400"}`}
-          >
-              {voiceOn ? t("top.voiceOn") : t("top.voiceOff")}
-          </button>
+        )}
+      </aside>
+
+      {/* Main */}
+      <div className="flex min-w-0 flex-1 flex-col bg-transparent">
+        <header className="flex min-h-[76px] shrink-0 items-center justify-between gap-3 border-b border-white/[0.07] bg-[#0d1310]/70 px-4 py-3 backdrop-blur-sm md:px-6">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              {view === "bot" && bot && (
+                <button type="button" onClick={() => goTo("chat")} title={t("top.backChat")} className="icon-button -ml-2 h-8 w-8">
+                  <Icon name="arrow" size={16} className="rotate-180" />
+                </button>
+              )}
+              <h1 className="page-heading truncate text-lg font-bold text-[#eef4f0]">{pageMeta.title}</h1>
+              {view === "chat" && bot && (
+                <button type="button" onClick={() => goTo("bot")} title={t("top.botSettings")} className="icon-button h-7 w-7">
+                  <Icon name="settings" size={15} />
+                </button>
+              )}
+            </div>
+            <p className="mt-0.5 truncate text-xs text-[#718078]">{pageMeta.sub}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {isConversationView && (
+              <span className="soft-badge hidden border-[#62d89d]/15 text-[#8ce6b8] sm:inline-flex"><span className="h-1.5 w-1.5 rounded-full bg-[#62d89d]" />{t("nav.online")}</span>
+            )}
+            {(view === "chat" || view === "bot") && (
+              <button
+                type="button"
+                onClick={() => { if (voiceOn) stopSpeaking(); setVoiceOn((v) => !v); }}
+                title={t("top.voiceTitle")}
+                className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${voiceOn ? "border-[#62d89d]/25 bg-[#62d89d]/[0.06] text-[#8ce6b8]" : "border-white/10 text-[#718078]"}`}
+              >
+                {voiceOn ? t("top.voiceOn") : t("top.voiceOff")}
+              </button>
+            )}
+          </div>
         </header>
 
         {view === "apps" ? (
           <main className="flex-1 overflow-y-auto">
             <AppsView
               teamId={teamId}
+              teamName={activeTeam?.name}
+              userName={user.name || user.email}
+              botCount={activeBots.length}
               onOpenProject={(pid) => openProjectChannel(pid)}
-              onGoMarket={() => setView("market")}
-              onGoChat={() => setView("chat")}
+              onGoMarket={() => goTo("market")}
+              onGoChat={() => goTo("chat")}
             />
           </main>
         ) : view === "settings" ? (
@@ -1212,15 +1275,15 @@ function AppShell() {
                     onUserChanged={setUser}
             />
           </main>
-        ) : view === "code" ? (
-          <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <CodeView teamId={teamId} teamRole={teams.find((t) => t.id === teamId)?.role ?? ""} />
+        ) : view === "publish" ? (
+          <main className="flex-1 overflow-y-auto">
+            <PublishView teamId={teamId} teamRole={teams.find((t) => t.id === teamId)?.role ?? ""} onGoMarket={() => goTo("market")} />
           </main>
         ) : view === "market" ? (
           <main className="flex-1 overflow-y-auto">
             <MarketView
               teamId={teamId}
-              onOpenProject={(pid) => openProjectChannel(pid)}
+              onGoPublish={() => goTo("publish")}
               onOpenSupport={async (repoId) => {
                 const g = await fetchSupportGroup(repoId);
                 await openGroup(g.id);

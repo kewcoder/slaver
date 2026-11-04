@@ -95,6 +95,14 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "skills_create", "description": "Create a team skill (role+memory pack). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "name"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "category": { "type": "string" }, "description": { "type": "string" }, "role": { "type": "string" }, "memory": { "type": "string" } } } }),
         json!({ "name": "skills_delete", "description": "Delete a team skill (templates cannot be deleted). Owner/admin only.", "inputSchema": { "type": "object", "required": ["skill_id"], "properties": { "skill_id": { "type": "string" } } } }),
         json!({ "name": "skills_apply", "description": "Install a skill onto a slaveBot: role becomes the bot role, memory is appended. Returns the updated bot.", "inputSchema": { "type": "object", "required": ["skill_id", "slavebot_id"], "properties": { "skill_id": { "type": "string" }, "slavebot_id": { "type": "string" } } } }),
+        json!({ "name": "repos_update", "description": "Edit a marketplace listing: name, description, price (cents), category. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" }, "name": { "type": "string" }, "description": { "type": "string" }, "price_cents": { "type": "integer" }, "category": { "type": "string" } } } }),
+        json!({ "name": "repos_upload", "description": "Upload a project archive (.zip / .tar.gz, base64) as the repo's new HEAD commit. For large files use POST /api/repos/{repo_id}/upload with the raw archive body. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id", "archive_base64"], "properties": { "repo_id": { "type": "string" }, "archive_base64": { "type": "string" }, "message": { "type": "string" } } } }),
+        json!({ "name": "repos_import", "description": "Import a public https git repo (e.g. GitHub) into a Slaver repo, replacing its main branch. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id", "url"], "properties": { "repo_id": { "type": "string" }, "url": { "type": "string" } } } }),
+        json!({ "name": "hosting_connect", "description": "Connect the team's own hosting account: provider vercel | netlify | cloudflare | fly, with an API token (validated). Cloudflare needs account_ref = Account ID; Vercel account_ref = optional team id; Fly account_ref = optional org slug. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "provider", "api_token"], "properties": { "team_id": { "type": "string" }, "provider": { "type": "string" }, "api_token": { "type": "string" }, "name": { "type": "string" }, "account_ref": { "type": "string" } } } }),
+        json!({ "name": "hosting_accounts", "description": "List the team's connected hosting accounts (tokens never leave the server).", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
+        json!({ "name": "hosting_disconnect", "description": "Remove a hosting account (remote sites stay). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "provider", "account_id"], "properties": { "team_id": { "type": "string" }, "provider": { "type": "string" }, "account_id": { "type": "string" } } } }),
+        json!({ "name": "install_start", "description": "Install (deploy) an owned app's source onto the team's hosting account. Runs in background; poll installs_list. Re-running updates the same site. Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id", "provider", "account_id"], "properties": { "project_id": { "type": "string" }, "provider": { "type": "string" }, "account_id": { "type": "string" }, "site_name": { "type": "string" } } } }),
+        json!({ "name": "installs_list", "description": "Recent installs for a team (optionally one app) with status, URL and log.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" }, "project_id": { "type": "string" } } } }),
     ]
 }
 
@@ -775,6 +783,69 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             }
             match platform::domain_remove(db, &tid, user_id, &did).await {
                 Ok(()) => mcp_data(id, "Domain removed.".to_string(), json!({ "removed": true })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "repos_update" => {
+            let rid = arg_str(args, "repo_id");
+            if rid.is_empty() {
+                return Some(rpc_err(id, -32602, "repo_id is required."));
+            }
+            let opt = |k: &str| args.get(k).and_then(|v| v.as_str()).map(|s| s.to_string());
+            let price = args.get("price_cents").and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())));
+            let (n, d, c) = (opt("name"), opt("description"), opt("category"));
+            match platform::update_repo(db, user_id, &rid, n.as_deref(), d.as_deref(), price, c.as_deref()).await {
+                Ok(r) => mcp_data(id, format!("Listing {} saved.", r.name), json!({ "repo": r })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "repos_upload" => {
+            use base64::Engine;
+            let rid = arg_str(args, "repo_id");
+            let raw = arg_str(args, "archive_base64");
+            let raw = raw.split_once("base64,").map(|(_, b)| b.to_string()).unwrap_or(raw);
+            let bytes = match base64::engine::general_purpose::STANDARD.decode(raw.trim()) {
+                Ok(b) => b,
+                Err(_) => return Some(rpc_err(id, -32602, "archive_base64 is not valid base64.")),
+            };
+            match crate::hosting::upload_archive(state, user_id, &rid, &bytes, &arg_str(args, "message")).await {
+                Ok(sha) => mcp_data(id, format!("Uploaded as {}.", &sha.chars().take(8).collect::<String>()), json!({ "sha": sha })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "repos_import" => {
+            match crate::hosting::import_git(state, user_id, &arg_str(args, "repo_id"), &arg_str(args, "url")).await {
+                Ok(sha) => mcp_data(id, format!("Imported at {}.", &sha.chars().take(8).collect::<String>()), json!({ "sha": sha })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "hosting_connect" => {
+            match crate::hosting::connect(db, &arg_str(args, "team_id"), user_id, &arg_str(args, "provider"), &arg_str(args, "name"), &arg_str(args, "account_ref"), &arg_str(args, "api_token")).await {
+                Ok(a) => mcp_data(id, format!("{} connected.", a.provider), json!({ "account": a })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "hosting_accounts" => {
+            match crate::hosting::list_accounts(db, &arg_str(args, "team_id"), user_id).await {
+                Ok(rows) => mcp_data(id, format!("{} hosting account(s).", rows.len()), json!({ "accounts": rows })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "hosting_disconnect" => {
+            match crate::hosting::disconnect(db, &arg_str(args, "team_id"), user_id, &arg_str(args, "provider"), &arg_str(args, "account_id")).await {
+                Ok(()) => mcp_data(id, "Hosting account removed.".to_string(), json!({ "removed": true })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "install_start" => {
+            match crate::hosting::start_install(state.clone(), user_id, &arg_str(args, "project_id"), &arg_str(args, "provider"), &arg_str(args, "account_id"), &arg_str(args, "site_name")).await {
+                Ok(row) => mcp_data(id, "Install started.".to_string(), json!({ "install": row })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "installs_list" => {
+            match crate::hosting::list_installs(db, &arg_str(args, "team_id"), user_id, &arg_str(args, "project_id")).await {
+                Ok(rows) => mcp_data(id, format!("{} install(s).", rows.len()), json!({ "installs": rows })),
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }

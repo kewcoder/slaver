@@ -843,6 +843,7 @@ export interface Repo {
   price_cents?: number;
   template: number;
   fork_of: string;
+  category?: string;
   created_at: string;
 }
 
@@ -1115,4 +1116,86 @@ export async function deleteSkill(skillId: string): Promise<void> {
 export async function applySkill(skillId: string, botId: string): Promise<SlaveBot> {
   const data = await callTool<{ slavebot: SlaveBot }>("skills_apply", { skill_id: skillId, slavebot_id: botId });
   return data.slavebot;
+}
+
+// ---------- publish (creator) ----------
+
+export async function updateRepo(repoId: string, v: { name?: string; description?: string; price_cents?: number; category?: string }): Promise<Repo> {
+  const data = await callTool<{ repo: Repo }>("repos_update", { repo_id: repoId, ...v });
+  return data.repo;
+}
+
+/** Upload a .zip / .tar.gz as the repo's new HEAD commit (raw body, up to 200 MB). */
+export async function uploadRepoArchive(repoId: string, file: Blob, message = ""): Promise<string> {
+  const token = getToken();
+  const res = await fetch(`/api/repos/${encodeURIComponent(repoId)}/upload?message=${encodeURIComponent(message)}`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: file,
+  });
+  const data = (await res.json().catch(() => ({}))) as { sha?: string; error?: string };
+  if (!res.ok || !data.sha) throw new Error(data.error ?? `Upload failed (${res.status}).`);
+  return data.sha;
+}
+
+export async function importRepo(repoId: string, url: string): Promise<string> {
+  const data = await callTool<{ sha: string }>("repos_import", { repo_id: repoId, url });
+  return data.sha;
+}
+
+export async function deleteRepo(repoId: string): Promise<void> {
+  await callTool("repos_delete", { repo_id: repoId });
+}
+
+// ---------- hosting (one-click install) ----------
+
+export type HostingProvider = "vercel" | "netlify" | "cloudflare" | "fly";
+
+export interface HostingAccount {
+  id: string;
+  team_id: string;
+  provider: HostingProvider;
+  name: string;
+  account_ref: string;
+  created_at: string;
+}
+
+export interface Install {
+  id: string;
+  team_id: string;
+  project_id: string;
+  provider: HostingProvider;
+  account_id: string;
+  site_name: string;
+  external_id: string;
+  url: string;
+  status: "queued" | "running" | "live" | "failed";
+  log: string;
+  commit_sha: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchHostingAccounts(teamId: string): Promise<HostingAccount[]> {
+  const data = await callTool<{ accounts: HostingAccount[] }>("hosting_accounts", { team_id: teamId });
+  return data.accounts;
+}
+
+export async function connectHosting(teamId: string, v: { provider: HostingProvider; api_token: string; account_ref?: string; name?: string }): Promise<HostingAccount> {
+  const data = await callTool<{ account: HostingAccount }>("hosting_connect", { team_id: teamId, ...v });
+  return data.account;
+}
+
+export async function disconnectHosting(teamId: string, provider: HostingProvider, accountId: string): Promise<void> {
+  await callTool("hosting_disconnect", { team_id: teamId, provider, account_id: accountId });
+}
+
+export async function startInstall(projectId: string, provider: HostingProvider, accountId: string, siteName = ""): Promise<Install> {
+  const data = await callTool<{ install: Install }>("install_start", { project_id: projectId, provider, account_id: accountId, site_name: siteName });
+  return data.install;
+}
+
+export async function fetchInstalls(teamId: string, projectId = ""): Promise<Install[]> {
+  const data = await callTool<{ installs: Install[] }>("installs_list", { team_id: teamId, project_id: projectId });
+  return data.installs;
 }

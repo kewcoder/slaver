@@ -19,7 +19,9 @@ RUN cargo build --release
 
 # Stage 3: runtime (trixie matches the rust:1.91 toolchain's glibc)
 FROM debian:trixie-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git openssh-client && rm -rf /var/lib/apt/lists
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git openssh-client curl tar && rm -rf /var/lib/apt/lists \
+ && curl -fsSL https://fly.io/install.sh | FLYCTL_INSTALL=/usr/local sh \
+ && flyctl version
 WORKDIR /app
 COPY --from=backend /app/target/release/slaver ./slaver
 COPY --from=frontend /app/frontend/dist ./frontend/dist
