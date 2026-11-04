@@ -354,6 +354,28 @@ pub async fn get_repo(db: &Db, user_id: &str, repo_id: &str) -> Result<Option<Re
     }
 }
 
+/// Who may read a repo's SOURCE (clone, log, diff, fork). Metadata of a
+/// published listing is public; the code is not. Allowed: members of the
+/// owning team, or members of a team holding an active license for it.
+pub async fn can_read_source(db: &Db, user_id: &str, repo: &RepoRow) -> Result<bool> {
+    if store::membership(db, &repo.team_id, user_id).await?.is_some() {
+        return Ok(true);
+    }
+    if repo.template == 0 {
+        return Ok(false);
+    }
+    #[derive(Deserialize)]
+    struct C {
+        n: i64,
+    }
+    let c: Option<C> = db
+        .prepare("SELECT COUNT(*) AS n FROM licenses l JOIN team_members m ON m.team_id = l.team_id WHERE l.repo_id = ? AND l.status = 'active' AND m.user_id = ?")
+        .bind(&[v_text(&repo.id), v_text(user_id)])?
+        .first(None)
+        .await?;
+    Ok(c.map(|c| c.n > 0).unwrap_or(false))
+}
+
 pub async fn mark_template(db: &Db, repo_id: &str, template: bool) -> Result<()> {
     db.prepare("UPDATE repos SET template = ? WHERE id = ?")
         .bind(&[v_int(if template { 1 } else { 0 }), v_text(repo_id)])?

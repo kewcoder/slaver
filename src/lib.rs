@@ -6,6 +6,7 @@ pub mod db;
 pub mod fly;
 pub mod deploy;
 pub mod git;
+pub mod github;
 pub mod git_http;
 pub mod group;
 pub mod hosting;

@@ -785,6 +785,14 @@ async fn deploy_fly(db: &Db, job: &InstallRow, token: &str, org: &str, src: &Pat
         }
         log.line(format!("✓ Fly app \"{app}\" created"));
     }
+    // Never follow symlinks from untrusted source when we write files.
+    for f in ["Dockerfile", "fly.toml"] {
+        if let Ok(md) = std::fs::symlink_metadata(src.join(f)) {
+            if md.file_type().is_symlink() {
+                let _ = std::fs::remove_file(src.join(f));
+            }
+        }
+    }
     let mut port = if m.port > 0 { m.port } else { 8080 };
     if !src.join("Dockerfile").is_file() {
         let dir = static_dir(src, m)?;
@@ -834,6 +842,9 @@ async fn require_repo_manager(db: &Db, user_id: &str, repo_id: &str) -> Result<p
 /// Commit an uploaded .zip / .tar(.gz) as the new HEAD of the repo.
 pub async fn upload_archive(state: &AppState, user_id: &str, repo_id: &str, bytes: &[u8], message: &str) -> Result<String> {
     require_repo_manager(&state.db, user_id, repo_id).await?;
+    if crate::github::linked_repo(&state.db, repo_id).await.is_some() {
+        return Err(anyhow!("This listing is synced from GitHub — push to GitHub, then Sync."));
+    }
     if bytes.is_empty() {
         return Err(anyhow!("Empty upload."));
     }

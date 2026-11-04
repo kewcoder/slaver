@@ -76,6 +76,12 @@ pub async fn handle_at(
     };
     let is_write = rest == "git-receive-pack"
         || (rest == "info/refs" && query.get("service").map(|s| s.as_str()) == Some("git-receive-pack"));
+    if !is_write && !platform::can_read_source(&state.db, &user_id, &repo).await.unwrap_or(false) {
+        return plain(403, "Buy this app in the Slaver marketplace to get your own copy of the source.");
+    }
+    if is_write && crate::github::linked_repo(&state.db, &repo_id).await.is_some() {
+        return plain(409, "This repo is synced from GitHub — push to GitHub instead (Slaver mirrors it).");
+    }
     if is_write && repo.template != 0 {
         return plain(403, "Templates are read-only — fork first, then push to your fork.");
     }

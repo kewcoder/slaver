@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  applyUpdate,
+  fetchUpdates,
   fetchInstalls,
   fetchProjects,
   setProjectUrls,
+  type AppUpdate,
   type Install,
   type Project,
   type ProjectStats,
 } from "./api";
 import { InstallDialog, InstallStatus, ProviderMark, providerMeta } from "./HostingPanel";
 import { useLang } from "./i18n";
-import { Icon, SectionHeading } from "./ui";
+import { Icon, SectionHeading, Spinner } from "./ui";
 
 interface AppEntry {
   project: Project;
@@ -46,6 +49,10 @@ export default function AppsView({
   const [installs, setInstalls] = useState<Install[]>([]);
   const [installOpen, setInstallOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
+  const [updates, setUpdates] = useState<AppUpdate[]>([]);
+  const [showChanges, setShowChanges] = useState(false);
+  const [updBusy, setUpdBusy] = useState(false);
+  const [updResult, setUpdResult] = useState<{ pid: string; status: string } | null>(null);
 
   const refresh = useCallback(async () => {
     if (!teamId) {
@@ -54,9 +61,10 @@ export default function AppsView({
     }
     setError("");
     try {
-      const [list, inst] = await Promise.all([fetchProjects(teamId), fetchInstalls(teamId).catch(() => [] as Install[])]);
+      const [list, inst, upd] = await Promise.all([fetchProjects(teamId), fetchInstalls(teamId).catch(() => [] as Install[]), fetchUpdates(teamId).catch(() => [] as AppUpdate[])]);
       setApps(list);
       setInstalls(inst);
+      setUpdates(upd);
       if (!list.some((a) => a.project.id === selectedId)) {
         const firstLive = list.find((a) => a.project.prod_url || a.project.dev_url) ?? list[0];
         setSelectedId(firstLive?.project.id ?? null);
@@ -74,6 +82,25 @@ export default function AppsView({
   const previewUrl = selected ? (env === "prod" ? selected.prod_url : selected.dev_url) || "" : "";
   const lastInstall = (pid: string) => installs.find((i) => i.project_id === pid) ?? null;
   const selInstall = selected ? lastInstall(selected.id) : null;
+  const updateFor = (pid: string) => updates.find((u) => u.project_id === pid) ?? null;
+  const selUpdate = selected ? updateFor(selected.id) : null;
+
+  async function syncUpdate() {
+    if (!selUpdate || updBusy || !selected) return;
+    if (!window.confirm(t("upd.confirm", { name: selected.name }))) return;
+    setUpdBusy(true);
+    setError("");
+    try {
+      const r = await applyUpdate(selUpdate.repo_id);
+      setUpdResult({ pid: selected.id, status: r.status });
+      setShowChanges(false);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("upd.fail"));
+    } finally {
+      setUpdBusy(false);
+    }
+  }
 
   function startEdit() {
     if (!selected) return;
@@ -187,6 +214,7 @@ export default function AppsView({
                     </div>
                     {p.description && <p className="mt-3 line-clamp-2 text-xs leading-5 text-[#82958a]">{p.description}</p>}
                     <div className="mt-3 flex items-center gap-2 text-[10px] text-[#718078]">
+                      {updateFor(p.id) && <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 font-bold text-amber-200">{t("upd.badge")}</span>}
                       {lastInstall(p.id) && <span className="flex items-center gap-1.5"><ProviderMark id={lastInstall(p.id)!.provider} size="sm" /><InstallStatus status={lastInstall(p.id)!.status} /></span>}
                       {p.dev_url && <span className="soft-badge py-1">{t("apps.dev")}</span>}
                       <span className="ml-auto">{t("apps.doneOf").replace("{done}", String(stats.done)).replace("{total}", String(stats.total))}</span>
@@ -242,6 +270,33 @@ export default function AppsView({
                   <div className="border-b border-white/[0.07] bg-[#0b110e] px-4 py-3 text-xs text-[#82958a]">
                     <div className="mb-1.5">{t("apps.sourceHelp")}</div>
                     <code className="block overflow-x-auto whitespace-pre rounded-lg bg-[#070b09] px-3 py-2 font-mono text-[11.5px] text-[#cfdad3]">git clone {window.location.origin}/git/{selected.repo_id} {selected.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}</code>
+                  </div>
+                )}
+                {selUpdate && !editing && (
+                  <div className="border-b border-amber-400/20 bg-amber-400/[0.06] px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Icon name="spark" size={15} className="text-amber-300" />
+                      <span className="text-xs font-bold text-amber-100">{t("upd.title", { n: selUpdate.behind })}</span>
+                      <button type="button" onClick={() => setShowChanges((v) => !v)} className="text-[11px] font-semibold text-amber-200/80 hover:underline">{showChanges ? t("upd.hide") : t("upd.review")}</button>
+                      <button type="button" onClick={syncUpdate} disabled={updBusy} className="btn-primary ml-auto px-2.5 py-1.5 text-[11px]">{updBusy ? <Spinner /> : <Icon name="arrow" size={14} />}{t("upd.sync")}</button>
+                    </div>
+                    <p className="mt-1 text-[11px] leading-5 text-amber-100/70">{t("upd.body")}</p>
+                    {showChanges && (
+                      <ul className="mt-2 flex flex-col gap-1 rounded-lg bg-black/20 p-2">
+                        {selUpdate.changes.map((c) => (
+                          <li key={c.sha} className="truncate text-[11px] text-amber-50/90"><span className="font-mono text-amber-300">{c.sha}</span> {c.subject} <span className="text-amber-100/50">· {c.date.slice(0, 10)}</span></li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+                {updResult && selected && updResult.pid === selected.id && !editing && (
+                  <div className={`flex flex-wrap items-center gap-2 border-b px-4 py-3 text-xs ${updResult.status === "conflict" ? "border-red-500/20 bg-red-500/[0.06] text-red-100" : "border-[#62d89d]/20 bg-[#62d89d]/[0.06] text-[#cfeedd]"}`}>
+                    <span className="min-w-0 flex-1 leading-5">{updResult.status === "conflict" ? t("upd.conflict") : t("upd.done")}</span>
+                    {updResult.status !== "conflict" && selected.repo_id && (
+                      <button type="button" onClick={() => setInstallOpen(true)} className="btn-primary px-2.5 py-1.5 text-[11px]"><Icon name="rocket" size={14} />{t("apps.redeploy")}</button>
+                    )}
+                    <button type="button" onClick={() => setUpdResult(null)} className="icon-button" aria-label={t("common.close")}><Icon name="x" size={14} /></button>
                   </div>
                 )}
                 {selInstall && !editing && (

@@ -169,6 +169,7 @@ async fn main() {
 
     let state = AppState { db, jwt_secret, avatar_dir, workspace_dir, git_root, frontend_dir: std::path::PathBuf::from(&frontend_dir) };
     tokio::spawn(scheduler(state.clone()));
+    tokio::spawn(slaver::github::sync_loop(state.clone()));
 
     let index = state.frontend_dir.join("index.html");
     let app = Router::new()
@@ -187,6 +188,7 @@ async fn main() {
             "/git/:repo/git-receive-pack",
             post(git_receive_pack).layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
+        .route("/api/github/callback", get(slaver::github::oauth_callback))
         .route(
             "/api/repos/:repo/upload",
             post(slaver::hosting::upload_http).layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024)),

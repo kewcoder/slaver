@@ -5,17 +5,18 @@ import {
   fetchRepoDetail,
   fetchRepos,
   getToken,
-  importRepo,
   publishRepo,
   updateRepo,
   uploadRepoArchive,
+  type GithubLink,
   type Repo,
 } from "./api";
+import GithubSource from "./GithubSource";
 import { useLang } from "./i18n";
 import { Icon, SectionHeading, Spinner } from "./ui";
 
 type Commit = { sha: string; author: string; email: string; date: string; subject: string };
-type SourceTab = "upload" | "import" | "git" | "api";
+type SourceTab = "github" | "upload" | "git" | "api";
 
 export const CATEGORIES = ["Restaurant & F&B", "Retail & POS", "Booking", "CRM", "Website", "Internal tool", "AI agent", "Other"];
 
@@ -62,11 +63,11 @@ export default function PublishView({ teamId, teamRole, onGoMarket }: { teamId: 
   const [cat, setCat] = useState("");
   const [price, setPrice] = useState("49");
   // source
-  const [tab, setTab] = useState<SourceTab>("upload");
+  const [tab, setTab] = useState<SourceTab>("github");
+  const [ghLink, setGhLink] = useState<GithubLink | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [drag, setDrag] = useState(false);
   const [message, setMessage] = useState("");
-  const [gitUrl, setGitUrl] = useState("");
   const [showToken, setShowToken] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -100,9 +101,23 @@ export default function PublishView({ teamId, teamRole, onGoMarket }: { teamId: 
     void refresh();
   }, [refresh]);
 
+  // Return from GitHub OAuth: /?view=publish&github=connected|error&msg=…
   useEffect(() => {
-    setNotice("");
-    setError("");
+    const p = new URLSearchParams(window.location.search);
+    const gh = p.get("github");
+    if (p.has("view") || gh) window.history.replaceState({}, "", window.location.pathname);
+    if (gh === "connected") setNotice(t("gh.connectedOk"));
+    if (gh === "error") setError(p.get("msg") || t("gh.fail"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const prevRepo = useRef("");
+  useEffect(() => {
+    if (prevRepo.current) {
+      setNotice("");
+      setError("");
+    }
+    prevRepo.current = repoId;
     setFile(null);
     void loadLog(repoId);
   }, [repoId, loadLog]);
@@ -163,17 +178,6 @@ export default function PublishView({ teamId, teamRole, onGoMarket }: { teamId: 
       setMessage("");
       await loadLog(repo.id);
       return t("pub.uploaded", { sha: sha.slice(0, 8) });
-    });
-  };
-
-  const doImport = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!repo || !gitUrl.trim()) return;
-    if (hasCode && !window.confirm(t("pub.importConfirm"))) return;
-    void run("import", async () => {
-      const sha = await importRepo(repo.id, gitUrl.trim());
-      await loadLog(repo.id);
-      return t("pub.imported", { sha: sha.slice(0, 8) });
     });
   };
 
@@ -358,9 +362,9 @@ export default function PublishView({ teamId, teamRole, onGoMarket }: { teamId: 
                   )}
                   <div className="flex gap-1 rounded-lg bg-[#0b110e] p-0.5 text-[11px]">
                     {([
+                      ["github", "GitHub", "git"],
                       ["upload", t("pub.tabUpload"), "upload"],
-                      ["import", t("pub.tabImport"), "globe"],
-                      ["git", t("pub.tabGit"), "git"],
+                      ["git", t("pub.tabGit"), "arrow"],
                       ["api", t("pub.tabApi"), "code"],
                     ] as const).map(([id, label, icon]) => (
                       <button key={id} type="button" onClick={() => setTab(id)} className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 font-bold ${tab === id ? "bg-[#223229] text-[#8ce6b8]" : "text-[#718078] hover:text-[#dbe5df]"}`}>
@@ -370,7 +374,14 @@ export default function PublishView({ teamId, teamRole, onGoMarket }: { teamId: 
                     ))}
                   </div>
 
-                  {tab === "upload" && (
+                  <div className={tab === "github" ? "" : "hidden"}>
+                    <GithubSource teamId={teamId} repoId={repo.id} canManage={canManage} onLinkChange={setGhLink} onSynced={() => void loadLog(repo.id)} />
+                  </div>
+                  {tab !== "github" && ghLink && (
+                    <p className="rounded-lg border border-amber-400/20 bg-amber-400/[0.06] px-3 py-2 text-xs leading-5 text-amber-100">{t("gh.lockedNote", { repo: ghLink.github_repo })}</p>
+                  )}
+
+                  {tab === "upload" && !ghLink && (
                     <div className="flex flex-col gap-3">
                       <button
                         type="button"
@@ -395,17 +406,7 @@ export default function PublishView({ teamId, teamRole, onGoMarket }: { teamId: 
                     </div>
                   )}
 
-                  {tab === "import" && (
-                    <form onSubmit={doImport} className="flex flex-col gap-2">
-                      <p className="text-xs leading-5 text-[#82958a]">{t("pub.importHelp")}</p>
-                      <div className="flex flex-wrap gap-2">
-                        <input value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} disabled={!canManage} placeholder="https://github.com/you/your-app" className="field min-w-[200px] flex-1 font-mono text-xs" />
-                        <button type="submit" disabled={!!busy || !gitUrl.trim() || !canManage} className="btn-primary">{busy === "import" ? <Spinner /> : <Icon name="arrow" size={15} />}{t("pub.importGo")}</button>
-                      </div>
-                    </form>
-                  )}
-
-                  {tab === "git" && (
+                  {tab === "git" && !ghLink && (
                     <div className="flex flex-col gap-3">
                       <p className="text-xs leading-5 text-[#82958a]">{t("pub.gitHelp")}</p>
                       <CopyBox text={`git remote add slaver ${origin}/git/${repo.id}\ngit push slaver HEAD:main`} />

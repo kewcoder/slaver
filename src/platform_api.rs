@@ -103,6 +103,17 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "hosting_disconnect", "description": "Remove a hosting account (remote sites stay). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "provider", "account_id"], "properties": { "team_id": { "type": "string" }, "provider": { "type": "string" }, "account_id": { "type": "string" } } } }),
         json!({ "name": "install_start", "description": "Install (deploy) an owned app's source onto the team's hosting account. Runs in background; poll installs_list. Re-running updates the same site. Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id", "provider", "account_id"], "properties": { "project_id": { "type": "string" }, "provider": { "type": "string" }, "account_id": { "type": "string" }, "site_name": { "type": "string" } } } }),
         json!({ "name": "installs_list", "description": "Recent installs for a team (optionally one app) with status, URL and log.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" }, "project_id": { "type": "string" } } } }),
+        json!({ "name": "github_status", "description": "GitHub connector status for a team: whether OAuth is available and which accounts are connected.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
+        json!({ "name": "github_oauth_start", "description": "Start GitHub OAuth for a team; returns the authorize URL to open. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
+        json!({ "name": "github_connect", "description": "Connect GitHub with a personal access token (fine-grained: Contents read-only). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "token"], "properties": { "team_id": { "type": "string" }, "token": { "type": "string" } } } }),
+        json!({ "name": "github_disconnect", "description": "Disconnect a GitHub account (linked listings are unlinked; code already synced stays). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "account_id"], "properties": { "team_id": { "type": "string" }, "account_id": { "type": "string" } } } }),
+        json!({ "name": "github_repos", "description": "List repositories (incl. private) visible to a connected GitHub account.", "inputSchema": { "type": "object", "required": ["team_id", "account_id"], "properties": { "team_id": { "type": "string" }, "account_id": { "type": "string" } } } }),
+        json!({ "name": "github_link", "description": "Link a listing to a GitHub repo+branch and sync it now. Slaver then mirrors it every 10 minutes. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id", "account_id", "full_name"], "properties": { "repo_id": { "type": "string" }, "account_id": { "type": "string" }, "full_name": { "type": "string" }, "branch": { "type": "string" } } } }),
+        json!({ "name": "github_unlink", "description": "Stop syncing a listing from GitHub (code stays). Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
+        json!({ "name": "github_sync", "description": "Pull the latest commits from the linked GitHub branch into Slaver now. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
+        json!({ "name": "github_link_get", "description": "GitHub link of a listing (repo, branch, last sync, error), or null.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
+        json!({ "name": "updates_list", "description": "Owned apps with a newer version from the creator. Nothing changes until updates_apply.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
+        json!({ "name": "updates_apply", "description": "Merge the creator's latest version into the team's own copy (repo_id). On conflict the copy is untouched and the update is parked on branch slaver-update. Then redeploy. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
     ]
 }
 
@@ -254,8 +265,9 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             match platform::get_repo(db, user_id, &rid).await {
                 Ok(Some(r)) => {
                     let git_root = state.git_root.to_string_lossy().to_string();
-                    let branches = crate::git::git_branches(&git_root, &rid).await.unwrap_or_default();
-                    let log = crate::git::git_log(&git_root, &rid, 10).await.unwrap_or_default();
+                    let readable = platform::can_read_source(db, user_id, &r).await.unwrap_or(false);
+                    let branches = if readable { crate::git::git_branches(&git_root, &rid).await.unwrap_or_default() } else { vec![] };
+                    let log = if readable { crate::git::git_log(&git_root, &rid, 10).await.unwrap_or_default() } else { vec![] };
                     mcp_data(id, r.name.clone(), json!({ "repo": r, "branches": branches, "log": log, "clone_url": format!("/git/{rid}") }))
                 }
                 Ok(None) => rpc_err(id, -32602, "Repo not found."),
@@ -268,6 +280,7 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
                 return Some(rpc_err(id, -32602, "repo_id is required."));
             }
             match platform::get_repo(db, user_id, &rid).await {
+                Ok(Some(r)) if !platform::can_read_source(db, user_id, &r).await.unwrap_or(false) => rpc_err(id, -32602, "Buy this app to read its source."),
                 Ok(Some(_)) => {
                     let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).clamp(1, 100) as usize;
                     match crate::git::git_log(&state.git_root.to_string_lossy(), &rid, limit).await {
@@ -285,6 +298,7 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
                 return Some(rpc_err(id, -32602, "repo_id is required."));
             }
             match platform::get_repo(db, user_id, &rid).await {
+                Ok(Some(r)) if !platform::can_read_source(db, user_id, &r).await.unwrap_or(false) => rpc_err(id, -32602, "Buy this app to read its source."),
                 Ok(Some(_)) => {
                     let commit = args.get("commit").and_then(|v| v.as_str()).unwrap_or("");
                     match crate::git::git_show(&state.git_root.to_string_lossy(), &rid, commit).await {
@@ -300,6 +314,14 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             let (rid, team_id) = (arg_str(args, "repo_id"), arg_str(args, "team_id"));
             if rid.is_empty() || team_id.is_empty() {
                 return Some(rpc_err(id, -32602, "repo_id and team_id are required."));
+            }
+            // Forking = getting the source: owning team, or a team with a license.
+            let allowed = match platform::get_repo(db, user_id, &rid).await {
+                Ok(Some(r)) => r.team_id == team_id || platform::license_for_repo(db, &team_id, &rid).await.ok().flatten().is_some(),
+                _ => false,
+            };
+            if !allowed {
+                return Some(rpc_err(id, -32602, "Buy this app first — purchases include your own private copy."));
             }
             match platform::fork_repo(db, user_id, &team_id, &rid, &state.git_root.to_string_lossy()).await {
                 Ok(r) => mcp_data(id, format!("Forked as {}.", r.name), json!({ "repo": r, "clone_url": format!("/git/{}", r.id) })),
@@ -849,6 +871,52 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }
+        "github_status" => {
+            match crate::github::list_accounts(db, &arg_str(args, "team_id"), user_id).await {
+                Ok(a) => mcp_data(id, format!("{} GitHub account(s).", a.len()), json!({ "oauth": crate::github::oauth_available(), "accounts": a })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "github_oauth_start" => match crate::github::oauth_start(state, &arg_str(args, "team_id"), user_id).await {
+            Ok(url) => mcp_data(id, "Open the URL to authorize.".to_string(), json!({ "url": url })),
+            Err(e) => rpc_err(id, -32602, &e.to_string()),
+        },
+        "github_connect" => match crate::github::connect_token(db, &arg_str(args, "team_id"), user_id, &arg_str(args, "token")).await {
+            Ok(a) => mcp_data(id, format!("GitHub {} connected.", a.login), json!({ "account": a })),
+            Err(e) => rpc_err(id, -32602, &e.to_string()),
+        },
+        "github_disconnect" => match crate::github::disconnect(db, &arg_str(args, "team_id"), user_id, &arg_str(args, "account_id")).await {
+            Ok(()) => mcp_data(id, "GitHub disconnected.".to_string(), json!({ "removed": true })),
+            Err(e) => rpc_err(id, -32602, &e.to_string()),
+        },
+        "github_repos" => match crate::github::list_github_repos(db, &arg_str(args, "team_id"), user_id, &arg_str(args, "account_id")).await {
+            Ok(r) => mcp_data(id, format!("{} repo(s).", r.len()), json!({ "repos": r })),
+            Err(e) => rpc_err(id, -32602, &e.to_string()),
+        },
+        "github_link" => match crate::github::link(state, user_id, &arg_str(args, "repo_id"), &arg_str(args, "account_id"), &arg_str(args, "full_name"), &arg_str(args, "branch")).await {
+            Ok(l) => mcp_data(id, format!("Linked to {}.", l.github_repo), json!({ "link": l })),
+            Err(e) => rpc_err(id, -32602, &e.to_string()),
+        },
+        "github_unlink" => match crate::github::unlink(db, user_id, &arg_str(args, "repo_id")).await {
+            Ok(()) => mcp_data(id, "Unlinked.".to_string(), json!({ "unlinked": true })),
+            Err(e) => rpc_err(id, -32602, &e.to_string()),
+        },
+        "github_sync" => match crate::github::sync_checked(state, user_id, &arg_str(args, "repo_id")).await {
+            Ok(sha) => mcp_data(id, format!("Synced at {}.", &sha.chars().take(8).collect::<String>()), json!({ "sha": sha })),
+            Err(e) => rpc_err(id, -32602, &e.to_string()),
+        },
+        "github_link_get" => match crate::github::get_link(db, user_id, &arg_str(args, "repo_id")).await {
+            Ok(l) => mcp_data(id, "GitHub link.".to_string(), json!({ "link": l })),
+            Err(e) => rpc_err(id, -32602, &e.to_string()),
+        },
+        "updates_list" => match crate::github::list_updates(state, &arg_str(args, "team_id"), user_id).await {
+            Ok(u) => mcp_data(id, format!("{} update(s) available.", u.len()), json!({ "updates": u })),
+            Err(e) => rpc_err(id, -32602, &e.to_string()),
+        },
+        "updates_apply" => match crate::github::apply_update(state, user_id, &arg_str(args, "repo_id")).await {
+            Ok(v) => mcp_data(id, format!("Update: {}.", v["status"].as_str().unwrap_or("")), v),
+            Err(e) => rpc_err(id, -32602, &e.to_string()),
+        },
         _ => return None,
     };
     Some(out)

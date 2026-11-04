@@ -109,7 +109,7 @@ import {
   warmUpVoices,
   type Recorder,
 } from "./voice";
-import { setUserLang } from "./api";
+import { setUserLang, fetchUpdates } from "./api";
 import AppsView from "./AppsView";
 import { DmView } from "./DmView";
 import PublishView from "./PublishView";
@@ -141,7 +141,7 @@ function AppShell() {
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
-  const [view, setView] = useState<"apps" | "chat" | "group" | "meeting" | "bot" | "dm" | "settings" | "publish" | "market">("apps");
+  const [view, setView] = useState<"apps" | "chat" | "group" | "meeting" | "bot" | "dm" | "settings" | "publish" | "market">(() => (new URLSearchParams(window.location.search).get("view") === "publish" ? "publish" : "apps"));
   const [bots, setBots] = useState<SlaveBot[]>([]);
   const [botId, setBotId] = useState<string | null>(null);
   const [bot, setBot] = useState<SlaveBot | null>(null);
@@ -196,6 +196,17 @@ function AppShell() {
     setMessages([]);
     setTeamMenuOpen(false);
   }
+
+  // Creator updates for owned apps: a badge only — nothing changes until the team syncs.
+  const [updateCount, setUpdateCount] = useState(0);
+  useEffect(() => {
+    if (!teamId) return setUpdateCount(0);
+    let alive = true;
+    const check = () => fetchUpdates(teamId).then((u) => alive && setUpdateCount(u.length)).catch(() => {});
+    void check();
+    const h = window.setInterval(check, 5 * 60 * 1000);
+    return () => { alive = false; window.clearInterval(h); };
+  }, [teamId, view]);
 
   function goTo(next: typeof view) {
     setView(next);
@@ -912,8 +923,8 @@ function AppShell() {
 
   const isConversationView = view === "chat" || view === "group" || view === "meeting" || view === "bot" || view === "dm";
   const activeTeam = teams.find((team) => team.id === teamId);
-  const navItems: { id: "apps" | "chat" | "publish" | "market"; icon: IconName; label: string; active: boolean }[] = [
-    { id: "apps", icon: "home", label: t("nav.apps"), active: view === "apps" },
+  const navItems: { id: "apps" | "chat" | "publish" | "market"; icon: IconName; label: string; active: boolean; badge?: number }[] = [
+    { id: "apps", icon: "home", label: t("nav.apps"), active: view === "apps", badge: updateCount },
     { id: "chat", icon: "chat", label: t("nav.chat"), active: isConversationView },
     { id: "market", icon: "market", label: t("nav.market"), active: view === "market" },
     { id: "publish", icon: "upload", label: t("nav.publish"), active: view === "publish" },
@@ -933,9 +944,10 @@ function AppShell() {
 
   function mainNav(mobile = false) {
     return navItems.map((item) => (
-      <button key={item.id} type="button" onClick={() => goTo(item.id)} className={topBtn(item.active)}>
+      <button key={item.id} type="button" onClick={() => goTo(item.id)} className={`relative ${topBtn(item.active)}`} title={item.badge ? t("upd.navBadge", { n: item.badge }) : undefined}>
         <Icon name={item.icon} size={17} />
         <span className={mobile ? "" : "hidden lg:inline"}>{item.label}</span>
+        {!!item.badge && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-black text-[#1a1203]">{item.badge}</span>}
       </button>
     ));
   }

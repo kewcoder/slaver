@@ -1199,3 +1199,48 @@ export async function fetchInstalls(teamId: string, projectId = ""): Promise<Ins
   const data = await callTool<{ installs: Install[] }>("installs_list", { team_id: teamId, project_id: projectId });
   return data.installs;
 }
+
+// ---------- GitHub connector (creator) ----------
+
+export interface GithubAccount { id: string; team_id: string; login: string; created_at: string }
+export interface GithubRepo { full_name: string; private: boolean; default_branch: string; description: string | null; updated_at: string }
+export interface GithubLink { repo_id: string; team_id: string; github_account_id: string; github_repo: string; github_branch: string; github_synced_at: string; github_error: string }
+
+export async function fetchGithubStatus(teamId: string): Promise<{ oauth: boolean; accounts: GithubAccount[] }> {
+  return callTool("github_status", { team_id: teamId });
+}
+export async function githubOauthStart(teamId: string): Promise<string> {
+  return (await callTool<{ url: string }>("github_oauth_start", { team_id: teamId })).url;
+}
+export async function githubConnectToken(teamId: string, token: string): Promise<GithubAccount> {
+  return (await callTool<{ account: GithubAccount }>("github_connect", { team_id: teamId, token })).account;
+}
+export async function githubDisconnect(teamId: string, accountId: string): Promise<void> {
+  await callTool("github_disconnect", { team_id: teamId, account_id: accountId });
+}
+export async function fetchGithubRepos(teamId: string, accountId: string): Promise<GithubRepo[]> {
+  return (await callTool<{ repos: GithubRepo[] }>("github_repos", { team_id: teamId, account_id: accountId })).repos;
+}
+export async function githubLink(repoId: string, accountId: string, fullName: string, branch: string): Promise<GithubLink> {
+  return (await callTool<{ link: GithubLink }>("github_link", { repo_id: repoId, account_id: accountId, full_name: fullName, branch })).link;
+}
+export async function githubUnlink(repoId: string): Promise<void> {
+  await callTool("github_unlink", { repo_id: repoId });
+}
+export async function githubSync(repoId: string): Promise<string> {
+  return (await callTool<{ sha: string }>("github_sync", { repo_id: repoId })).sha;
+}
+export async function fetchGithubLink(repoId: string): Promise<GithubLink | null> {
+  return (await callTool<{ link: GithubLink | null }>("github_link_get", { repo_id: repoId })).link;
+}
+
+// ---------- updates (buyer, opt-in) ----------
+
+export interface AppUpdate { repo_id: string; project_id: string; app_name: string; behind: number; latest_sha: string; changes: { sha: string; subject: string; date: string }[] }
+
+export async function fetchUpdates(teamId: string): Promise<AppUpdate[]> {
+  return (await callTool<{ updates: AppUpdate[] }>("updates_list", { team_id: teamId })).updates;
+}
+export async function applyUpdate(repoId: string): Promise<{ status: "updated" | "conflict" | "up_to_date"; sha?: string; branch?: string }> {
+  return callTool("updates_apply", { repo_id: repoId });
+}
