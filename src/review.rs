@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::chat::ChatMessage;
+use crate::ai::ChatMessage;
 use crate::db::{v_text, Db};
 use crate::provider::{self, Provider};
 
@@ -258,7 +258,7 @@ pub async fn run(db: &Db, git_root: &str, repo_id: &str, team_id: &str, name: &s
         (None, format!("AI review unavailable: {err} (or set the server MODEL_API_KEY)."))
     } else {
         let msgs = build_prompt(name, description, lang, &tree, &picked);
-        match crate::chat::complete_with_usage(&prov, &model, &msgs, None).await {
+        match crate::ai::complete_with_usage(&prov, &model, &msgs, None).await {
             Ok(c) => match parse_ai(&c.text) {
                 Ok(r) => (Some(r), String::new()),
                 Err(e) => (None, e),

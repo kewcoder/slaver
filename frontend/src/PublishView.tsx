@@ -491,7 +491,6 @@ export default function PublishView({ teamId, teamRole, onGoMarket }: { teamId: 
                     <summary className="cursor-pointer font-semibold text-fg-2">{t("pub.compatTitle")}</summary>
                     <ul className="mt-2 list-disc space-y-1 pl-4">
                       <li>{t("pub.compatStatic")}</li>
-                      <li>{t("pub.compatVercel")}</li>
                       <li>{t("pub.compatFly")}</li>
                       <li>{t("pub.compatManifest")} <code className="rounded bg-black/40 px-1 font-mono text-fg-2">{`{ "static_dir": "dist", "port": 8080 }`}</code></li>
                     </ul>

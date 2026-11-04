@@ -162,11 +162,6 @@ textarea {
   background-clip: padding-box;
 }
 
-.app-backdrop {
-  background:
-var(--app-bg);
-}
-
 .surface {
   border: 1px solid var(--line);
   background: var(--surface);
@@ -288,53 +283,12 @@ var(--app-bg);
   padding: 0.35rem 0.55rem;
 }
 
-.chat-composer {
-  border: 1px solid var(--line-strong);
-  border-radius: 1rem;
-  background: var(--surface-raised);
-  box-shadow: var(--shadow);
-}
-.chat-composer:focus-within {
-  border-color: color-mix(in oklab, var(--accent) 50%, transparent);
-  box-shadow: var(--shadow);
-}
-
 .auth-grid {
   background-image:
     linear-gradient(var(--line) 1px, transparent 1px),
     linear-gradient(90deg, var(--line) 1px, transparent 1px);
   background-size: 48px 48px;
   mask-image: linear-gradient(to bottom, black, transparent 88%);
-}
-
-.typing-dots {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 0;
-}
-.typing-dots span {
-  width: 6px;
-  height: 6px;
-  border-radius: 9999px;
-  background-color: var(--accent);
-  animation: typing-bounce 1.2s infinite ease-in-out;
-}
-.typing-dots span:nth-child(2) {
-  animation-delay: 0.15s;
-}
-.typing-dots span:nth-child(3) {
-  animation-delay: 0.3s;
-}
-@keyframes typing-bounce {
-  0%, 60%, 100% {
-    transform: translateY(0);
-    opacity: 0.4;
-  }
-  30% {
-    transform: translateY(-4px);
-    opacity: 1;
-  }
 }
 
 .loading-skeleton {

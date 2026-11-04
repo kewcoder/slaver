@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use std::sync::LazyLock;
 
-use crate::{chat::ChatMessage, db::Db, store};
+use crate::{ai::ChatMessage, db::Db, store};
 
 static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
@@ -143,17 +143,6 @@ pub fn default_model_for(preset: &str) -> &'static str {
     }
 }
 
-pub fn valid_for(preset: &str, model: &str) -> bool {
-    let model = model.trim();
-    if model.is_empty() {
-        return false;
-    }
-    match preset {
-        "meta" | "openrouter" => models_for(preset).0.iter().any(|m| m.id == model),
-        _ => true,
-    }
-}
-
 /// Human-friendly error when no model id is configured (the most common
 /// cause of a confusing upstream 404 on custom providers).
 pub fn require_model(preset: &str, model: &str) -> Result<String, String> {
@@ -167,21 +156,6 @@ pub fn require_model(preset: &str, model: &str) -> Result<String, String> {
         _ if custom_allowed_for(preset) => "No model is set for this bot. Set the exact model id your server exposes in Bot settings.".to_string(),
         _ => format!("No model is set for this bot (preset {preset}). Pick one in Bot settings."),
     })
-}
-
-/// Resolve the stored model id for this provider: keep it when valid,
-/// otherwise fall back to the provider default (custom providers pass the
-/// stored id through — only the provider itself can judge it).
-pub fn effective_model(preset: &str, stored: &str) -> String {
-    let stored = stored.trim();
-    if valid_for(preset, stored) {
-        return stored.to_string();
-    }
-    let def = default_model_for(preset);
-    if !def.is_empty() {
-        return def.to_string();
-    }
-    stored.to_string()
 }
 
 /// Normalize a user-supplied base URL: trim whitespace, drop a pasted
@@ -379,245 +353,6 @@ async fn post_responses(
     Upstream::from_reqwest(resp).await
 }
 
-/// Tool call in a normalized shape across both OpenAI APIs.
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    pub args: String,
-}
-
-pub struct ToolCompletion {
-    pub text: String,
-    pub tool_calls: Vec<ToolCall>,
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-}
-
-/// Which OpenAI API shapes a model supports, from the server's /models
-/// catalogue (`api` object). Empty when the catalogue is unreachable.
-pub async fn model_apis(prov: &Provider, model: &str) -> Vec<String> {
-    let base = normalize_base_url(&prov.base_url);
-    let url = if base.contains("opencode.ai/inference") {
-        if base.contains("/inference/go") {
-            "https://opencode.ai/inference/go/v1/models".to_string()
-        } else {
-            "https://opencode.ai/inference/v1/models".to_string()
-        }
-    } else {
-        format!("{base}/models")
-    };
-    let mut headers = upstream_headers(prov, Some("slaver-models"));
-    headers.remove(reqwest::header::CONTENT_TYPE);
-    let resp = match CLIENT.get(&url).headers(headers).send().await {
-        Ok(r) => r,
-        Err(_) => return vec![],
-    };
-    if resp.status().as_u16() != 200 {
-        return vec![];
-    }
-    let v: serde_json::Value = match resp.json().await {
-        Ok(v) => v,
-        Err(_) => return vec![],
-    };
-    v.get("data")
-        .and_then(|d| d.as_array())
-        .and_then(|arr| {
-            arr.iter().find(|m| {
-                m.get("id").and_then(|x| x.as_str()) == Some(model)
-                    || m.get("canonical_id").and_then(|x| x.as_str()) == Some(model)
-            })
-        })
-        .and_then(|m| m.get("api"))
-        .and_then(|a| a.as_object())
-        .map(|o| o.keys().cloned().collect())
-        .unwrap_or_default()
-}
-
-/// Chat/completions call with tools. Returns normalized text + tool calls.
-/// Responses-only models are NOT retried here — use `post_tools_responses`
-/// for those (see `model_apis`).
-pub async fn post_chat_tools(
-    prov: &Provider,
-    model: &str,
-    messages: &[ChatMessage],
-    tools: &serde_json::Value,
-    session: Option<&str>,
-) -> anyhow::Result<ToolCompletion> {
-    require_model(&prov.preset, model).map_err(anyhow::Error::msg)?;
-    let base = normalize_base_url(&prov.base_url);
-    if base.is_empty() {
-        anyhow::bail!("This provider needs a base URL.");
-    }
-    let payload = serde_json::json!({
-        "model": model.trim(),
-        "messages": messages,
-        "tools": tools,
-        "tool_choice": "auto",
-    });
-    let resp = CLIENT
-        .post(format!("{base}/chat/completions"))
-        .headers(upstream_headers(prov, session))
-        .json(&payload)
-        .send()
-        .await?;
-    let status = resp.status().as_u16();
-    let text = resp.text().await?;
-    if status != 200 {
-        anyhow::bail!("{}", crate::chat::describe_upstream_error(status, &text));
-    }
-    let v: serde_json::Value = serde_json::from_str(&text)?;
-    parse_chat_tools(&v)
-}
-
-fn parse_chat_tools(v: &serde_json::Value) -> anyhow::Result<ToolCompletion> {
-    let msg = v.pointer("/choices/0/message");
-    let text = msg
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .unwrap_or("")
-        .to_string();
-    let mut tool_calls = Vec::new();
-    if let Some(tcs) = msg.and_then(|m| m.get("tool_calls")).and_then(|t| t.as_array()) {
-        for tc in tcs {
-            let id = tc.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let name = tc
-                .pointer("/function/name")
-                .and_then(|x| x.as_str())
-                .unwrap_or("")
-                .to_string();
-            let args = tc
-                .pointer("/function/arguments")
-                .and_then(|x| x.as_str())
-                .unwrap_or("{}")
-                .to_string();
-            if !name.is_empty() {
-                tool_calls.push(ToolCall { id, name, args });
-            }
-        }
-    }
-    let usage = v.get("usage");
-    Ok(ToolCompletion {
-        text,
-        tool_calls,
-        prompt_tokens: usage
-            .and_then(|u| u.get("prompt_tokens"))
-            .and_then(|x| x.as_u64())
-            .unwrap_or(0),
-        completion_tokens: usage
-            .and_then(|u| u.get("completion_tokens"))
-            .and_then(|x| x.as_u64())
-            .unwrap_or(0),
-    })
-}
-
-/// Responses-API call with function tools. `input` is the full input array
-/// (caller carries prior outputs + function_call_output items across turns).
-/// Returns the completion plus the raw `output` items to append to `input`.
-pub async fn post_tools_responses(
-    prov: &Provider,
-    model: &str,
-    input: &serde_json::Value,
-    tools: &serde_json::Value,
-    session: Option<&str>,
-) -> anyhow::Result<(ToolCompletion, serde_json::Value)> {
-    require_model(&prov.preset, model).map_err(anyhow::Error::msg)?;
-    let base = normalize_base_url(&prov.base_url);
-    if base.is_empty() {
-        anyhow::bail!("This provider needs a base URL.");
-    }
-    let fn_tools: Vec<serde_json::Value> = tools
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|t| {
-            let f = t.get("function")?;
-            Some(serde_json::json!({
-                "type": "function",
-                "name": f.get("name"),
-                "description": f.get("description"),
-                "parameters": f.get("parameters"),
-            }))
-        })
-        .collect();
-    let payload = serde_json::json!({ "model": model.trim(), "input": input, "tools": fn_tools });
-    let resp = CLIENT
-        .post(format!("{base}/responses"))
-        .headers(upstream_headers(prov, session))
-        .json(&payload)
-        .send()
-        .await?;
-    let status = resp.status().as_u16();
-    let text = resp.text().await?;
-    if status != 200 {
-        anyhow::bail!("{}", crate::chat::describe_upstream_error(status, &text));
-    }
-    let v: serde_json::Value = serde_json::from_str(&text)?;
-    let mut completion_text = String::new();
-    let mut tool_calls = Vec::new();
-    let mut outputs = Vec::new();
-    if let Some(items) = v.get("output").and_then(|o| o.as_array()) {
-        for item in items {
-            outputs.push(item.clone());
-            let kind = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
-            if kind == "message" {
-                if let Some(s) = extract_responses_text_item(item) {
-                    if !completion_text.is_empty() {
-                        completion_text.push('\n');
-                    }
-                    completion_text.push_str(&s);
-                }
-            } else if kind == "function_call" {
-                let name = item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                if !name.is_empty() {
-                    tool_calls.push(ToolCall {
-                        id: item.get("call_id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-                        name,
-                        args: item.get("arguments").and_then(|x| x.as_str()).unwrap_or("{}").to_string(),
-                    });
-                }
-            }
-        }
-    }
-    let usage = v.get("usage");
-    Ok((
-        ToolCompletion {
-            text: completion_text,
-            tool_calls,
-            prompt_tokens: usage
-                .and_then(|u| u.get("input_tokens"))
-                .and_then(|x| x.as_u64())
-                .unwrap_or(0),
-            completion_tokens: usage
-                .and_then(|u| u.get("output_tokens"))
-                .and_then(|x| x.as_u64())
-                .unwrap_or(0),
-        },
-        serde_json::Value::Array(outputs),
-    ))
-}
-
-fn extract_responses_text_item(item: &serde_json::Value) -> Option<String> {
-    let contents = item.get("content")?.as_array()?;
-    let mut out = String::new();
-    for c in contents {
-        let kind = c.get("type").and_then(|t| t.as_str()).unwrap_or("");
-        if kind == "output_text" || kind == "text" {
-            if let Some(t) = c.get("text").and_then(|x| x.as_str()) {
-                if !out.is_empty() {
-                    out.push('\n');
-                }
-                out.push_str(t);
-            }
-        }
-    }
-    if out.trim().is_empty() {
-        None
-    } else {
-        Some(out)
-    }
-}
-
 /// Connectivity check used by `teams_test_provider`: lists `/models` (when the
 /// server exposes it) and sends a 1-token `ping` chat completion. Returns a
 /// diagnostics object; never includes the key.
@@ -701,10 +436,10 @@ pub async fn test_provider(prov: &Provider, model: &str) -> serde_json::Value {
                 // Responses-only models (e.g. muse-spark-*) need /responses.
                 match post_responses_ping(&base, prov, &ping_model).await {
                     Ok(t) => Ok(t),
-                    Err(_) => Err(crate::chat::describe_upstream_error(status, &text)),
+                    Err(_) => Err(crate::ai::describe_upstream_error(status, &text)),
                 }
             } else {
-                Err(crate::chat::describe_upstream_error(status, &text))
+                Err(crate::ai::describe_upstream_error(status, &text))
             }
         }
     };
@@ -736,7 +471,7 @@ async fn post_responses_ping(base: &str, prov: &Provider, model: &str) -> Result
     let status = resp.status().as_u16();
     let text = resp.text().await.unwrap_or_default();
     if status != 200 {
-        return Err(crate::chat::describe_upstream_error(status, &text));
+        return Err(crate::ai::describe_upstream_error(status, &text));
     }
     Ok(text.chars().take(200).collect())
 }

@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useLang } from "./i18n";
-import { applyTeamTemplate, fetchTeamTemplates, login, register, type TeamTemplate, type User } from "./api";
+import { login, register, type User } from "./api";
 import { Brand, Icon, ThemeToggle } from "./ui";
 
 export function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
@@ -12,7 +12,6 @@ export function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
   const [password, setPassword] = useState("demo1234");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [pendingUser, setPendingUser] = useState<User | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,20 +22,12 @@ export function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
         mode === "register"
           ? await register(email, password, name)
           : await login(email, password);
-      if (mode === "register") {
-        setPendingUser(res.user);
-      } else {
-        onAuth(res.user);
-      }
+      onAuth(res.user);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("auth.failed"));
     } finally {
       setBusy(false);
     }
-  }
-
-  if (pendingUser) {
-    return <OnboardingView user={pendingUser} onDone={() => onAuth(pendingUser)} />;
   }
 
   const inputCls = "field mt-2";
@@ -156,106 +147,3 @@ export function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
     </div>
   );
 }
-
-export function OnboardingView({ user, onDone }: { user: User; onDone: () => void }) {
-  const { t } = useLang();
-  const [templates, setTemplates] = useState<TeamTemplate[]>([]);
-  const [teamName, setTeamName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchTeamTemplates().then((list) => {
-      setTemplates(list);
-      if (list.length > 0) setSelected(list[0].key);
-    }).catch((err) => setError(err instanceof Error ? err.message : t("auth.failed")));
-  }, []);
-
-  async function pick(key: string, fallbackName: string) {
-    setBusy(true);
-    setError("");
-    try {
-      await applyTeamTemplate(key, teamName.trim() || fallbackName);
-      onDone();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("auth.failed"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="relative min-h-dvh overflow-hidden bg-bg px-5 py-6 text-fg sm:px-8">
-      <div className="auth-grid pointer-events-none absolute inset-0" />
-      <div className="relative mx-auto w-full max-w-5xl">
-        <div className="flex items-center justify-between">
-          <Brand />
-          <span className="soft-badge"><Icon name="spark" size={13} /> {t("auth.onboardKicker")}</span>
-        </div>
-
-        <div className="mt-12 max-w-2xl">
-          <div className="panel-title">{t("auth.teamName")}</div>
-          <h1 className="page-heading mt-3 text-3xl font-bold sm:text-4xl">{t("auth.onboardHi").replace("{name}", user.name || user.email)}</h1>
-          <p className="mt-3 text-sm leading-6 text-muted sm:text-base">{t("auth.onboardSub")}</p>
-        </div>
-
-        <div className="surface mt-8 rounded-2xl p-5 sm:p-6">
-          <label className="block text-xs font-semibold text-fg-2">
-            {t("auth.teamName")}
-            <input value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder={t("auth.teamNamePh")} className="field mt-2 max-w-lg" />
-          </label>
-        </div>
-
-        {error && <p className="mt-4 rounded-lg border border-red-900/60 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</p>}
-
-        <div className="mt-5 grid gap-4 md:grid-cols-2">
-          {templates.map((tpl) => {
-            const active = selected === tpl.key;
-            return (
-              <button
-                key={tpl.key}
-                type="button"
-                onClick={() => setSelected(tpl.key)}
-                className={`flex flex-col rounded-2xl border p-5 text-left ${active ? "border-accent/60 bg-accent/[0.06] shadow-[0_0_0_3px_rgba(98,216,157,0.05)]" : "border-fg/10 bg-surface hover:border-fg/20 hover:bg-surface"}`}
-              >
-                <div className="flex w-full items-start justify-between gap-3">
-                  <span className="soft-badge border-accent/20 text-accent-text">{tpl.category}</span>
-                  <span className={`flex h-5 w-5 items-center justify-center rounded-full border ${active ? "border-accent bg-accent text-accent-fg" : "border-fg/20 text-transparent"}`}><Icon name="check" size={13} /></span>
-                </div>
-                <div className="mt-4 text-lg font-bold">{tpl.name}</div>
-                <p className="mt-2 flex-1 text-sm leading-6 text-muted">{tpl.description}</p>
-                {tpl.agents.length > 0 && (
-                  <div className="mt-4 flex flex-wrap gap-1.5">
-                    {tpl.agents.map((a) => (
-                      <span key={a.name} className="rounded-full bg-fg/[0.045] px-2.5 py-1 text-[11px] text-fg-2">{a.name}</span>
-                    ))}
-                  </div>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-fg/10 pt-5">
-          <button type="button" onClick={onDone} disabled={busy} className="text-sm text-subtle hover:text-fg">
-            {t("auth.skip")}
-          </button>
-          <button
-            type="button"
-            disabled={busy || !selected}
-            onClick={() => {
-              const tpl = templates.find((x) => x.key === selected);
-              if (tpl) void pick(tpl.key, tpl.team_name);
-            }}
-            className="btn-primary"
-          >
-            {busy ? t("auth.applying") : t("auth.useTemplate").replace("{name}", templates.find((x) => x.key === selected)?.team_name ?? "")}
-            {!busy && <Icon name="arrow" size={16} />}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-

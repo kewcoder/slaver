@@ -1,11 +1,7 @@
 //! One-click install of a team's app (project repo HEAD) onto the team's own
-//! hosting, plus the creator-side "upload a project" paths.
-//!
-//! Providers (all driven by their public HTTP APIs with the team's own token):
-//!   - vercel      inline-file deployment (Vercel builds from source)
-//!   - netlify     zip deploy of the static output
-//!   - cloudflare  Pages direct upload of the static output
-//!   - fly         `flyctl deploy --remote-only` (Dockerfile, or generated Caddy image for static sites)
+//! Fly.io account (`flyctl deploy --remote-only`; a Caddy image is generated for
+//! static sites), plus the creator-side "upload a project" paths. The customer's
+//! own tokens are used, so Fly bills the customer directly, never Slaver.
 //!
 //! Optional `slaver.json` at the repo root:
 //!   { "static_dir": "dist", "port": 8080 }
@@ -14,7 +10,6 @@
 //! from a public https git URL.
 
 use anyhow::{anyhow, Result};
-use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -24,11 +19,9 @@ use crate::{
     platform, store, AppState,
 };
 
-pub const PROVIDERS: [&str; 4] = ["vercel", "netlify", "cloudflare", "fly"];
+/// Production runs on the customer's Fly.io account; staging on their Sprites org.
+pub const PROVIDERS: [&str; 2] = ["fly", "sprites"];
 
-fn b64() -> base64::engine::GeneralPurpose {
-    base64::engine::general_purpose::STANDARD
-}
 
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -83,40 +76,16 @@ pub struct HostingAccount {
     pub created_at: String,
 }
 
-async fn validate_token(provider: &str, token: &str, account_ref: &str) -> Result<String> {
+async fn validate_token(provider: &str, token: &str, _account_ref: &str) -> Result<String> {
     let c = client();
     match provider {
-        "vercel" => {
-            let r = c.get("https://api.vercel.com/v2/user").bearer_auth(token).send().await?;
-            let ok = r.status().is_success();
-            let v: Value = r.json().await.unwrap_or(Value::Null);
-            if !ok {
-                return Err(anyhow!("Vercel rejected the token."));
-            }
-            Ok(v["user"]["username"].as_str().unwrap_or("vercel").to_string())
-        }
-        "netlify" => {
-            let r = c.get("https://api.netlify.com/api/v1/user").bearer_auth(token).send().await?;
-            let ok = r.status().is_success();
-            let v: Value = r.json().await.unwrap_or(Value::Null);
-            if !ok {
-                return Err(anyhow!("Netlify rejected the token."));
-            }
-            Ok(v["email"].as_str().or(v["full_name"].as_str()).unwrap_or("netlify").to_string())
-        }
-        "cloudflare" => {
-            if account_ref.trim().is_empty() {
-                return Err(anyhow!("Cloudflare needs your Account ID (dashboard → Workers & Pages → right sidebar)."));
-            }
-            let r = c
-                .get(format!("https://api.cloudflare.com/client/v4/accounts/{}/pages/projects", account_ref.trim()))
-                .bearer_auth(token)
-                .send()
-                .await?;
+        "sprites" => {
+            // Token format: "<org>/<id>/<secret>" from sprites.dev/account. Billing goes to that org.
+            let r = c.get("https://api.sprites.dev/v1/sprites?max_results=1").bearer_auth(token).send().await?;
             if !r.status().is_success() {
-                return Err(anyhow!("Cloudflare rejected the token (it needs Account → Cloudflare Pages → Edit)."));
+                return Err(anyhow!("Sprites rejected the token. Create one at sprites.dev/account."));
             }
-            Ok("cloudflare".to_string())
+            Ok(token.split('/').next().filter(|o| !o.is_empty()).unwrap_or("sprites").to_string())
         }
         _ => Err(anyhow!("Unknown hosting provider.")),
     }
@@ -136,6 +105,8 @@ pub async fn connect(db: &Db, team_id: &str, user_id: &str, provider: &str, name
         return Err(anyhow!("Unknown hosting provider."));
     }
     let who = validate_token(provider, token, account_ref).await?;
+    let org = who.clone();
+    let account_ref = if provider == "sprites" { org.as_str() } else { account_ref };
     let name = if name.trim().is_empty() { who } else { name.trim().chars().take(60).collect() };
     let id = crate::util::new_id();
     db.prepare("INSERT INTO hosting_accounts (id, team_id, provider, name, account_ref, api_token) VALUES (?, ?, ?, ?, ?, ?)")
@@ -350,16 +321,7 @@ async fn install_inner(state: &AppState, user_id: &str, job: &InstallRow, repo_i
     set_install(&state.db, &job.id, "running", &log.text, None, None).await;
     let manifest = read_manifest(&src);
     match job.provider.as_str() {
-        "vercel" => deploy_vercel(&state.db, job, &token, &account_ref, &src, log).await,
-        "netlify" => {
-            let dir = static_dir(&src, &manifest)?;
-            deploy_netlify(&state.db, job, &token, &dir, log).await
-        }
-        "cloudflare" => {
-            let dir = static_dir(&src, &manifest)?;
-            deploy_cloudflare(&state.db, job, &token, &account_ref, &dir, log).await
-        }
-        "fly" => deploy_fly(&state.db, job, &token, &account_ref, &src, &manifest, log).await,
+        "fly" => deploy_fly(&state.db, user_id, job, &token, &account_ref, &src, &manifest, log).await,
         _ => Err(anyhow!("Unknown provider.")),
     }
 }
@@ -427,68 +389,6 @@ fn static_dir(src: &Path, m: &Manifest) -> Result<PathBuf> {
     Err(anyhow!("No index.html found (checked /, dist, build, public, out). This host serves static files only — commit the built site or pick Vercel/Fly.io, which build from source."))
 }
 
-/// All files under `root` as (posix relative path, bytes). Skips VCS + deps.
-fn walk(root: &Path) -> Result<Vec<(String, Vec<u8>)>> {
-    let mut out = Vec::new();
-    let mut total: u64 = 0;
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            let ft = entry.file_type()?;
-            if ft.is_symlink() {
-                continue;
-            }
-            if ft.is_dir() {
-                if name == ".git" || name == "node_modules" {
-                    continue;
-                }
-                stack.push(entry.path());
-            } else if ft.is_file() {
-                let rel = entry.path().strip_prefix(root).map_err(|e| anyhow!("{e}"))?.to_string_lossy().replace('\\', "/");
-                let bytes = std::fs::read(entry.path())?;
-                total += bytes.len() as u64;
-                if total > 200 * 1024 * 1024 {
-                    return Err(anyhow!("Project is larger than 200 MB."));
-                }
-                out.push((rel, bytes));
-            }
-        }
-    }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    if out.is_empty() {
-        return Err(anyhow!("No files to deploy."));
-    }
-    Ok(out)
-}
-
-fn content_type(path: &str) -> &'static str {
-    let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
-    match ext.as_str() {
-        "html" | "htm" => "text/html",
-        "css" => "text/css",
-        "js" | "mjs" => "application/javascript",
-        "json" | "map" => "application/json",
-        "svg" => "image/svg+xml",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "avif" => "image/avif",
-        "ico" => "image/x-icon",
-        "woff" => "font/woff",
-        "woff2" => "font/woff2",
-        "ttf" => "font/ttf",
-        "txt" => "text/plain",
-        "xml" => "application/xml",
-        "wasm" => "application/wasm",
-        "pdf" => "application/pdf",
-        "mp4" => "video/mp4",
-        "webm" => "video/webm",
-        _ => "application/octet-stream",
-    }
-}
 
 fn api_error(v: &Value, fallback: &str) -> String {
     v["error"]["message"]
@@ -499,270 +399,11 @@ fn api_error(v: &Value, fallback: &str) -> String {
         .to_string()
 }
 
-async fn tick() {
-    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-}
-
-// ---------- Vercel ----------
-
-async fn deploy_vercel(db: &Db, job: &InstallRow, token: &str, team_ref: &str, src: &Path, log: &mut Log) -> Result<(String, String)> {
-    let files = walk(src)?;
-    log.line(format!("→ Uploading {} files to Vercel project \"{}\"…", files.len(), job.site_name));
-    set_install(db, &job.id, "running", &log.text, None, None).await;
-    let q = if team_ref.trim().is_empty() { String::new() } else { format!("&teamId={}", team_ref.trim()) };
-    let body = json!({
-        "name": job.site_name,
-        "target": "production",
-        "files": files.iter().map(|(p, b)| json!({ "file": p, "data": b64().encode(b), "encoding": "base64" })).collect::<Vec<_>>(),
-    });
-    let c = client();
-    let r = c
-        .post(format!("https://api.vercel.com/v13/deployments?skipAutoDetectionConfirmation=1{q}"))
-        .bearer_auth(token)
-        .json(&body)
-        .send()
-        .await?;
-    let ok = r.status().is_success();
-    let v: Value = r.json().await.unwrap_or(Value::Null);
-    if !ok {
-        return Err(anyhow!("Vercel: {}", api_error(&v, "deployment rejected")));
-    }
-    let dep_id = v["id"].as_str().unwrap_or("").to_string();
-    log.line(format!("✓ Deployment {dep_id} created — Vercel is building…"));
-    set_install(db, &job.id, "running", &log.text, None, None).await;
-    for _ in 0..180 {
-        tick().await;
-        let r = c.get(format!("https://api.vercel.com/v13/deployments/{dep_id}?x=1{q}")).bearer_auth(token).send().await?;
-        let v: Value = r.json().await.unwrap_or(Value::Null);
-        match v["readyState"].as_str().unwrap_or("") {
-            "READY" => {
-                let host = v["alias"][0].as_str().or(v["url"].as_str()).unwrap_or("").to_string();
-                return Ok((format!("https://{host}"), v["projectId"].as_str().unwrap_or(&dep_id).to_string()));
-            }
-            "ERROR" | "CANCELED" => {
-                return Err(anyhow!("Vercel build failed: {} (open the deployment in your Vercel dashboard for build logs).", v["errorMessage"].as_str().unwrap_or("see dashboard")));
-            }
-            _ => {}
-        }
-    }
-    Err(anyhow!("Vercel build is taking longer than 12 minutes — check your Vercel dashboard."))
-}
-
-// ---------- Netlify ----------
-
-fn zip_dir(dir: &Path) -> Result<Vec<u8>> {
-    use std::io::Write;
-    let files = walk(dir)?;
-    let mut buf = std::io::Cursor::new(Vec::new());
-    {
-        let mut z = zip::ZipWriter::new(&mut buf);
-        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-        for (p, b) in files {
-            z.start_file(p, opts)?;
-            z.write_all(&b)?;
-        }
-        z.finish()?;
-    }
-    Ok(buf.into_inner())
-}
-
-async fn deploy_netlify(db: &Db, job: &InstallRow, token: &str, dir: &Path, log: &mut Log) -> Result<(String, String)> {
-    let c = client();
-    let api = "https://api.netlify.com/api/v1";
-    let mut site_id = job.external_id.clone();
-    let mut site_url = String::new();
-    if !site_id.is_empty() {
-        let r = c.get(format!("{api}/sites/{site_id}")).bearer_auth(token).send().await?;
-        if r.status().is_success() {
-            let v: Value = r.json().await.unwrap_or(Value::Null);
-            site_url = v["ssl_url"].as_str().or(v["url"].as_str()).unwrap_or("").to_string();
-        } else {
-            site_id.clear();
-        }
-    }
-    if site_id.is_empty() {
-        let mut name = job.site_name.clone();
-        for attempt in 0..2 {
-            let r = c.post(format!("{api}/sites")).bearer_auth(token).json(&json!({ "name": name })).send().await?;
-            let ok = r.status().is_success();
-            let v: Value = r.json().await.unwrap_or(Value::Null);
-            if ok {
-                site_id = v["id"].as_str().unwrap_or("").to_string();
-                site_url = v["ssl_url"].as_str().or(v["url"].as_str()).unwrap_or("").to_string();
-                break;
-            }
-            if attempt == 1 {
-                return Err(anyhow!("Netlify: {}", api_error(&v, "cannot create site")));
-            }
-            name = format!("{}-{}", job.site_name, short_rand());
-        }
-        log.line(format!("✓ Netlify site created ({site_url})"));
-    }
-    let zip = zip_dir(dir)?;
-    log.line(format!("→ Uploading {} KB…", zip.len() / 1024));
-    set_install(db, &job.id, "running", &log.text, None, Some(&site_id)).await;
-    let r = c
-        .post(format!("{api}/sites/{site_id}/deploys"))
-        .bearer_auth(token)
-        .header("Content-Type", "application/zip")
-        .body(zip)
-        .send()
-        .await?;
-    let ok = r.status().is_success();
-    let v: Value = r.json().await.unwrap_or(Value::Null);
-    if !ok {
-        return Err(anyhow!("Netlify: {}", api_error(&v, "deploy rejected")));
-    }
-    let deploy_id = v["id"].as_str().unwrap_or("").to_string();
-    for _ in 0..90 {
-        let r = c.get(format!("{api}/deploys/{deploy_id}")).bearer_auth(token).send().await?;
-        let v: Value = r.json().await.unwrap_or(Value::Null);
-        match v["state"].as_str().unwrap_or("") {
-            "ready" => return Ok((site_url, site_id)),
-            "error" => return Err(anyhow!("Netlify: {}", v["error_message"].as_str().unwrap_or("deploy failed"))),
-            _ => tick().await,
-        }
-    }
-    Err(anyhow!("Netlify deploy is taking long — check your Netlify dashboard."))
-}
-
-// ---------- Cloudflare Pages ----------
-
-fn cf_hash(path: &str, bytes: &[u8]) -> String {
-    let ext = path.rsplit_once('.').map(|(_, e)| e).filter(|e| !e.contains('/')).unwrap_or("");
-    let mut h = blake3::Hasher::new();
-    h.update(b64().encode(bytes).as_bytes());
-    h.update(ext.as_bytes());
-    h.finalize().to_hex().as_str()[..32].to_string()
-}
-
-async fn deploy_cloudflare(db: &Db, job: &InstallRow, token: &str, account: &str, dir: &Path, log: &mut Log) -> Result<(String, String)> {
-    let c = client();
-    let account = account.trim();
-    if account.is_empty() {
-        return Err(anyhow!("Cloudflare account ID missing — reconnect Cloudflare with your Account ID."));
-    }
-    let base = format!("https://api.cloudflare.com/client/v4/accounts/{account}/pages/projects");
-    let name = job.site_name.clone();
-    let r = c.get(format!("{base}/{name}")).bearer_auth(token).send().await?;
-    let mut project: Value = if r.status().is_success() { r.json().await.unwrap_or(Value::Null) } else { Value::Null };
-    if project["result"].is_null() {
-        let r = c.post(&base).bearer_auth(token).json(&json!({ "name": name, "production_branch": "main" })).send().await?;
-        let ok = r.status().is_success();
-        project = r.json().await.unwrap_or(Value::Null);
-        if !ok {
-            return Err(anyhow!("Cloudflare: {}", api_error(&project, "cannot create Pages project")));
-        }
-        log.line(format!("✓ Pages project \"{name}\" created"));
-    }
-    let subdomain = project["result"]["subdomain"].as_str().map(|s| s.to_string()).unwrap_or_else(|| format!("{name}.pages.dev"));
-
-    let r = c.get(format!("{base}/{name}/upload-token")).bearer_auth(token).send().await?;
-    let v: Value = r.json().await.unwrap_or(Value::Null);
-    let jwt = v["result"]["jwt"].as_str().ok_or_else(|| anyhow!("Cloudflare: {}", api_error(&v, "no upload token")))?.to_string();
-
-    let files = walk(dir)?;
-    let mut manifest = serde_json::Map::new();
-    let mut special: Vec<(String, Vec<u8>)> = Vec::new();
-    let mut assets: Vec<(String, String, &Vec<u8>)> = Vec::new(); // (hash, path, bytes)
-    for (p, b) in &files {
-        if p == "_headers" || p == "_redirects" || p == "_routes.json" {
-            special.push((p.clone(), b.clone()));
-            continue;
-        }
-        if p == "_worker.js" || p.starts_with("functions/") {
-            continue;
-        }
-        let h = cf_hash(p, b);
-        manifest.insert(format!("/{p}"), Value::String(h.clone()));
-        assets.push((h, p.clone(), b));
-    }
-    let hashes: Vec<String> = {
-        let mut hs: Vec<String> = assets.iter().map(|a| a.0.clone()).collect();
-        hs.sort();
-        hs.dedup();
-        hs
-    };
-    let r = c
-        .post("https://api.cloudflare.com/client/v4/pages/assets/check-missing")
-        .bearer_auth(&jwt)
-        .json(&json!({ "hashes": hashes }))
-        .send()
-        .await?;
-    let v: Value = r.json().await.unwrap_or(Value::Null);
-    let missing: std::collections::HashSet<String> = v["result"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
-    log.line(format!("→ {} files, {} new to upload…", assets.len(), missing.len()));
-    set_install(db, &job.id, "running", &log.text, None, None).await;
-
-    let mut batch: Vec<Value> = Vec::new();
-    let mut size = 0usize;
-    let mut seen = std::collections::HashSet::new();
-    let flush = |batch: Vec<Value>, jwt: String| {
-        let c = c.clone();
-        async move {
-            let r = c.post("https://api.cloudflare.com/client/v4/pages/assets/upload").bearer_auth(&jwt).json(&batch).send().await?;
-            if !r.status().is_success() {
-                let v: Value = r.json().await.unwrap_or(Value::Null);
-                return Err(anyhow!("Cloudflare upload: {}", api_error(&v, "failed")));
-            }
-            Ok::<(), anyhow::Error>(())
-        }
-    };
-    for (h, p, b) in &assets {
-        if !missing.contains(h) || !seen.insert(h.clone()) {
-            continue;
-        }
-        let enc = b64().encode(b);
-        size += enc.len();
-        batch.push(json!({ "key": h, "value": enc, "metadata": { "contentType": content_type(p) }, "base64": true }));
-        if batch.len() >= 50 || size > 30 * 1024 * 1024 {
-            flush(std::mem::take(&mut batch), jwt.clone()).await?;
-            size = 0;
-        }
-    }
-    if !batch.is_empty() {
-        flush(batch, jwt.clone()).await?;
-    }
-    let _ = c
-        .post("https://api.cloudflare.com/client/v4/pages/assets/upsert-hashes")
-        .bearer_auth(&jwt)
-        .json(&json!({ "hashes": hashes }))
-        .send()
-        .await;
-
-    let mut form = reqwest::multipart::Form::new()
-        .text("manifest", Value::Object(manifest).to_string())
-        .text("branch", "main");
-    for (p, b) in special {
-        form = form.part(p.clone(), reqwest::multipart::Part::bytes(b).file_name(p));
-    }
-    let r = c.post(format!("{base}/{name}/deployments")).bearer_auth(token).multipart(form).send().await?;
-    let ok = r.status().is_success();
-    let v: Value = r.json().await.unwrap_or(Value::Null);
-    if !ok {
-        return Err(anyhow!("Cloudflare: {}", api_error(&v, "deployment rejected")));
-    }
-    let dep_id = v["result"]["id"].as_str().unwrap_or("").to_string();
-    for _ in 0..60 {
-        let r = c.get(format!("{base}/{name}/deployments/{dep_id}")).bearer_auth(token).send().await?;
-        let v: Value = r.json().await.unwrap_or(Value::Null);
-        let stage = &v["result"]["latest_stage"];
-        match (stage["name"].as_str().unwrap_or(""), stage["status"].as_str().unwrap_or("")) {
-            ("deploy", "success") => return Ok((format!("https://{subdomain}"), name)),
-            (_, "failure") => return Err(anyhow!("Cloudflare deployment failed at stage {}.", stage["name"].as_str().unwrap_or("?"))),
-            _ => tick().await,
-        }
-    }
-    Ok((format!("https://{subdomain}"), name))
-}
-
-// ---------- Fly.io ----------
-
 fn flyctl_bin() -> String {
     std::env::var("FLYCTL_PATH").unwrap_or_else(|_| "flyctl".to_string())
 }
 
-async fn deploy_fly(db: &Db, job: &InstallRow, token: &str, org: &str, src: &Path, m: &Manifest, log: &mut Log) -> Result<(String, String)> {
+async fn deploy_fly(db: &Db, _user_id: &str, job: &InstallRow, token: &str, org: &str, src: &Path, m: &Manifest, log: &mut Log) -> Result<(String, String)> {
     let bin = flyctl_bin();
     if tokio::process::Command::new(&bin).arg("version").output().await.map(|o| !o.status.success()).unwrap_or(true) {
         return Err(anyhow!("flyctl is not installed on this Slaver server (set FLYCTL_PATH)."));
@@ -809,6 +450,35 @@ async fn deploy_fly(db: &Db, job: &InstallRow, token: &str, org: &str, src: &Pat
         )
         .await?;
     }
+    // App needs from fly.toml: volumes ([[mounts]]) and generated secrets
+    // (comment lines like `fly secrets set ADMIN_TOKEN=$(openssl rand -hex 32)`).
+    let toml = std::fs::read_to_string(src.join("fly.toml")).unwrap_or_default();
+    let (region, mounts, secrets) = fly_toml_needs(&toml);
+    for vol in &mounts {
+        ensure_fly_volume(token, &app, vol, &region, log).await?;
+    }
+    
+    if !secrets.is_empty() {
+        let existing = fly_secret_names(&bin, token, &app).await;
+        for (name, bytes) in &secrets {
+            if existing.iter().any(|e| e == name) {
+                continue;
+            }
+            let mut buf = vec![0u8; *bytes];
+            getrandom::getrandom(&mut buf).map_err(|e| anyhow!("random: {e}"))?;
+            let val = hex::encode(buf);
+            let out = tokio::process::Command::new(&bin)
+                .args(["secrets", "set", &format!("{name}={val}"), "--stage", "--app", &app])
+                .env("FLY_API_TOKEN", token)
+                .output()
+                .await?;
+            if !out.status.success() {
+                return Err(anyhow!("Could not set secret {name}: {}", String::from_utf8_lossy(&out.stderr).trim()));
+            }
+            log.line(format!("✓ Secret {name} generated"));
+            let _ = val;
+        }
+    }
     log.line("→ flyctl deploy --remote-only (building on Fly)…");
     set_install(db, &job.id, "running", &log.text, None, None).await;
     let fut = tokio::process::Command::new(&bin)
@@ -828,7 +498,91 @@ async fn deploy_fly(db: &Db, job: &InstallRow, token: &str, org: &str, src: &Pat
     if !out.status.success() {
         return Err(anyhow!("flyctl deploy failed."));
     }
-    Ok((format!("https://{app}.fly.dev"), app))
+    let url = format!("https://{app}.fly.dev");
+    Ok((url, app))
+}
+
+/// (primary_region, mount sources, secrets to generate as (NAME, random bytes)).
+fn fly_toml_needs(toml: &str) -> (String, Vec<String>, Vec<(String, usize)>) {
+    let mut region = String::new();
+    let mut mounts = vec![];
+    let mut secrets = vec![];
+    let mut in_mounts = false;
+    for raw in toml.lines() {
+        let line = raw.trim();
+        if let Some(c) = line.strip_prefix('#') {
+            // fly secrets set NAME=$(openssl rand -hex N)
+            if let Some(rest) = c.trim().strip_prefix("fly secrets set ") {
+                if let Some((name, val)) = rest.split_once('=') {
+                    let name = name.trim();
+                    if !name.is_empty() && name.chars().all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_') && val.contains("openssl rand -hex") {
+                        let n = val.split_whitespace().filter_map(|w| w.trim_end_matches(')').parse::<usize>().ok()).next().unwrap_or(32).clamp(16, 64);
+                        secrets.push((name.to_string(), n));
+                    }
+                }
+            }
+            continue;
+        }
+        if line.starts_with('[') {
+            in_mounts = line == "[[mounts]]";
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            let (k, v) = (k.trim(), v.trim().trim_matches('"').to_string());
+            if k == "primary_region" && region.is_empty() {
+                region = v;
+            } else if in_mounts && k == "source" && !v.is_empty() {
+                mounts.push(v);
+            }
+        }
+    }
+    if region.is_empty() {
+        region = "sin".into();
+    }
+    (region, mounts, secrets)
+}
+
+async fn ensure_fly_volume(token: &str, app: &str, name: &str, region: &str, log: &mut Log) -> Result<()> {
+    let c = client();
+    let r = c.get(format!("https://api.machines.dev/v1/apps/{app}/volumes")).bearer_auth(token).send().await?;
+    let v: Value = r.json().await.unwrap_or(Value::Null);
+    let exists = v.as_array().map(|a| a.iter().any(|x| x["name"].as_str() == Some(name) && x["state"].as_str() != Some("destroyed"))).unwrap_or(false);
+    if exists {
+        return Ok(());
+    }
+    let r = c
+        .post(format!("https://api.machines.dev/v1/apps/{app}/volumes"))
+        .bearer_auth(token)
+        .json(&json!({ "name": name, "region": region, "size_gb": 1 }))
+        .send()
+        .await?;
+    if !r.status().is_success() {
+        let v: Value = r.json().await.unwrap_or(Value::Null);
+        return Err(anyhow!("Fly: cannot create volume {name}: {}", api_error(&v, "volume create failed")));
+    }
+    log.line(format!("✓ Volume {name} created in {region} (1 GB)"));
+    Ok(())
+}
+
+async fn fly_secret_names(bin: &str, token: &str, app: &str) -> Vec<String> {
+    let out = tokio::process::Command::new(bin).args(["secrets", "list", "--app", app, "--json"]).env("FLY_API_TOKEN", token).output().await;
+    let Ok(out) = out else { return vec![] };
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+    v.as_array()
+        .map(|a| a.iter().filter_map(|x| x["Name"].as_str().or(x["name"].as_str()).map(String::from)).collect())
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod fly_toml_tests {
+    #[test]
+    fn reads_needs() {
+        let t = "# fly secrets set ADMIN_TOKEN=$(openssl rand -hex 32)\napp = \"x\"\nprimary_region = \"sin\"\n[[mounts]]\n  source = \"fnb_data\"\n  destination = \"/data\"\n[[vm]]\n  size = \"a\"\n";
+        let (r, m, s) = super::fly_toml_needs(t);
+        assert_eq!(r, "sin");
+        assert_eq!(m, vec!["fnb_data".to_string()]);
+        assert_eq!(s, vec![("ADMIN_TOKEN".to_string(), 32)]);
+    }
 }
 
 // ---------- creator uploads ----------

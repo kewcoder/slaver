@@ -1,92 +1,9 @@
 use axum::{middleware::{self, Next}, http::Request, response::Response, routing::{get, post}, Router};
-use chrono::Datelike;
-use slaver::{db::Db, git_http, inbox, mcp, oauth_http, platform_api, schedule, store, summarize, AppState};
-use std::{collections::HashMap, time::Duration};
+use slaver::{db::Db, git_http, mcp, oauth_http, platform_api, AppState};
 use tower_http::{cors::CorsLayer, services::{ServeDir, ServeFile}};
 
 fn env_or(key: &str, fallback: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| fallback.to_string())
-}
-
-/// Background scheduler (replaces Cloudflare cron triggers):
-/// - every 60s tick: fire due bot schedules (at most once per 15 min)
-/// - 00:05 Jakarta daily: yesterday's recap per bot
-/// - Monday 00:10 Jakarta: weekly rollup
-/// - 1st of month 00:15 Jakarta: monthly rollup
-/// Summary jobs upsert by period key, so a restart re-fire is harmless.
-async fn scheduler(state: AppState) {
-    let mut last_due = std::time::Instant::now() - Duration::from_secs(3600);
-    let mut fired: HashMap<String, String> = HashMap::new();
-    loop {
-        tokio::time::sleep(Duration::from_secs(60)).await;
-        // Due schedules (15-min cadence like the old */15 cron).
-        if last_due.elapsed() >= Duration::from_secs(15 * 60) {
-            last_due = std::time::Instant::now();
-            let n = schedule::run_due(&state.db).await;
-            if n > 0 {
-                eprintln!("scheduled: fired {n} due schedules");
-            }
-        }
-        // Jakarta wall clock for the summary jobs.
-        let now = chrono::Utc::now() + chrono::Duration::hours(7);
-        let date = now.format("%Y-%m-%d").to_string();
-        let hhmm = now.format("%H:%M").to_string();
-        let should_daily = hhmm.as_str() >= "00:05";
-        let should_weekly = now.date_naive().weekday() == chrono::Weekday::Mon && hhmm.as_str() >= "00:10";
-        let should_monthly = now.date_naive().day() == 1 && hhmm.as_str() >= "00:15";
-        let scopes = match store::all_bot_scopes(&state.db).await {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("scheduled: list bots failed: {e}");
-                continue;
-            }
-        };
-        for scope in scopes {
-            let bot = match store::get_bot(&state.db, &scope.user_id, &scope.id).await {
-                Ok(Some(b)) => b,
-                Ok(None) => continue,
-                Err(e) => {
-                    eprintln!("scheduled: get bot failed: {e}");
-                    continue;
-                }
-            };
-            if should_daily && fired.get(&format!("d:{}", bot.id)).map(|d| d != &date).unwrap_or(true) {
-                match summarize::run_daily(&state.db, &bot, &scope.user_id).await {
-                    Ok(_) => {
-                        fired.insert(format!("d:{}", bot.id), date.clone());
-                    }
-                    Err(e) => eprintln!("scheduled: daily summary failed for {}: {e}", bot.id),
-                }
-            }
-            if should_weekly {
-                let week = now.iso_week();
-                let key = format!("{:04}-W{:02}", week.year(), week.week());
-                if fired.get(&format!("w:{}", bot.id)).map(|k| k != &key).unwrap_or(true) {
-                    match summarize::run_weekly(&state.db, &bot, &scope.user_id).await {
-                        Ok(_) => {
-                            fired.insert(format!("w:{}", bot.id), key);
-                        }
-                        Err(e) => eprintln!("scheduled: weekly summary failed for {}: {e}", bot.id),
-                    }
-                }
-            }
-            if should_monthly {
-                let key = if now.month() == 1 {
-                    format!("{:04}-12", now.year() - 1)
-                } else {
-                    format!("{:04}-{:02}", now.year(), now.month() - 1)
-                };
-                if fired.get(&format!("m:{}", bot.id)).map(|k| k != &key).unwrap_or(true) {
-                    match summarize::run_monthly(&state.db, &bot, &scope.user_id).await {
-                        Ok(_) => {
-                            fired.insert(format!("m:{}", bot.id), key);
-                        }
-                        Err(e) => eprintln!("scheduled: monthly summary failed for {}: {e}", bot.id),
-                    }
-                }
-            }
-        }
-    }
 }
 
 async fn git_info_refs(
@@ -168,14 +85,12 @@ async fn main() {
     slaver::seed::seed_templates(&db, &git_root, &env_or("APPS_DIR", "./apps")).await;
 
     let state = AppState { db, jwt_secret, avatar_dir, workspace_dir, git_root, frontend_dir: std::path::PathBuf::from(&frontend_dir) };
-    tokio::spawn(scheduler(state.clone()));
     tokio::spawn(slaver::github::sync_loop(state.clone()));
 
     let index = state.frontend_dir.join("index.html");
     let app = Router::new()
         .route("/mcp", post(mcp::rpc))
         .route("/ping", get(|| async { "ok" }))
-        .route("/api/inbox/stream", get(inbox::inbox_stream))
         .route(
             "/git/:repo/info/refs",
             get(git_info_refs).post(git_info_refs),

@@ -23,15 +23,15 @@ export interface ProviderMeta {
   noteKey: StringsKey;
 }
 
-export const PROVIDERS: ProviderMeta[] = [
-  { id: "vercel", name: "Vercel", mark: "▲", color: "bg-fg text-bg", tokenUrl: "https://vercel.com/account/tokens", refKey: "host.refVercel", refRequired: false, noteKey: "host.noteVercel" },
-  { id: "netlify", name: "Netlify", mark: "◆", color: "bg-[#32e6e2] text-[#0b2b2a]", tokenUrl: "https://app.netlify.com/user/applications#personal-access-tokens", refKey: null, refRequired: false, noteKey: "host.noteNetlify" },
-  { id: "cloudflare", name: "Cloudflare Pages", mark: "☁", color: "bg-[#f6821f] text-white", tokenUrl: "https://dash.cloudflare.com/profile/api-tokens", refKey: "host.refCloudflare", refRequired: true, noteKey: "host.noteCloudflare" },
+const ALL_PROVIDERS: ProviderMeta[] = [
   { id: "fly", name: "Fly.io", mark: "✈", color: "bg-[#7c3aed] text-white", tokenUrl: "https://fly.io/user/personal_access_tokens", refKey: "host.refFly", refRequired: false, noteKey: "host.noteFly" },
 ];
 
+/** Apps are deployed to the customer's own Fly.io account only (their bill, not Slaver's). */
+export const PROVIDERS: ProviderMeta[] = ALL_PROVIDERS;
+
 export function providerMeta(id: string): ProviderMeta {
-  return PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[0];
+  return ALL_PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[0];
 }
 
 export function ProviderMark({ id, size = "md" }: { id: string; size?: "sm" | "md" }) {
@@ -257,9 +257,12 @@ export function InstallDialog({
         setProvider(last.provider);
         setAccountId(last.account_id);
         setSiteName(last.site_name);
-      } else if (r.acc[0]) {
-        setProvider(r.acc[0].provider);
-        setAccountId(r.acc[0].id);
+      } else if (r.acc.find((a) => a.provider === "fly")) {
+        const a = r.acc.find((x) => x.provider === "fly")!;
+        setProvider("fly");
+        setAccountId(a.id);
+      } else {
+        setProvider("fly");
       }
     });
   }, [refresh]);
@@ -372,6 +375,12 @@ export function InstallDialog({
             </div>
           ) : (
             <div className="flex flex-col gap-5">
+              {PROVIDERS.length === 1 ? (
+                <div className="flex items-center gap-3 rounded-xl border border-line p-3">
+                  <ProviderMark id="fly" size="sm" />
+                  <p className="text-xs leading-5 text-muted">{t("install.flyOnly")}</p>
+                </div>
+              ) : (
               <div>
                 <div className="panel-title mb-2">{t("install.step1")}</div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -394,6 +403,7 @@ export function InstallDialog({
                 </div>
                 {provider && <p className="mt-2 text-xs leading-5 text-muted">{t(providerMeta(provider).noteKey)}</p>}
               </div>
+              )}
 
               {provider && !effectiveAccount && (
                 <div className="flex flex-col gap-2">

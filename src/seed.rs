@@ -128,64 +128,13 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, apps_dir: &str)
         }
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
-    ensure_demo(db).await;
-    ensure_skills(db).await;
-}
-
-/// Built-in skill templates (public, owned by the system-templates team).
-/// Installed onto a bot with one click: role becomes the bot role, memory
-/// is appended to the bot memory.
-async fn ensure_skills(db: &crate::db::Db) {
-    const SKILLS: &[(&str, &str, &str, &str, &str)] = &[
-        ("Kasir Cepat", "Kasir", "Hitung belanja, total, dan kembalian dengan cepat dan teliti.",
-            "Kamu kasir yang cepat dan teliti. Ulangi rincian belanja sebelum menyebut total. Tanya: tunai, QRIS, atau transfer.",
-            "Kembalian dihitung per lembar bila tunai. QRIS di atas Rp 5 juta wajib konfirmasi ulang. Selalu ucapkan terima kasih dan ajak kembali."),
-        ("Pelayan Sigap", "Pelayan", "Catat pesanan via chat, cek stok, konfirmasi ulang.",
-            "Kamu pelayan yang sigap. Catat: menu x jumlah x nomor meja. Cek stok dulu; bila habis, tawarkan pengganti terdekat.",
-            "Selalu konfirmasi ulang pesanan. Ingatkan bila ada menu yang lama disiapkan (±15 menit)."),
-        ("Admin Booking", "Booking", "Terima reservasi meja + DP, ingatkan H-1.",
-            "Kamu admin booking. Minta: nama, no WA, tanggal, jam, jumlah orang. Ingatkan DP Rp 50.000; tanpa DP meja tidak dipegang.",
-            "Kapasitas umum: catat 12 meja. No-show = DP hangus. Kirim pengingat H-1 jam 10 pagi."),
-        ("CS Online Shop", "Layanan Pelanggan", "Balas chat pembeli dengan ramah, tanya kebutuhan, tawarkan produk.",
-            "Kamu CS online shop yang ramah. Sapa, tanyakan kebutuhan, jawab singkat. Maksimal 2 pertanyaan lanjutan per pesan.",
-            "Jam balas: 08.00-21.00. Di luar jam itu, catat pesan dan janji dibalas pagi hari."),
-        ("Tukang Stok Opname", "Stok", "Catat barang masuk/keluar, ingatkan stok menipis.",
-            "Kamu pencatat stok. Catat tiap barang masuk/keluar: nama, jumlah, tanggal. Laporkan yang di bawah minimum tiap sore.",
-            "Batas minimum umum: bahan cepat habis = stok 2 hari. Selisih opname dicatat, bukan dihapus."),
-    ];
-    for (name, category, desc, role, memory) in SKILLS {
-        let row: Option<serde_json::Value> = match db
-            .prepare("SELECT id FROM skills WHERE name = ? AND template = 1")
-            .bind(&[crate::db::v_text(name)])
-        {
-            Ok(q) => q.first(None).await.unwrap_or(None),
-            Err(_) => None,
-        };
-        if row.is_some() {
-            continue;
-        }
-        let id = new_id();
-        if let Err(e) = async {
-            db.prepare("INSERT INTO skills (id, team_id, name, category, description, role, memory, template) VALUES (?, 'system-templates', ?, ?, ?, ?, ?, 1)")
-                .bind(&[crate::db::v_text(&id), crate::db::v_text(name), crate::db::v_text(category), crate::db::v_text(desc), crate::db::v_text(role), crate::db::v_text(memory)])
-                .map_err(|e| e.to_string())?
-                .run()
-                .await
-                .map_err(|e| e.to_string())
-        }
-        .await
-        {
-            eprintln!("seed: skill '{name}' failed: {e}");
-            continue;
-        }
-        eprintln!("seed: skill '{name}' ready");
-    }
+    ensure_demo(db, &git_root.to_string_lossy()).await;
 }
 
 /// Demo F&B account (used by the login-page demo button): resto@slaver.app
-/// owns a "Saung Rangon" team staffed from the F&B template. Idempotent —
-/// skipped when the user already exists (e.g. after a template was applied).
-async fn ensure_demo(db: &crate::db::Db) {
+/// owns a "Saung Ranggon" team that already owns the F&B Suite app. Idempotent —
+/// skipped when the user already exists.
+async fn ensure_demo(db: &crate::db::Db, git_root: &str) {
     let email = "resto@slaver.app";
     let row: Option<serde_json::Value> = match db
         .prepare("SELECT id FROM users WHERE email = ?")
@@ -197,7 +146,8 @@ async fn ensure_demo(db: &crate::db::Db) {
             return;
         }
     };
-    if row.is_some() {
+    if let Some(uid) = row.as_ref().and_then(|r| r.get("id")).and_then(|v| v.as_str()) {
+        repair_demo(db, git_root, uid).await;
         return;
     }
     let mut salt_b = [0u8; 16];
@@ -215,23 +165,57 @@ async fn ensure_demo(db: &crate::db::Db) {
         hex::encode(h.finalize())
     };
     let id = new_id();
-    let q = match db
-        .prepare("INSERT INTO users (id, email, name, password_salt, password_hash) VALUES (?, 'resto@slaver.app', 'Saung Rangon (demo)', ?, ?)")
+    let inserted = match db
+        .prepare("INSERT INTO users (id, email, name, password_salt, password_hash) VALUES (?, 'resto@slaver.app', 'Saung Ranggon (demo)', ?, ?)")
         .bind(&[crate::db::v_text(&id), crate::db::v_text(&salt), crate::db::v_text(&digest)])
     {
-        Ok(q) => q,
-        Err(e) => {
-            eprintln!("seed: demo insert prepare failed: {e}");
-            return;
-        }
+        Ok(q) => q.run().await.map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
     };
-    if let Err(e) = q.run().await {
+    if let Err(e) = inserted {
         eprintln!("seed: demo insert failed: {e}");
         return;
     }
-    match crate::team_templates::apply(db, &id, "saung-rangon", "Saung Rangon").await {
-        Ok((team, bots)) => eprintln!("seed: demo team '{}' ready ({} bots)", team.name, bots.len()),
-        Err(e) => eprintln!("seed: demo team failed: {e:#}"),
+    let team = match crate::store::create_team(db, &id, "Saung Ranggon", false).await {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("seed: demo team failed: {e}");
+            return;
+        }
+    };
+    give_demo_app(db, git_root, &team.id, &id).await;
+}
+
+/// Older demo accounts (from the AI-agent era) had a "Saung Rangon" team with
+/// bots and no apps: fix the name and give it the F&B Suite app once.
+async fn repair_demo(db: &crate::db::Db, git_root: &str, user_id: &str) {
+    if let Ok(q) = db.prepare("UPDATE teams SET name = 'Saung Ranggon' WHERE owner_user_id = ? AND name = 'Saung Rangon'").bind(&[crate::db::v_text(user_id)]) {
+        let _ = q.run().await;
+    }
+    if let Ok(q) = db.prepare("UPDATE users SET name = 'Saung Ranggon (demo)' WHERE id = ? AND name = 'Saung Rangon (demo)'").bind(&[crate::db::v_text(user_id)]) {
+        let _ = q.run().await;
+    }
+    let team: Option<serde_json::Value> = match db
+        .prepare("SELECT t.id FROM teams t WHERE t.owner_user_id = ? AND t.personal = 0 AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.team_id = t.id) ORDER BY t.created_at LIMIT 1")
+        .bind(&[crate::db::v_text(user_id)])
+    {
+        Ok(q) => q.first(None).await.unwrap_or(None),
+        Err(_) => None,
+    };
+    if let Some(tid) = team.and_then(|v| v.get("id").and_then(|x| x.as_str()).map(String::from)) {
+        give_demo_app(db, git_root, &tid, user_id).await;
     }
 }
 
+async fn give_demo_app(db: &crate::db::Db, git_root: &str, team_id: &str, user_id: &str) {
+    let tpl: Option<serde_json::Value> = match db.prepare("SELECT id FROM repos WHERE template = 1 AND name LIKE 'F&B Suite%' ORDER BY created_at LIMIT 1").bind(&[]) {
+        Ok(q) => q.first(None).await.unwrap_or(None),
+        Err(_) => None,
+    };
+    if let Some(tid) = tpl.and_then(|v| v.get("id").and_then(|x| x.as_str()).map(String::from)) {
+        match crate::platform::buy_bundle(db, git_root, team_id, user_id, &tid, "mock", 0).await {
+            Ok(_) => eprintln!("seed: demo team owns F&B Suite"),
+            Err(e) => eprintln!("seed: demo license failed: {e}"),
+        }
+    }
+}

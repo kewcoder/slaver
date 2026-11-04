@@ -2,40 +2,20 @@ import { useCallback, useEffect, useState } from "react";
 import { useLang } from "./i18n";
 import { HostingAccountsManager } from "./HostingPanel";
 import {
-  addDomain,
   clearTeamProvider,
-  connectFly,
   createOAuthClient,
   createTeam,
   deleteTeam,
-  destroyFlyMachine,
-  disconnectFly,
-  fetchDomains,
-  fetchFlyAccounts,
-  fetchFlyMachines,
   fetchOAuthClients,
   fetchTeam,
-  fetchTeamActivity,
-  fetchTeams,
-  grantBotAccess,
   inviteMember,
-  provisionFly,
-  removeDomain,
   removeMember,
-  revokeBotAccess,
   revokeOAuthClient,
   setMemberRole,
   setTeamProvider,
   setUserLang,
   testTeamProvider,
-  transferBot,
-  type ActivityItem,
-  type CustomDomain,
-  type FlyAccount,
-  type FlyMachine,
   type OAuthClient,
-  type ProviderInfo,
-  type SlaveBot,
   type Team,
   type TeamDetail,
   type User,
@@ -228,7 +208,6 @@ export function TeamsView({
   const [inviteRole, setInviteRole] = useState("staff");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
   const activeId = teamId ?? teams[0]?.id ?? null;
 
   useEffect(() => {
@@ -239,11 +218,6 @@ export function TeamsView({
     fetchTeam(activeId)
       .then((d) => {
         setDetail(d);
-        if (d.my_role === "owner" || d.my_role === "admin") {
-          fetchTeamActivity(activeId).then(setActivity).catch(() => {});
-        } else {
-          setActivity([]);
-        }
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : t("settings.errTeamLoad")));
   }, [activeId, teams.length]);
@@ -255,9 +229,6 @@ export function TeamsView({
       await fn();
       if (activeId) {
         setDetail(await fetchTeam(activeId));
-        if (myRole === "owner" || myRole === "admin") {
-          fetchTeamActivity(activeId).then(setActivity).catch(() => {});
-        }
       }
       await onChanged();
     } catch (e: unknown) {
@@ -364,183 +335,11 @@ export function TeamsView({
                 </button>
             </form>
           )}
-          <h4 className="mt-5 text-sm font-bold uppercase tracking-wide text-zinc-500">{t("settings.botsCount", { n: detail.bots.length })}</h4>
-          <ul className="mt-2 space-y-1">
-            {detail.bots.map((b) => {
-              const owner = detail.members.find((m) => m.user_id === b.owner_user_id);
-              return (
-              <li key={b.id} className="rounded-md bg-zinc-800/60 px-3 py-2 text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate font-semibold">{b.name}</span>
-                    <span className="shrink-0 text-xs text-zinc-500">◈ {owner ? (owner.name || owner.email) : t("settings.unassignedBot")}</span>
-                </div>
-                {canManage && (
-                    <label className="mt-1 flex items-center gap-2 text-xs text-zinc-400">
-                      {t("settings.partnerIs")}
-                    <select
-                      value={b.owner_user_id}
-                      disabled={busy}
-                      onChange={(e) => void run(() => transferBot(b.id, e.target.value))}
-                      className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100 focus:border-emerald-500 focus:outline-none"
-                    >
-                      {detail.members.map((m) => (
-                        <option key={m.user_id} value={m.user_id}>{m.name || m.email} ({m.role})</option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                {canManage && (
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {detail.members.filter((m) => m.role === "staff").map((m) => {
-                      const has = m.bot_ids.includes(b.id);
-                      return (
-                        <button
-                          key={m.user_id}
-                          type="button"
-                          disabled={busy}
-                          title={has ? t("settings.revokeTitle", { bot: b.name, email: m.email || "" }) : t("settings.grantTitle", { bot: b.name, email: m.email || "" })}
-                          onClick={() => void run(() => has ? revokeBotAccess(detail.team.id, b.id, m.user_id, m.bot_ids) : grantBotAccess(detail.team.id, b.id, m.user_id, m.bot_ids))}
-                          className={`rounded border px-2 py-0.5 text-xs ${has ? "border-emerald-700 text-emerald-400" : "border-zinc-700 text-zinc-500 hover:text-zinc-200"}`}
-                        >
-                          {m.email}: {has ? t("settings.granted") : t("settings.grant")}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </li>
-              );
-            })}
-            {detail.bots.length === 0 && <p className="text-sm text-zinc-600">{t("settings.noBots")}</p>}
-          </ul>
-          {canManage && (
-            <>
-                <h4 className="mt-5 text-sm font-bold uppercase tracking-wide text-zinc-500">{t("settings.activity")}</h4>
-                {activity.length === 0 ? (
-                  <p className="mt-1 text-sm text-zinc-600">{t("settings.noActivity")}</p>
-              ) : (
-                <ul className="mt-2 max-h-96 space-y-1 overflow-y-auto">
-                  {activity.map((a, i) => (
-                    <li key={i} className="rounded-md bg-zinc-800/60 px-3 py-2 text-sm">
-                      <div className="flex items-baseline gap-2">
-                        <span className="font-semibold">{a.bot_name}</span>
-                        <span className={`rounded px-1 text-[10px] font-bold uppercase ${a.role === "assistant" ? "bg-emerald-900/60 text-emerald-300" : "bg-zinc-700 text-zinc-300"}`}>{a.role}</span>
-                        <span className="text-xs text-zinc-500">{a.created_at ? new Date(a.created_at).toLocaleString() : ""}</span>
-                      </div>
-                      <p className="mt-0.5 whitespace-pre-wrap break-words text-[13px] text-zinc-300">{a.content.length > 300 ? `${a.content.slice(0, 300)}…` : a.content}</p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
         </div>
       )}
     </div>
   );
 }
-export function FlySection({ teamId }: { teamId: string | null }) {
-  const { t } = useLang();
-  const [accounts, setAccounts] = useState<FlyAccount[]>([]);
-  const [machines, setMachines] = useState<FlyMachine[]>([]);
-  const [domains, setDomains] = useState<CustomDomain[]>([]);
-  const [name, setName] = useState("");
-  const [org, setOrg] = useState("");
-  const [token, setTokenInput] = useState("");
-  const [slug, setSlug] = useState("");
-  const [sub, setSub] = useState("");
-  const [target, setTarget] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const refresh = useCallback(async () => {
-    if (!teamId) { setAccounts([]); setMachines([]); setDomains([]); return; }
-    try {
-      const [a, m, d] = await Promise.all([fetchFlyAccounts(teamId), fetchFlyMachines(teamId), fetchDomains(teamId)]);
-      setAccounts(a); setMachines(m); setDomains(d);
-    } catch (err) { setError(err instanceof Error ? err.message : t("settings.errFlyLoad")); }
-  }, [teamId]);
-
-  useEffect(() => { void refresh(); }, [refresh]);
-
-  async function connect(e: React.FormEvent) {
-    e.preventDefault();
-    if (!teamId || !token.trim() || busy) return;
-    setBusy(true); setError("");
-    try {
-      await connectFly(teamId, { name: name.trim() || "fly", org: org.trim(), api_token: token.trim() });
-      setName(""); setOrg(""); setTokenInput("");
-      await refresh();
-    } catch (err) { setError(err instanceof Error ? err.message : t("settings.errFlyConnect")); }
-    finally { setBusy(false); }
-  }
-
-  async function provision(accountId: string) {
-    if (!teamId || !slug.trim() || busy) return;
-    setBusy(true); setError("");
-    try { await provisionFly(teamId, { account_id: accountId, name: slug.trim().toLowerCase() }); await refresh(); }
-    catch (err) { setError(err instanceof Error ? err.message : t("settings.errProvision")); }
-    finally { setBusy(false); }
-  }
-
-  return (
-    <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-      <h3 className="mb-1 text-sm font-bold uppercase tracking-wide text-zinc-500">{t("settings.flyTitle")}</h3>
-      <p className="mb-2 text-xs text-zinc-500">{t("settings.flyBody")}</p>
-      {error && <p className="mb-2 text-sm text-red-400">{error}</p>}
-      <form onSubmit={connect} className="flex flex-col gap-2">
-        <div className="flex flex-col gap-2 sm:flex-row">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("settings.flyAccountPh")} disabled={!teamId} className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40" />
-        <input value={org} onChange={(e) => setOrg(e.target.value)} placeholder={t("settings.flyOrgPh")} disabled={!teamId} className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40" />
-        </div>
-        <input value={token} onChange={(e) => setTokenInput(e.target.value)} placeholder={t("settings.flyTokenPh")} type="password" disabled={!teamId} className="rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none disabled:opacity-40" />
-        <div><button type="submit" disabled={!token.trim() || !teamId || busy} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">{busy ? t("settings.flyConnecting") : t("settings.flyConnect")}</button></div>
-      </form>
-      {accounts.map((a) => (
-        <div key={a.id} className="mt-3 rounded-md bg-zinc-800/60 p-3 text-xs">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-zinc-100">{a.name}</span>
-          <span className="font-mono text-zinc-500">{a.org || t("settings.flyOrgDefault")} · token ✓</span>
-          <button type="button" onClick={() => teamId && disconnectFly(teamId, a.id).then(refresh)} className="ml-auto text-zinc-500 hover:text-red-400">{t("settings.flyDisconnect")}</button>
-          </div>
-          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-          <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder={t("settings.flySlugPh")} className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
-          <button type="button" onClick={() => provision(a.id)} disabled={!slug.trim() || busy} className="rounded-md bg-sky-600 px-3 py-1.5 font-bold text-white hover:bg-sky-500 disabled:opacity-40">{t("settings.flyProvision")}</button>
-        </div>
-        <p className="mt-1 text-zinc-500">{t("settings.flyMakes")} <span className="font-mono">{slug || "slug"}-prod</span> {t("settings.flyProdNote")} + <span className="font-mono">{slug || "slug"}-dev</span> {t("settings.flyDevNote")}.</p>
-        </div>
-      ))}
-      {machines.length > 0 && (
-        <ul className="mt-2 flex flex-col gap-1">
-          {machines.map((m) => (
-            <li key={m.id} className="flex flex-wrap items-center gap-2 rounded-md bg-zinc-800/60 px-3 py-2 font-mono text-xs">
-              <span className={m.role === "prod" ? "font-bold text-emerald-400" : "font-bold text-sky-400"}>{m.role}</span>
-              <span className="text-zinc-100">{m.app_name}</span>
-              <span className="text-zinc-500">{m.machine_id.slice(0, 8)} · {m.image} · {m.cpus}cpu/{m.memory_mb}MB · {m.status}</span>
-              <button type="button" onClick={() => teamId && destroyFlyMachine(teamId, m.id, false).then(refresh)} className="ml-auto text-zinc-500 hover:text-red-400">{t("settings.flyDestroy")}</button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="mt-3 border-t border-zinc-800 pt-3">
-        <div className="mb-1 text-xs font-bold uppercase tracking-wide text-zinc-500">{t("settings.domainsTitle", { zone: "{nama}.slaver.app" })}</div>
-        <p className="mb-2 text-[11px] text-zinc-500">{t("settings.domainsHint")}</p>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <input value={sub} onChange={(e) => setSub(e.target.value)} placeholder={t("settings.domSubPh")} className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
-          <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder={t("settings.domTargetPh")} className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
-          <button type="button" onClick={async () => { if (!teamId || !sub.trim() || !target.trim()) return; setError(""); try { await addDomain(teamId, { subdomain: sub.trim().toLowerCase(), target: target.trim() }); setSub(""); setTarget(""); await refresh(); } catch (err) { setError(err instanceof Error ? err.message : t("settings.domFail")); } }} className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-100 hover:bg-zinc-700">{t("settings.domAdd")}</button>
-        </div>
-        {domains.map((d) => (
-          <div key={d.id} className="mt-1 flex items-center gap-2 font-mono text-xs text-zinc-400">
-            <span className="text-zinc-100">{d.hostname}</span><span>→ {d.target}</span><span className="text-zinc-600">[{d.status}]</span>
-            <button type="button" onClick={() => teamId && removeDomain(teamId, d.id).then(refresh)} className="ml-auto text-zinc-600 hover:text-red-400">{t("settings.domRemove")}</button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 export function DeveloperSection({ teamId }: { teamId: string | null }) {
   const { t } = useLang();
   const [clients, setClients] = useState<OAuthClient[]>([]);
@@ -654,38 +453,22 @@ export function SettingsView({
   user,
   teams,
   teamId,
-  memberNames,
   onPickTeam,
   onTeamsChanged,
-  onCreateBot,
   onLogout,
   onUserChanged,
 }: {
   user: User;
   teams: Team[];
   teamId: string | null;
-  memberNames: Record<string, string>;
   onPickTeam: (id: string) => void;
   onTeamsChanged: () => Promise<void>;
-  onCreateBot: (ownerId: string) => Promise<void>;
   onLogout: () => void;
   onUserChanged: (u: User) => void;
 }) {
   const { t, lang, setLang } = useLang();
-  const [createOwner, setCreateOwner] = useState(user.id);
-  const [creating, setCreating] = useState(false);
   const [langBusy, setLangBusy] = useState(false);
   const [section, setSection] = useState<"profile" | "teams" | "fly" | "dev">("profile");
-
-  async function create() {
-    if (creating) return;
-    setCreating(true);
-    try {
-      await onCreateBot(createOwner || user.id);
-    } finally {
-      setCreating(false);
-    }
-  }
 
   async function pickLang(l: "en" | "id") {
     if (l === lang || langBusy) return;
@@ -703,7 +486,6 @@ export function SettingsView({
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-6">
-      <h2 className="text-xl font-bold text-zinc-100">{t("settings.title")}</h2>
 
       {/* Mobile: horizontal section tabs */}
       <div className="mt-4 flex gap-1 overflow-x-auto md:hidden">
@@ -719,7 +501,7 @@ export function SettingsView({
         ))}
       </div>
 
-      <div className="mt-4 flex gap-5">
+      <div className="flex gap-5">
         {/* Sub-sidebar (desktop) */}
         <aside className="hidden w-52 shrink-0 md:block">
           <nav className="sticky top-4 flex flex-col gap-1 rounded-xl border border-zinc-800 bg-zinc-900 p-2">
@@ -769,27 +551,6 @@ export function SettingsView({
         </div>
       </div>
 
-      <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-        <h3 className="mb-1 text-sm font-bold uppercase tracking-wide text-zinc-500">{t("settings.newBot")}</h3>
-        <p className="mb-2 text-xs text-zinc-500">{t("settings.newBotHint")}</p>
-        <div className="flex gap-2">
-          <select
-            value={createOwner}
-            onChange={(e) => setCreateOwner(e.target.value)}
-            title={t("settings.newBotOwner")}
-            className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
-          >
-            <option value={user.id}>{memberNames[user.id] ?? t("settings.newBotMe")}</option>
-            {Object.entries(memberNames).filter(([id]) => id !== user.id).map(([id, name]) => (
-              <option key={id} value={id}>{name}</option>
-            ))}
-          </select>
-          <button type="button" onClick={create} disabled={creating || !teamId} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
-            {creating ? t("settings.creating") : t("settings.create")}
-          </button>
-        </div>
-        {!teamId && <p className="mt-1 text-xs text-amber-300">{t("settings.pickTeam")}</p>}
-      </div>
       </>
       )}
 
@@ -806,10 +567,6 @@ export function SettingsView({
       {section === "fly" && (
         <div className="flex flex-col gap-6">
           <HostingAccountsManager teamId={teamId} canManage={["owner", "admin"].includes(teams.find((x) => x.id === teamId)?.role ?? "")} />
-          <details className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-            <summary className="cursor-pointer text-sm font-semibold text-zinc-300">{t("host.advancedFly")}</summary>
-            <div className="mt-4"><FlySection teamId={teamId} /></div>
-          </details>
         </div>
       )}
 

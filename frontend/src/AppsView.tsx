@@ -19,16 +19,11 @@ type AppState = "none" | "installing" | "live" | "failed";
 export default function AppsView({
   teamId,
   teamName,
-  onOpenProject,
   onGoMarket,
 }: {
   teamId: string | null;
   teamName?: string;
-  userName?: string;
-  botCount?: number;
-  onOpenProject: (projectId: string) => void;
   onGoMarket: () => void;
-  onGoChat?: () => void;
 }) {
   const { t } = useLang();
   const [apps, setApps] = useState<Project[] | null>(null);
@@ -96,7 +91,6 @@ export default function AppsView({
               install={installs.find((i) => i.project_id === p.id) ?? null}
               update={updates.find((u) => u.project_id === p.id) ?? null}
               onInstall={() => setInstallFor(p)}
-              onOpenBoard={() => onOpenProject(p.id)}
               onChanged={refresh}
             />
           ))}
@@ -124,14 +118,12 @@ function AppRow({
   install,
   update,
   onInstall,
-  onOpenBoard,
   onChanged,
 }: {
   project: Project;
   install: Install | null;
   update: AppUpdate | null;
   onInstall: () => void;
-  onOpenBoard: () => void;
   onChanged: () => Promise<void>;
 }) {
   const { t } = useLang();

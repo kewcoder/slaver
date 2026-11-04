@@ -1,5 +1,5 @@
 //! MCP tools for the Slaver platform layer: projects/kanban, git repos,
-//! marketplace licenses, VPS targets, deployments. Dispatched from mcp.rs.
+//! marketplace licenses, installs to Fly, listing reviews. Dispatched from mcp.rs.
 
 use axum::{
     extract::State,
@@ -39,11 +39,6 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "projects_list", "description": "List projects on a team with progress stats.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
         json!({ "name": "projects_get", "description": "One project with progress stats.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
         json!({ "name": "project_set_repo", "description": "Attach a git repo to a project. Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id", "repo_id"], "properties": { "project_id": { "type": "string" }, "repo_id": { "type": "string" } } } }),
-        json!({ "name": "issues_create", "description": "Create a kanban issue on a project, optionally assigned to a slaveBot.", "inputSchema": { "type": "object", "required": ["project_id", "title"], "properties": { "project_id": { "type": "string" }, "title": { "type": "string" }, "body": { "type": "string" }, "assignee_bot_id": { "type": "string" } } } }),
-        json!({ "name": "issues_list", "description": "List kanban issues on a project.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
-        json!({ "name": "issues_update", "description": "Update an issue's title/body/priority/labels.", "inputSchema": { "type": "object", "required": ["issue_id"], "properties": { "issue_id": { "type": "string" }, "title": { "type": "string" }, "body": { "type": "string" }, "priority": { "type": "string" }, "labels": { "type": "string" } } } }),
-        json!({ "name": "issues_assign", "description": "Assign an issue to a slaveBot (empty bot_id unassigns).", "inputSchema": { "type": "object", "required": ["issue_id"], "properties": { "issue_id": { "type": "string" }, "bot_id": { "type": "string"   } } } }),
-        json!({ "name": "issues_move", "description": "Move an issue: backlog, todo, in_progress, in_review, done.", "inputSchema": { "type": "object", "required": ["issue_id", "state"], "properties": { "issue_id": { "type": "string" }, "state": { "type": "string" } } } }),
         json!({ "name": "repos_create", "description": "Create a git repo on a team.", "inputSchema": { "type": "object", "required": ["team_id", "name"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "description": { "type": "string" } } } }),
         json!({ "name": "repos_list", "description": "List git repos on a team.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }  ),
         json!({ "name": "repos_templates", "description": "List public marketplace template repos.", "inputSchema": { "type": "object", "properties": { } } } ),
@@ -59,44 +54,11 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "licenses_checkout", "description": "Start a HitPay checkout for a template license. Returns a payment URL (or instant mock license when HitPay is not configured). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "repo_id"], "properties": { "team_id": { "type": "string" }, "repo_id": { "type": "string" } } } }),
         json!({ "name": "payments_status", "description": "Live status of a checkout payment (refreshes from HitPay when pending).", "inputSchema": { "type": "object", "required": ["payment_id"], "properties": { "payment_id": { "type": "string" } } } }),
         json!({ "name": "licenses_activate", "description": "Verify a paid checkout and mint the license + fork + project. Idempotent.", "inputSchema": { "type": "object", "required": ["payment_id"], "properties": { "payment_id": { "type": "string" } } } }),
-        json!({ "name": "dm_history", "description": "Direct messages with a teammate (same team).", "inputSchema": { "type": "object", "required": ["team_id", "user_id"], "properties": { "team_id": { "type": "string" }, "user_id": { "type": "string" } } } }),
-        json!({ "name": "unread_list", "description": "Conversations with unread messages (sidebar badges): DMs, channels, meetings, bots. Only activity from the last 7 days.", "inputSchema": { "type": "object", "properties": {} } }),
-        json!({ "name": "read_mark", "description": "Mark a conversation read up to a message id (clears its badge). kind: dm|group|meeting|bot.", "inputSchema": { "type": "object", "required": ["kind", "ref_id", "last_id"], "properties": { "kind": { "type": "string" }, "team_id": { "type": "string" }, "ref_id": { "type": "string" }, "last_id": { "type": "integer" } } } }),
-        json!({ "name": "dm_send", "description": "Send a direct message to a teammate.", "inputSchema": { "type": "object", "required": ["team_id", "to_user_id", "message"], "properties": { "team_id": { "type": "string" }, "to_user_id": { "type": "string" }, "message": { "type": "string" } } } }),
-        json!({ "name": "groups_add_user", "description": "Add a teammate to a channel (mixed human + AI channels).", "inputSchema": { "type": "object", "required": ["group_id", "user_id"], "properties": { "group_id": { "type": "string" }, "user_id": { "type": "string" } } } }),
-        json!({ "name": "groups_remove_user", "description": "Remove a teammate from a channel.", "inputSchema": { "type": "object", "required": ["group_id", "user_id"], "properties": { "group_id": { "type": "string" }, "user_id": { "type": "string" } } } }),
-        json!({ "name": "groups_set_project", "description": "Attach a kanban project to a channel (empty project_id detaches). The board then lives inside the channel. Owner/admin only.", "inputSchema": { "type": "object", "required": ["group_id"], "properties": { "group_id": { "type": "string" }, "project_id": { "type": "string" } } } }),
         json!({ "name": "projects_set_urls", "description": "Set a project's production and/or dev URL (used for the Apps home iframe + custom domains). Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" }, "prod_url": { "type": "string" }, "dev_url": { "type": "string" } } } }),
-        json!({ "name": "fly_connect", "description": "Connect the team's own Fly.io account with an API token (validated). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "api_token"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "org": { "type": "string" }, "api_token": { "type": "string" } } } }),
-        json!({ "name": "fly_accounts", "description": "List connected Fly.io accounts.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
-        json!({ "name": "fly_disconnect", "description": "Remove a connected Fly.io account (does not delete remote resources). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "account_id"], "properties": { "team_id": { "type": "string" }, "account_id": { "type": "string" } } } }),
-        json!({ "name": "fly_provision", "description": "Provision 1 PROD + 1 DEV machine on the team's Fly account (isolated dev runs its own agent sandbox). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" }, "account_id": { "type": "string" }, "name": { "type": "string" }, "prod_image": { "type": "string" }, "dev_image": { "type": "string" }, "dev_cpus": { "type": "integer" }, "dev_memory": { "type": "integer" } } } }),
-        json!({ "name": "fly_machines", "description": "List provisioned Fly machines for the team (with live state when reachable).", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
-        json!({ "name": "fly_destroy", "description": "Destroy a provisioned Fly machine (and optionally its app). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "machine_id"], "properties": { "team_id": { "type": "string" }, "machine_id": { "type": "string" }, "delete_app": { "type": "boolean" } } } }),
-        json!({ "name": "domains_add", "description": "Record a custom domain mapping ({uuid}.slaver.app or custom subdomain) to a Fly app hostname or IP. You create the DNS record yourself (manual). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "project_id", "target"], "properties": { "team_id": { "type": "string" }, "project_id": { "type": "string" }, "subdomain": { "type": "string" }, "target": { "type": "string" }, "kind": { "type": "string" } } } }),
-        json!({ "name": "domains_list", "description": "List custom domains for a team.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
-        json!({ "name": "domains_remove", "description": "Remove a custom domain record (delete the DNS record yourself too). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "domain_id"], "properties": { "team_id": { "type": "string" }, "domain_id": { "type": "string" } } } }),
         json!({ "name": "licenses_list", "description": "List a team's licenses.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
-        json!({ "name": "vps_add", "description": "Register a VPS deploy target (SSH key stored server-side). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "host", "ssh_key"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "host": { "type": "string" }, "ssh_user": { "type": "string" }, "ssh_key": { "type": "string" } } } }),
-        json!({ "name": "vps_list", "description": "List a team's VPS targets (keys never leave the server).", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
-        json!({ "name": "deploy_start", "description": "Deploy a project's repo HEAD to a VPS (compose up). Runs in background; poll deployments_list. Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id", "vps_id"], "properties": { "project_id": { "type": "string" }, "vps_id": { "type": "string" } } } }),
-        json!({ "name": "deployments_list", "description": "Recent deployments of a project with logs.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
-        json!({ "name": "groups_public", "description": "List public support channels across all teams (anyone can read/post; owning teams bots reply).", "inputSchema": { "type": "object", "properties": {} } }),
-        json!({ "name": "groups_set_visibility", "description": "Make a group public (support channel) or private. Owner/admin only.", "inputSchema": { "type": "object", "required": ["group_id", "public"], "properties": { "group_id": { "type": "string" }, "public": { "type": "boolean" } } } }),
-        json!({ "name": "groups_support", "description": "Get (or, as the owning team, create) the public support channel for a repo/template.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
         json!({ "name": "oauth_clients_create", "description": "Create a Login with Slaver OAuth client for deployed apps. Owner/admin only; secret is shown once.", "inputSchema": { "type": "object", "required": ["team_id", "name", "redirect_uris"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "redirect_uris": { "type": "string", "description": "Comma-separated https:// URLs (or http://localhost)" } } } }),
         json!({ "name": "oauth_clients_list", "description": "List a team’s OAuth clients (no secrets). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
         json!({ "name": "oauth_clients_revoke", "description": "Delete an OAuth client and all its tokens. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "client_id"], "properties": { "team_id": { "type": "string" }, "client_id": { "type": "string" } } } }),
-        json!({ "name": "templates_list", "description": "List business team templates for onboarding (preset AI agent teams, e.g. Saung Rangon F&B).", "inputSchema": { "type": "object", "properties": {} } }),
-        json!({ "name": "templates_apply", "description": "Create a team from a business template, pre-staffed with preset AI agents. Returns the team and bots.", "inputSchema": { "type": "object", "required": ["template_key"], "properties": { "template_key": { "type": "string" }, "team_name": { "type": "string" } } } }),
-        json!({ "name": "connectors_add", "description": "Register a deployed app as an AI-accessible connector (the app must expose POST /mcp with tools/list + tools/call). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "name", "base_url"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "base_url": { "type": "string" }, "api_key": { "type": "string" }, "project_id": { "type": "string" } } } }),
-        json!({ "name": "connectors_list", "description": "List a team's registered app connectors.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
-        json!({ "name": "connectors_remove", "description": "Remove an app connector. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "connector_id"], "properties": { "team_id": { "type": "string" }, "connector_id": { "type": "string" } } } }),
-        json!({ "name": "connectors_call", "description": "Call a tool on an installed app through its own MCP surface. This is how agents use app features (tables, booking, stock).", "inputSchema": { "type": "object", "required": ["team_id", "connector_id", "tool"], "properties": { "team_id": { "type": "string" }, "connector_id": { "type": "string" }, "tool": { "type": "string" }, "arguments": { "type": "object" } } } }),
-        json!({ "name": "skills_list", "description": "List AI skills: public template skills plus this team's own skills. Install one onto a bot with skills_apply.", "inputSchema": { "type": "object", "properties": { "team_id": { "type": "string" } } } }),
-        json!({ "name": "skills_create", "description": "Create a team skill (role+memory pack). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "name"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "category": { "type": "string" }, "description": { "type": "string" }, "role": { "type": "string" }, "memory": { "type": "string" } } } }),
-        json!({ "name": "skills_delete", "description": "Delete a team skill (templates cannot be deleted). Owner/admin only.", "inputSchema": { "type": "object", "required": ["skill_id"], "properties": { "skill_id": { "type": "string" } } } }),
-        json!({ "name": "skills_apply", "description": "Install a skill onto a slaveBot: role becomes the bot role, memory is appended. Returns the updated bot.", "inputSchema": { "type": "object", "required": ["skill_id", "slavebot_id"], "properties": { "skill_id": { "type": "string" }, "slavebot_id": { "type": "string" } } } }),
         json!({ "name": "repos_update", "description": "Edit a marketplace listing: name, description, price (cents), category. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" }, "name": { "type": "string" }, "description": { "type": "string" }, "price_cents": { "type": "integer" }, "category": { "type": "string" } } } }),
         json!({ "name": "repos_upload", "description": "Upload a project archive (.zip / .tar.gz, base64) as the repo's new HEAD commit. For large files use POST /api/repos/{repo_id}/upload with the raw archive body. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id", "archive_base64"], "properties": { "repo_id": { "type": "string" }, "archive_base64": { "type": "string" }, "message": { "type": "string" } } } }),
         json!({ "name": "repos_import", "description": "Import a public https git repo (e.g. GitHub) into a Slaver repo, replacing its main branch. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id", "url"], "properties": { "repo_id": { "type": "string" }, "url": { "type": "string" } } } }),
@@ -139,12 +101,8 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             }
             match platform::list_projects(db, &team_id, user_id).await {
                 Ok(list) => {
-                    let mut out = Vec::new();
-                    for p in list {
-                        let stats = platform::project_stats(db, user_id, &p.id).await.unwrap_or_default();
-                        out.push(json!({ "project": p, "stats": stats }));
-                    }
-                    mcp_data(id, format!("{} project(s).", out.len()), json!({ "projects": out }))
+                    let out: Vec<Value> = list.into_iter().map(|p| json!({ "project": p })).collect();
+                    mcp_data(id, format!("{} app(s).", out.len()), json!({ "projects": out }))
                 }
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
@@ -155,10 +113,7 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
                 return Some(rpc_err(id, -32602, "project_id is required."));
             }
             match platform::get_project(db, user_id, &pid).await {
-                Ok(Some(p)) => {
-                    let stats = platform::project_stats(db, user_id, &pid).await.unwrap_or_default();
-                    mcp_data(id, p.name.clone(), json!({ "project": p, "stats": stats }))
-                }
+                Ok(Some(p)) => mcp_data(id, p.name.clone(), json!({ "project": p })),
                 Ok(None) => rpc_err(id, -32602, "Project not found."),
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
@@ -170,65 +125,6 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             }
             match platform::set_project_repo(db, user_id, &pid, &rid).await {
                 Ok(p) => mcp_data(id, "Repo attached.".to_string(), json!({ "project": p })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "issues_create" => {
-            let (pid, title) = (arg_str(args, "project_id"), arg_str(args, "title"));
-            if pid.is_empty() || title.trim().is_empty() {
-                return Some(rpc_err(id, -32602, "project_id and title are required."));
-            }
-            match platform::create_issue(db, user_id, &pid, &title, &arg_str(args, "body"), &arg_str(args, "assignee_bot_id")).await {
-                Ok(r) => mcp_data(id, "Issue created in backlog.".to_string(), json!({ "issue": r })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "issues_list" => {
-            let pid = arg_str(args, "project_id");
-            if pid.is_empty() {
-                return Some(rpc_err(id, -32602, "project_id is required."));
-            }
-            match platform::list_issues(db, user_id, &pid).await {
-                Ok(rows) => mcp_data(id, format!("{} issue(s).", rows.len()), json!({ "issues": rows })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "issues_update" => {
-            let iid = arg_str(args, "issue_id");
-            if iid.is_empty() {
-                return Some(rpc_err(id, -32602, "issue_id is required."));
-            }
-            let opt = |k: &str| {
-                let v = arg_str(args, k);
-                if v.is_empty() { None } else { Some(v) }
-            };
-            let (t, b, p, l) = (opt("title"), opt("body"), opt("priority"), opt("labels"));
-            let t = t.as_deref();
-            let b = b.as_deref();
-            let p = p.as_deref();
-            let l = l.as_deref();
-            match platform::update_issue(db, user_id, &iid, t, b, p, l).await {
-                Ok(r) => mcp_data(id, "Issue updated.".to_string(), json!({ "issue": r })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "issues_assign" => {
-            let (iid, bid) = (arg_str(args, "issue_id"), arg_str(args, "bot_id"));
-            if iid.is_empty() {
-                return Some(rpc_err(id, -32602, "issue_id is required."));
-            }
-            match platform::assign_issue(db, user_id, &iid, &bid).await {
-                Ok(r) => mcp_data(id, "Assignee updated.".to_string(), json!({ "issue": r })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "issues_move" => {
-            let (iid, st) = (arg_str(args, "issue_id"), arg_str(args, "state"));
-            if iid.is_empty() || st.is_empty() {
-                return Some(rpc_err(id, -32602, "issue_id and state are required."));
-            }
-            match platform::set_issue_state(db, user_id, &iid, &st).await {
-                Ok(r) => mcp_data(id, format!("Moved to {}.", r.state), json!({ "issue": r })),
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }
@@ -454,72 +350,6 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }
-        "vps_add" => {
-            let (team_id, host, key) = (arg_str(args, "team_id"), arg_str(args, "host"), arg_str(args, "ssh_key"));
-            if team_id.is_empty() || host.is_empty() || key.is_empty() {
-                return Some(rpc_err(id, -32602, "team_id, host, and ssh_key are required."));
-            }
-            match platform::add_vps(db, &team_id, user_id, &arg_str(args, "name"), &host, &arg_str(args, "ssh_user"), &key).await {
-                Ok(v) => mcp_data(id, format!("VPS {} registered.", v.name), json!({ "vps": v })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "vps_list" => {
-            let team_id = arg_str(args, "team_id");
-            if team_id.is_empty() {
-                return Some(rpc_err(id, -32602, "team_id is required."));
-            }
-            match platform::list_vps(db, &team_id, user_id).await {
-                Ok(rows) => mcp_data(id, format!("{} VPS target(s).", rows.len()), json!({ "vps": rows })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "deploy_start" => {
-            let (pid, vid) = (arg_str(args, "project_id"), arg_str(args, "vps_id"));
-            if pid.is_empty() || vid.is_empty() {
-                return Some(rpc_err(id, -32602, "project_id and vps_id are required."));
-            }
-            match crate::deploy::start_deploy(state.clone(), user_id.to_string(), pid, vid).await {
-                Ok(dep) => mcp_data(id, "Deploy started in background.".to_string(), json!({ "deployment": dep })),
-                Err(e) => rpc_err(id, -32602, &e),
-            }
-        }
-        "deployments_list" => {
-            let pid = arg_str(args, "project_id");
-            if pid.is_empty() {
-                return Some(rpc_err(id, -32602, "project_id is required."));
-            }
-            match platform::list_deployments(db, user_id, &pid).await {
-                Ok(rows) => mcp_data(id, format!("{} deployment(s).", rows.len()), json!({ "deployments": rows })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "groups_public" => match store::list_public_groups(db).await {
-            Ok(rows) => mcp_data(id, format!("{} public channel(s).", rows.len()), json!({ "groups": rows })),
-            Err(e) => rpc_err(id, -32000, &e.to_string()),
-        },
-        "groups_set_visibility" => {
-            let (gid, pub_) = (arg_str(args, "group_id"), args.get("public").and_then(|v| v.as_bool()).unwrap_or(false));
-            if gid.is_empty() {
-                return Some(rpc_err(id, -32602, "group_id is required."));
-            }
-            match store::set_group_visibility(db, user_id, &gid, pub_).await {
-                Ok(Some(g)) => mcp_data(id, if g.is_public != 0 { "Channel is now public.".to_string() } else { "Channel is now private.".to_string() }, json!({ "group": g })),
-                Ok(None) => rpc_err(id, -32602, "Group not found or not allowed."),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "groups_support" => {
-            let rid = arg_str(args, "repo_id");
-            if rid.is_empty() {
-                return Some(rpc_err(id, -32602, "repo_id is required."));
-            }
-            match platform::support_group_for_repo(db, user_id, &rid).await {
-                Ok(Some(g)) => mcp_data(id, "Support channel.".to_string(), json!({ "group": g })),
-                Ok(None) => rpc_err(id, -32602, "No support channel yet — ask the owning team to open one."),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
         "oauth_clients_create" => {
             let (tid, name) = (arg_str(args, "team_id"), arg_str(args, "name"));
             let uris: Vec<String> = arg_str(args, "redirect_uris")
@@ -559,168 +389,6 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }
-        "templates_list" => {
-            mcp_data(id, format!("{} template(s).", crate::team_templates::all().len()), json!({ "templates": crate::team_templates::all() }))
-        }
-        "templates_apply" => {
-            let key = arg_str(args, "template_key");
-            if key.is_empty() {
-                return Some(rpc_err(id, -32602, "template_key is required."));
-            }
-            match crate::team_templates::apply(db, user_id, &key, &arg_str(args, "team_name")).await {
-                Ok((team, bots)) => mcp_data(id, format!("Team {} ready with {} agent(s).", team.name, bots.len()), json!({ "team": team, "bots": bots })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "connectors_add" => {
-            let (tid, name, base) = (arg_str(args, "team_id"), arg_str(args, "name"), arg_str(args, "base_url"));
-            if tid.is_empty() || name.trim().is_empty() || base.trim().is_empty() {
-                return Some(rpc_err(id, -32602, "team_id, name and base_url are required."));
-            }
-            match crate::connectors::add(db, &tid, user_id, &arg_str(args, "project_id"), &name, &base, &arg_str(args, "api_key")).await {
-                Ok(c) => mcp_data(id, format!("Connector {} registered at {}.", c.name, c.base_url), json!({ "connector": c })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "connectors_list" => {
-            let tid = arg_str(args, "team_id");
-            if tid.is_empty() {
-                return Some(rpc_err(id, -32602, "team_id is required."));
-            }
-            match crate::connectors::list(db, &tid, user_id).await {
-                Ok(rows) => mcp_data(id, format!("{} connector(s).", rows.len()), json!({ "connectors": rows })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "connectors_remove" => {
-            let (tid, cid) = (arg_str(args, "team_id"), arg_str(args, "connector_id"));
-            if tid.is_empty() || cid.is_empty() {
-                return Some(rpc_err(id, -32602, "team_id and connector_id are required."));
-            }
-            match crate::connectors::remove(db, &tid, user_id, &cid).await {
-                Ok(()) => mcp_data(id, "Connector removed.".to_string(), json!({ "removed": true })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "connectors_call" => {
-            let (tid, cid, tool) = (arg_str(args, "team_id"), arg_str(args, "connector_id"), arg_str(args, "tool"));
-            if tid.is_empty() || cid.is_empty() || tool.trim().is_empty() {
-                return Some(rpc_err(id, -32602, "team_id, connector_id and tool are required."));
-            }
-            let args_v = args.get("arguments").cloned().unwrap_or(serde_json::Value::Null);
-            match crate::connectors::call_tool(db, &tid, user_id, &cid, &tool, &args_v).await {
-                Ok(v) => mcp_data(id, "App answered.".to_string(), v),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "skills_list" => {
-            let tid = arg_str(args, "team_id");
-            match crate::skills::list(db, user_id, &tid).await {
-                Ok(rows) => mcp_data(id, format!("{} skill(s).", rows.len()), json!({ "skills": rows })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "skills_create" => {
-            let (tid, name) = (arg_str(args, "team_id"), arg_str(args, "name"));
-            if tid.is_empty() || name.trim().is_empty() {
-                return Some(rpc_err(id, -32602, "team_id and name are required."));
-            }
-            match crate::skills::create(db, user_id, &tid, &name, &arg_str(args, "category"), &arg_str(args, "description"), &arg_str(args, "role"), &arg_str(args, "memory")).await {
-                Ok(s) => mcp_data(id, format!("Skill {} created.", s.name), json!({ "skill": s })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "skills_delete" => {
-            let sid = arg_str(args, "skill_id");
-            if sid.is_empty() {
-                return Some(rpc_err(id, -32602, "skill_id is required."));
-            }
-            match crate::skills::delete(db, user_id, &sid).await {
-                Ok(true) => mcp_data(id, "Skill deleted.".to_string(), json!({ "deleted": true })),
-                Ok(false) => rpc_err(id, -32602, "Skill not found."),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "skills_apply" => {
-            let (sid, bid) = (arg_str(args, "skill_id"), arg_str(args, "slavebot_id"));
-            if sid.is_empty() || bid.is_empty() {
-                return Some(rpc_err(id, -32602, "skill_id and slavebot_id are required."));
-            }
-            match crate::skills::apply_to_bot(db, user_id, &sid, &bid).await {
-                Ok(bot) => mcp_data(id, format!("Skill installed on {}.", bot.name), json!({ "slavebot": bot })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "dm_history" => {
-            let (tid, uid) = (arg_str(args, "team_id"), arg_str(args, "user_id"));
-            if tid.is_empty() || uid.is_empty() {
-                return Some(rpc_err(id, -32602, "team_id and user_id are required."));
-            }
-            match platform::dm_history_checked(db, &tid, user_id, &uid).await {
-                Ok(rows) => mcp_data(id, format!("{} message(s).", rows.len()), json!({ "messages": rows })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "dm_send" => {
-            let (tid, to, msg) = (arg_str(args, "team_id"), arg_str(args, "to_user_id"), arg_str(args, "message"));
-            if tid.is_empty() || to.is_empty() || msg.trim().is_empty() {
-                return Some(rpc_err(id, -32602, "team_id, to_user_id and message are required."));
-            }
-            match platform::dm_send_checked(db, &tid, user_id, &to, &msg).await {
-                Ok(row) => mcp_data(id, "Sent.".to_string(), json!({ "message": row })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "unread_list" => match store::unread_list(db, user_id).await {
-            Ok(rows) => {
-                let total: i64 = rows.iter().map(|r| r.unread).sum();
-                mcp_data(id, format!("{} unread in {} conversation(s).", total, rows.len()), json!({ "unread": rows }))
-            }
-            Err(e) => rpc_err(id, -32000, &e.to_string()),
-        },
-        "read_mark" => {
-            let (kind, rid) = (arg_str(args, "kind"), arg_str(args, "ref_id"));
-            let last = args.get("last_id").and_then(|v| v.as_i64()).unwrap_or(0);
-            if !["dm", "group", "meeting", "bot"].contains(&kind.as_str()) || rid.is_empty() {
-                return Some(rpc_err(id, -32602, "kind must be dm|group|meeting|bot, ref_id and last_id are required."));
-            }
-            match store::set_read(db, user_id, &kind, &arg_str(args, "team_id"), &rid, last).await {
-                Ok(()) => mcp_data(id, "Marked read.".to_string(), json!({ "marked": true })),
-                Err(e) => rpc_err(id, -32000, &e.to_string()),
-            }
-        }
-        "groups_add_user" => {
-            let (gid, uid) = (arg_str(args, "group_id"), arg_str(args, "user_id"));
-            if gid.is_empty() || uid.is_empty() {
-                return Some(rpc_err(id, -32602, "group_id and user_id are required."));
-            }
-            match platform::group_add_user(db, "", &gid, user_id, &uid).await {
-                Ok(true) => mcp_data(id, "User added.".to_string(), json!({ "added": true })),
-                Ok(false) => rpc_err(id, -32602, "Channel not found or not allowed."),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "groups_remove_user" => {
-            let (gid, uid) = (arg_str(args, "group_id"), arg_str(args, "user_id"));
-            if gid.is_empty() || uid.is_empty() {
-                return Some(rpc_err(id, -32602, "group_id and user_id are required."));
-            }
-            match platform::group_remove_user(db, &gid, user_id, &uid).await {
-                Ok(true) => mcp_data(id, "User removed.".to_string(), json!({ "removed": true })),
-                Ok(false) => rpc_err(id, -32602, "Channel not found or not allowed."),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "groups_set_project" => {
-            let (gid, pid) = (arg_str(args, "group_id"), arg_str(args, "project_id"));
-            if gid.is_empty() {
-                return Some(rpc_err(id, -32602, "group_id is required."));
-            }
-            match platform::set_group_project(db, &gid, user_id, &pid).await {
-                Ok(g) => mcp_data(id, if pid.trim().is_empty() { "Board detached.".to_string() } else { "Board attached.".to_string() }, json!({ "group": g })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
         "projects_set_urls" => {
             let pid = arg_str(args, "project_id");
             if pid.is_empty() {
@@ -730,115 +398,6 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             let dev = args.get("dev_url").and_then(|v| v.as_str());
             match platform::set_project_urls(db, user_id, &pid, prod, dev).await {
                 Ok(p) => mcp_data(id, "URLs updated.".to_string(), json!({ "project": p })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "fly_connect" => {
-            let (tid, token) = (arg_str(args, "team_id"), arg_str(args, "api_token"));
-            if tid.is_empty() || token.trim().is_empty() {
-                return Some(rpc_err(id, -32602, "team_id and api_token are required."));
-            }
-            match platform::fly_connect(db, &tid, user_id, &arg_str(args, "name"), &arg_str(args, "org"), &token).await {
-                Ok(a) => mcp_data(id, format!("Fly account {} connected.", a.name), json!({ "account": a })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "fly_accounts" => {
-            let tid = arg_str(args, "team_id");
-            if tid.is_empty() {
-                return Some(rpc_err(id, -32602, "team_id is required."));
-            }
-            match platform::fly_list(db, &tid, user_id).await {
-                Ok(rows) => mcp_data(id, format!("{} Fly account(s).", rows.len()), json!({ "accounts": rows })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "fly_disconnect" => {
-            let (tid, aid) = (arg_str(args, "team_id"), arg_str(args, "account_id"));
-            if tid.is_empty() || aid.is_empty() {
-                return Some(rpc_err(id, -32602, "team_id and account_id are required."));
-            }
-            match platform::fly_disconnect(db, &tid, user_id, &aid).await {
-                Ok(()) => mcp_data(id, "Fly account removed.".to_string(), json!({ "removed": true })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "fly_provision" => {
-            let tid = arg_str(args, "team_id");
-            let aid = arg_str(args, "account_id");
-            let slug = if arg_str(args, "name").is_empty() { arg_str(args, "slug") } else { arg_str(args, "name") };
-            if tid.is_empty() || aid.is_empty() || slug.trim().is_empty() {
-                return Some(rpc_err(id, -32602, "team_id, account_id and name (slug) are required."));
-            }
-            let prod_image = arg_str(args, "prod_image");
-            let dev_image = arg_str(args, "dev_image");
-            let dev_cpus = args.get("dev_cpus").and_then(|v| v.as_i64()).unwrap_or_else(|| args.get("dev_cpus").and_then(|v| v.as_str()).and_then(|s| s.parse().ok()).unwrap_or(2));
-            let dev_mem = args.get("dev_memory").and_then(|v| v.as_i64()).unwrap_or_else(|| args.get("dev_memory_mb").and_then(|v| v.as_i64()).unwrap_or(2048));
-            let pi = if prod_image.is_empty() { None } else { Some(prod_image.as_str()) };
-            let di = if dev_image.is_empty() { None } else { Some(dev_image.as_str()) };
-            match platform::fly_provision_team(db, &tid, user_id, &aid, &slug, pi, di, dev_cpus, dev_mem).await {
-                Ok(v) => mcp_data(id, "PROD + DEV machines provisioned.".to_string(), v),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "fly_machines" => {
-            let tid = arg_str(args, "team_id");
-            if tid.is_empty() {
-                return Some(rpc_err(id, -32602, "team_id is required."));
-            }
-            match platform::fly_machines(db, &tid, user_id).await {
-                Ok(rows) => {
-                    // Best-effort live state: refresh from Fly when a token is available.
-                    let mut out = Vec::new();
-                    for m in rows {
-                        let live = crate::fly::get_machine_by_token_for(db, &tid, &m.app_name, &m.machine_id).await.ok();
-                        let mut v = serde_json::to_value(&m).unwrap_or(serde_json::Value::Null);
-                        if let Some(st) = live { v["live"] = st; }
-                        out.push(v);
-                    }
-                    mcp_data(id, format!("{} machine(s).", out.len()), json!({ "machines": out }))
-                }
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "fly_destroy" => {
-            let (tid, mid) = (arg_str(args, "team_id"), arg_str(args, "machine_id"));
-            if tid.is_empty() || mid.is_empty() {
-                return Some(rpc_err(id, -32602, "team_id and machine_id are required."));
-            }
-            let delete_app = args.get("delete_app").and_then(|v| v.as_bool()).unwrap_or(false);
-            match platform::fly_destroy_machine(db, "", &tid, user_id, &mid, delete_app).await {
-                Ok(v) => mcp_data(id, "Machine destroyed.".to_string(), v),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "domains_add" => {
-            let (tid, target) = (arg_str(args, "team_id"), arg_str(args, "target"));
-            if tid.is_empty() || target.trim().is_empty() {
-                return Some(rpc_err(id, -32602, "team_id and target are required."));
-            }
-            match platform::domain_add(db, &tid, user_id, &arg_str(args, "project_id"), &arg_str(args, "subdomain"), &target, &arg_str(args, "kind")).await {
-                Ok(d) => mcp_data(id, format!("Domain {} mapped.", d.hostname), json!({ "domain": d })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "domains_list" => {
-            let tid = arg_str(args, "team_id");
-            if tid.is_empty() {
-                return Some(rpc_err(id, -32602, "team_id is required."));
-            }
-            match platform::domain_list(db, &tid, user_id).await {
-                Ok(rows) => mcp_data(id, format!("{} domain(s).", rows.len()), json!({ "domains": rows })),
-                Err(e) => rpc_err(id, -32602, &e.to_string()),
-            }
-        }
-        "domains_remove" => {
-            let (tid, did) = (arg_str(args, "team_id"), arg_str(args, "domain_id"));
-            if tid.is_empty() || did.is_empty() {
-                return Some(rpc_err(id, -32602, "team_id and domain_id are required."));
-            }
-            match platform::domain_remove(db, &tid, user_id, &did).await {
-                Ok(()) => mcp_data(id, "Domain removed.".to_string(), json!({ "removed": true })),
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }
