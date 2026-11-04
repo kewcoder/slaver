@@ -1,0 +1,68 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { mcp, rupiah, ensureCart, localToIso } from "../lib/mcp";
+
+const info = await mcp<any>("shop_info");
+const cartId = await ensureCart(Astro);
+const offset = Number(info.utc_offset_hours ?? 7);
+const deliveryFee = Number(info.delivery_fee_idr ?? 0);
+let error: string | null = null;
+
+if (Astro.request.method === "POST") {
+  const f = await Astro.request.formData();
+  const fulfillment = String(f.get("fulfillment")) as "pickup" | "delivery";
+  const name = String(f.get("name") ?? "").trim();
+  const phone = String(f.get("phone") ?? "").trim();
+  const address = String(f.get("address") ?? "").trim();
+  const when = String(f.get("pickup_at") ?? "");
+  try {
+    const order = await mcp<any>("order_place", {
+      cart_id: cartId,
+      fulfillment,
+      pickup_at: fulfillment === "pickup" && when ? localToIso(when, offset) : undefined,
+      address: fulfillment === "delivery" ? address : undefined,
+      note: String(f.get("note") ?? "").slice(0, 300) || undefined,
+      customer: { name, phone, address: address || undefined },
+    });
+    return Astro.redirect(`/pesanan/${order.id}`);
+  } catch (e) {
+    error = e instanceof Error ? e.message : String(e);
+  }
+}
+
+const cart = await mcp<any>("cart_get", { cart_id: cartId });
+const minDate = new Date(Date.now() + offset * 3600_000 + 15 * 60_000).toISOString().slice(0, 16);
+---
+<Layout title="Checkout" shopName={info.shop_name ?? "Toko"}>
+  <h1>Checkout</h1>
+  {error && <div class="msg">{error}</div>}
+
+  {cart.items.length === 0 ? (
+    <p class="muted">Keranjang kosong. <a href="/menu">Pilih menu dulu</a>.</p>
+  ) : (
+    <>
+      <div class="card">
+        <div class="row"><span>Subtotal</span><span>{rupiah(cart.subtotal_idr)}</span></div>
+        {cart.discount_idr > 0 && <div class="row"><span>Promo</span><span>-{rupiah(cart.discount_idr)}</span></div>}
+        <div class="row" style="font-weight:700;border:0"><span>Total barang</span><span>{rupiah(cart.total_idr)}</span></div>
+      </div>
+
+      <form method="post" class="card" style="margin-top:14px">
+        <label>
+          Jenis pesanan
+          <select name="fulfillment" id="ful">
+            <option value="pickup">Ambil di toko</option>
+            <option value="delivery">Antar ke alamat (+ {rupiah(deliveryFee)})</option>
+          </select>
+        </label>
+        <label>Nama<input name="name" required /></label>
+        <label>No. HP / WhatsApp<input name="phone" required /></label>
+        <label>Alamat (untuk antar)<input name="address" /></label>
+        <label>Waktu ambil (opsional)<input type="datetime-local" name="pickup_at" min={minDate} /></label>
+        <label>Catatan<textarea name="note" rows="2"></textarea></label>
+        <p class="muted">Pesanan dibayar setelah dikonfirmasi kasir. Stok diamankan saat checkout.</p>
+        <button>Buat pesanan</button>
+      </form>
+    </>
+  )}
+</Layout>

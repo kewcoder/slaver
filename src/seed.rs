@@ -8,7 +8,7 @@ fn new_id() -> String {
 }
 
 const SEEDS: &[(&str, &str)] = &[
-    ("resto-ops", "Resto Ops — super-app restoran dine-in: kasir + 2 area meja + booking online + stok + MCP, siap docker"),
+    ("fnb-suite", "F&B Suite — all-in-one toko makanan & minuman: menu & stok, kasir, meja + kamera AI, booking, pelanggan, promo, iklan AI, toko online, MCP; install 1 perintah"),
 ];
 
 pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, apps_dir: &str) {
@@ -69,7 +69,7 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, apps_dir: &str)
             }
         };
         let name = match *dir_name {
-            "resto-ops" => "Resto Ops",
+            "fnb-suite" => "F&B Suite",
             other => other,
         };
         if existing.iter().any(|n| n == name) {

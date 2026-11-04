@@ -1,0 +1,10 @@
+node_modules
+store/node_modules
+admin/node_modules
+store/dist
+admin/dist
+data
+test
+.git
+*.db*
+.env

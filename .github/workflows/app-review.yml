@@ -1,0 +1,34 @@
+# Submitting an app = opening a PR that adds or changes apps/<name>/.
+# The AI review runs on that PR and posts feedback as a comment.
+# Static checks always run. The AI part needs the MODEL_API_KEY repository secret
+# (Meta Model API). PRs from forks do not receive secrets, so they get static checks only.
+name: App review
+
+on:
+  pull_request:
+    paths:
+      - "apps/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.x"
+
+      - name: Review changed apps
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bun scripts/review-app.ts --changed --base "$BASE_SHA" --pr "$PR_NUMBER"

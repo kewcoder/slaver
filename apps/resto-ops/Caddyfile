@@ -1,8 +1,0 @@
-:80 {
-	root * /srv
-	file_server
-
-	handle /api/* {
-		reverse_proxy pay:3000
-	}
-}

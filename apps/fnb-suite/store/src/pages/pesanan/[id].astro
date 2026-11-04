@@ -1,0 +1,41 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import { mcp, rupiah } from "../../lib/mcp";
+
+const info = await mcp<any>("shop_info");
+const id = Astro.params.id!;
+let order: any = null;
+let error: string | null = null;
+try {
+  order = await mcp<any>("order_status", { order_id: id });
+} catch (e) {
+  error = e instanceof Error ? e.message : String(e);
+}
+
+const LABEL: Record<string, string> = {
+  pending_payment: "Menunggu pembayaran",
+  paid: "Lunas",
+  preparing: "Sedang diproses",
+  ready: "Siap diambil / diantar",
+  completed: "Selesai",
+  cancelled: "Dibatalkan",
+};
+const TONE: Record<string, string> = { pending_payment: "warn", paid: "ok", preparing: "ok", ready: "ok", completed: "ok", cancelled: "bad" };
+---
+<Layout title="Pesanan" shopName={info.shop_name ?? "Toko"}>
+  <h1>Pesanan</h1>
+  {error && <div class="msg">Pesanan tidak ditemukan.</div>}
+  {order && (
+    <div class="card">
+      <p><span class={`badge ${TONE[order.status] ?? ""}`}>{LABEL[order.status] ?? order.status}</span></p>
+      <p class="muted">No. {order.id}</p>
+      {order.items.map((i: any) => (
+        <div class="row">
+          <span>{i.qty}× {i.name}{i.addon ? ` + ${i.addon}` : ""}</span>
+        </div>
+      ))}
+      <div class="row" style="font-weight:700;border:0"><span>Total</span><span>{rupiah(order.total_idr)}</span></div>
+    </div>
+  )}
+  <p style="margin-top:16px"><a href="/menu">Kembali ke menu</a></p>
+</Layout>

@@ -1,0 +1,30 @@
+{
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@vitejs/plugin-react": "^4",
+    "typescript": "^7.0.2",
+    "vite": "^6"
+  },
+  "scripts": {
+    "setup": "bun install && bun install --cwd store && bun run build && bun run seed",
+    "seed": "bun scripts/seed-sample.ts --db ./data/fnb.db",
+    "start": "bun src/server.ts",
+    "dev": "bun --hot src/server.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p admin/tsconfig.json",
+    "build:admin": "vite build --config admin/vite.config.ts",
+    "build:store": "bun run --cwd store build",
+    "build": "bun run build:admin && bun run build:store"
+  },
+  "name": "fnb-suite",
+  "description": "All-in-one F&B app: menu, kasir, meja + kamera AI, booking, promo, iklan AI, toko online, MCP.",
+  "private": true
+}
