@@ -163,6 +163,8 @@ function AppShell() {
   const [showArchived, setShowArchived] = useState(false);
   const [sideOpen, setSideOpen] = useState(false);
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [langBusy, setLangBusy] = useState(false);
   const [dmPeer, setDmPeer] = useState<{ id: string; name: string } | null>(null);
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [teammates, setTeammates] = useState<{ id: string; name: string }[]>([]);
@@ -812,10 +814,23 @@ function AppShell() {
     }
   }
 
+  async function switchLang(l: Lang) {
+    if (l === lang || langBusy) return;
+    setLangBusy(true);
+    try {
+      setUILang(l);
+      setUser(await setUserLang(l));
+    } catch {
+      /* keep local choice even if server save fails */
+    } finally {
+      setLangBusy(false);
+    }
+  }
+
   function logout() {
+    setUserMenuOpen(false);
     autoOpenedRef.current = false;
-    stopConverse();
-    if (recorder) {
+    stopConverse();    if (recorder) {
       recorder.cancel();
       stopRecordingUi();
     }
@@ -950,9 +965,49 @@ function AppShell() {
           <button type="button" onClick={() => setView("market")} className={topBtn(view === "market")}><span aria-hidden="true">◈</span> {t("nav.market")}</button>
         </nav>
         <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800 text-sm font-bold text-zinc-200" title={user.email}>
-            {(user.name || user.email || "?").slice(0, 1).toUpperCase()}
-          </span>
+          <div className="flex rounded-md bg-zinc-800 p-0.5 text-[11px] font-bold" title={t("settings.langTitle")}>
+            {(["en", "id"] as const).map((l) => (
+              <button
+                key={l}
+                type="button"
+                disabled={langBusy}
+                onClick={() => switchLang(l)}
+                className={`rounded px-2 py-1 uppercase ${lang === l ? "bg-zinc-950 text-emerald-300" : "text-zinc-500 hover:text-zinc-200"} disabled:opacity-40`}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setUserMenuOpen((v) => !v)}
+              title={user.email}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800 text-sm font-bold text-zinc-200 hover:bg-zinc-700"
+            >
+              {(user.name || user.email || "?").slice(0, 1).toUpperCase()}
+            </button>
+            {userMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
+                <div className="absolute right-0 top-10 z-50 w-56 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-xl">
+                  <div className="border-b border-zinc-800 px-3 py-2">
+                    <div className="truncate text-sm font-semibold text-zinc-100">{user.name || user.email}</div>
+                    <div className="truncate text-[11px] text-zinc-500">{user.email}</div>
+                  </div>
+                  <div className="p-1">
+                    <button
+                      type="button"
+                      onClick={logout}
+                      className="flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-red-400"
+                    >
+                      <span aria-hidden="true">⏻</span> {t("settings.logout")}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
