@@ -674,6 +674,7 @@ export function SettingsView({
   const [createOwner, setCreateOwner] = useState(user.id);
   const [creating, setCreating] = useState(false);
   const [langBusy, setLangBusy] = useState(false);
+  const [section, setSection] = useState<"profile" | "teams" | "fly" | "dev">("profile");
 
   async function create() {
     if (creating) return;
@@ -700,10 +701,44 @@ export function SettingsView({
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-6">
+    <div className="mx-auto w-full max-w-5xl px-4 py-6">
       <h2 className="text-xl font-bold text-zinc-100">{t("settings.title")}</h2>
 
-      <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+      {/* Mobile: horizontal section tabs */}
+      <div className="mt-4 flex gap-1 overflow-x-auto md:hidden">
+        {(["profile", "teams", "fly", "dev"] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setSection(s)}
+            className={`shrink-0 rounded-md px-3 py-1.5 text-xs font-bold ${section === s ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-200"}`}
+          >
+            {s === "profile" ? t("settings.profile") : s === "teams" ? t("settings.teamsTitle") : s === "fly" ? t("settings.flyTitle") : t("settings.devTitle")}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-4 flex gap-5">
+        {/* Sub-sidebar (desktop) */}
+        <aside className="hidden w-52 shrink-0 md:block">
+          <nav className="sticky top-4 flex flex-col gap-1 rounded-xl border border-zinc-800 bg-zinc-900 p-2">
+            {(["profile", "teams", "fly", "dev"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setSection(s)}
+                className={`rounded-md px-3 py-2 text-left text-sm ${section === s ? "bg-zinc-800 font-semibold text-zinc-100" : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"}`}
+              >
+                {s === "profile" ? t("settings.profile") : s === "teams" ? t("settings.teamsTitle") : s === "fly" ? t("settings.flyTitle") : t("settings.devTitle")}
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        <div className="min-w-0 flex-1">
+      {section === "profile" && (
+      <>
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
         <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-zinc-500">{t("settings.profile")}</h3>
         <div className="flex items-center gap-3">
           <span className="flex h-11 w-11 items-center justify-center rounded-full bg-zinc-800 text-lg font-bold text-zinc-200">
@@ -754,20 +789,24 @@ export function SettingsView({
         </div>
         {!teamId && <p className="mt-1 text-xs text-amber-300">{t("settings.pickTeam")}</p>}
       </div>
+      </>
+      )}
 
-      <div className="mt-4">
-        <TeamsView
-          teams={teams}
-          teamId={teamId}
-          userId={user.id}
-          onChanged={onTeamsChanged}
-          onSelect={onPickTeam}
-        />
+      {section === "teams" && (
+      <TeamsView
+        teams={teams}
+        teamId={teamId}
+        userId={user.id}
+        onChanged={onTeamsChanged}
+        onSelect={onPickTeam}
+      />
+      )}
+
+      {section === "fly" && <FlySection teamId={teamId} />}
+
+      {section === "dev" && <DeveloperSection teamId={teamId} />}
+        </div>
       </div>
-
-      <FlySection teamId={teamId} />
-
-      <DeveloperSection teamId={teamId} />
     </div>
   );
 }

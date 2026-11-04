@@ -930,6 +930,15 @@ function AppShell() {
                   ))}
                   {teams.length === 0 && <p className="px-3 py-2 text-xs text-zinc-500">{t("nav.noTeam")}</p>}
                 </div>
+                <div className="border-t border-zinc-800 p-1">
+                  <button
+                    type="button"
+                    onClick={() => { setTeamMenuOpen(false); setView("settings"); }}
+                    className={`flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm hover:bg-zinc-800 ${view === "settings" ? "bg-zinc-800 font-semibold text-zinc-100" : "text-zinc-300"}`}
+                  >
+                    <span aria-hidden="true">⚙</span> {t("nav.settings")}
+                  </button>
+                </div>
               </div>
             </>
           )}
@@ -939,7 +948,6 @@ function AppShell() {
           <button type="button" onClick={() => setView("chat")} className={topBtn(view === "chat" || view === "group" || view === "bot" || view === "meeting" || view === "dm")}><span aria-hidden="true">💬</span> {t("nav.chat")}</button>
           <button type="button" onClick={() => setView("code")} className={topBtn(view === "code")}><span aria-hidden="true">{"</>"}</span> {t("nav.files")}</button>
           <button type="button" onClick={() => setView("market")} className={topBtn(view === "market")}><span aria-hidden="true">◈</span> {t("nav.market")}</button>
-          <button type="button" onClick={() => setView("settings")} className={topBtn(view === "settings")}><span aria-hidden="true">⚙</span> {t("nav.settings")}</button>
         </nav>
         <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800 text-sm font-bold text-zinc-200" title={user.email}>
