@@ -131,7 +131,7 @@ export function DmView({
           const mine = m.from_user_id === meId;
           return (
             <div key={m.id} className={`flex gap-3 rounded px-2 py-2 ${mine ? "flex-row-reverse text-right" : ""}`}>
-              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold ${mine ? "bg-emerald-900 text-emerald-300" : "bg-zinc-700 text-white"}`}>
+              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold ${mine ? "bg-emerald-900 text-emerald-300" : "bg-zinc-500 text-white"}`}>
                 {(mine ? t("dm.you") : m.from_name || peer.name || "?").slice(0, 1).toUpperCase()}
               </span>
               <div className={`min-w-0 max-w-[80%] ${mine ? "items-end" : ""}`}>
@@ -149,7 +149,7 @@ export function DmView({
 
       {error && <p className="py-1 text-sm text-red-400">{error}</p>}
 
-      <form onSubmit={send} className="mt-2 flex items-end gap-1 rounded-[28px] border border-zinc-700 bg-[#2b2d31] p-2 pl-4 shadow-lg focus-within:border-zinc-500">
+      <form onSubmit={send} className="mt-2 flex items-end gap-1 rounded-[28px] border border-zinc-700 bg-surface-2 p-2 pl-4 shadow-lg focus-within:border-zinc-500">
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}

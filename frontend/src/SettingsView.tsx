@@ -177,7 +177,7 @@ function TeamProviderSection({ team, onChanged }: { team: TeamDetail["team"]; on
           <input value={testModel} onChange={(e) => setTestModel(e.target.value)} placeholder={t("settings.testModelPh")} autoComplete="off" spellCheck={false} className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 font-mono text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
         </label>
         <div className="flex flex-wrap items-center gap-2">
-          <button type="submit" disabled={busy || testing} className="rounded-md bg-zinc-700 px-3 py-1.5 text-sm font-bold text-white hover:bg-zinc-600 disabled:opacity-50">
+          <button type="submit" disabled={busy || testing} className="rounded-md bg-zinc-800 px-3 py-1.5 text-sm font-bold text-zinc-100 hover:bg-zinc-700 disabled:opacity-50">
             {busy ? t("settings.saving") : t("settings.save")}
           </button>
           <button type="button" onClick={runTest} disabled={testing || busy} className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
@@ -359,7 +359,7 @@ export function TeamsView({
                 <option value="admin">admin</option>
                 <option value="staff">staff</option>
               </select>
-                <button type="submit" disabled={busy || !inviteEmail.trim()} className="rounded-md bg-zinc-700 px-3 py-2 text-sm font-bold text-white hover:bg-zinc-600 disabled:opacity-50">
+                <button type="submit" disabled={busy || !inviteEmail.trim()} className="rounded-md bg-zinc-800 px-3 py-2 text-sm font-bold text-zinc-100 hover:bg-zinc-700 disabled:opacity-50">
                   {t("settings.invite")}
                 </button>
             </form>
@@ -528,7 +528,7 @@ export function FlySection({ teamId }: { teamId: string | null }) {
         <div className="flex flex-col gap-2 sm:flex-row">
           <input value={sub} onChange={(e) => setSub(e.target.value)} placeholder={t("settings.domSubPh")} className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
           <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder={t("settings.domTargetPh")} className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 font-mono text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none" />
-          <button type="button" onClick={async () => { if (!teamId || !sub.trim() || !target.trim()) return; setError(""); try { await addDomain(teamId, { subdomain: sub.trim().toLowerCase(), target: target.trim() }); setSub(""); setTarget(""); await refresh(); } catch (err) { setError(err instanceof Error ? err.message : t("settings.domFail")); } }} className="rounded-md bg-zinc-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-zinc-600">{t("settings.domAdd")}</button>
+          <button type="button" onClick={async () => { if (!teamId || !sub.trim() || !target.trim()) return; setError(""); try { await addDomain(teamId, { subdomain: sub.trim().toLowerCase(), target: target.trim() }); setSub(""); setTarget(""); await refresh(); } catch (err) { setError(err instanceof Error ? err.message : t("settings.domFail")); } }} className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-100 hover:bg-zinc-700">{t("settings.domAdd")}</button>
         </div>
         {domains.map((d) => (
           <div key={d.id} className="mt-1 flex items-center gap-2 font-mono text-xs text-zinc-400">

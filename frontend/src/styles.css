@@ -1,33 +1,98 @@
 @import "tailwindcss";
 
-@theme {
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+/* Semantic colour tokens. Components use these (text-fg, bg-surface, border-line, text-accent…)
+   so one set of values drives both dark and light mode. */
+@theme inline {
   --font-sans: Inter, "SF Pro Display", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --color-ink-950: #090d0c;
-  --color-ink-900: #0e1412;
-  --color-ink-850: #131b18;
-  --color-ink-800: #19231f;
-  --color-ink-700: #27332e;
-  --color-mint-300: #8ce6b8;
-  --color-mint-400: #62d89d;
-  --color-mint-500: #3fc485;
+  --color-bg: var(--app-bg);
+  --color-sidebar: var(--sidebar-bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-raised);
+  --color-hover: var(--surface-hover);
+  --color-inset: var(--inset);
+  --color-line: var(--line);
+  --color-fg: var(--text);
+  --color-fg-2: var(--text-2);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-accent: var(--accent);
+  --color-accent-text: var(--accent-text);
+  --color-accent-fg: var(--accent-fg);
 }
 
+/* Dark (default): plain neutral greys, one green accent. */
 :root {
   color-scheme: dark;
   font-family: var(--font-sans);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --app-bg: #090d0c;
-  --sidebar-bg: #0c1210;
-  --surface: #111815;
-  --surface-raised: #16201b;
-  --surface-hover: #1b2721;
-  --line: rgba(218, 237, 226, 0.09);
-  --line-strong: rgba(218, 237, 226, 0.16);
-  --text: #f1f5f1;
-  --muted: #8f9d96;
-  --accent: #62d89d;
-  --accent-dark: #173d2b;
+  --app-bg: #0f0f11;
+  --sidebar-bg: #131316;
+  --surface: #17171a;
+  --surface-raised: #1d1d21;
+  --surface-hover: #242429;
+  --inset: #111113;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --text: #f4f4f5;
+  --text-2: #d4d4d8;
+  --muted: #a1a1aa;
+  --subtle: #71717a;
+  --accent: #4ade80;
+  --accent-hover: #6ee79a;
+  --accent-text: #86efac;
+  --accent-fg: #052e16;
+  --scrollbar: #333338;
+  --shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+
+/* Light: applied by data-theme="light" (set from Settings / header toggle, default follows the OS). */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --app-bg: #f6f6f7;
+  --sidebar-bg: #ffffff;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-hover: #f0f0f2;
+  --inset: #f4f4f5;
+  --line: rgba(0, 0, 0, 0.09);
+  --line-strong: rgba(0, 0, 0, 0.16);
+  --text: #18181b;
+  --text-2: #3f3f46;
+  --muted: #52525b;
+  --subtle: #71717a;
+  --accent: #16a34a;
+  --accent-hover: #15803d;
+  --accent-text: #15803d;
+  --accent-fg: #ffffff;
+  --scrollbar: #d4d4d8;
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
+
+  /* Older screens use Tailwind zinc as "dark UI" greys: flip the scale. */
+  --color-zinc-50: #09090b;
+  --color-zinc-100: #18181b;
+  --color-zinc-200: #27272a;
+  --color-zinc-300: #3f3f46;
+  --color-zinc-400: #52525b;
+  --color-zinc-500: #71717a;
+  --color-zinc-600: #a1a1aa;
+  --color-zinc-700: #d4d4d8;
+  --color-zinc-800: #e4e4e7;
+  --color-zinc-900: #f4f4f5;
+  --color-zinc-950: #fafafa;
+
+  /* Pale status text (red-300, amber-200, emerald-400…) is unreadable on white: darken it,
+     and turn the very dark tint backgrounds (…-900/950) into light tints. */
+  --color-red-100: #991b1b; --color-red-200: #991b1b; --color-red-300: #b91c1c; --color-red-400: #dc2626;
+  --color-red-900: #fecaca; --color-red-950: #fef2f2;
+  --color-amber-50: #78350f; --color-amber-100: #78350f; --color-amber-200: #92400e; --color-amber-300: #b45309;
+  --color-amber-950: #fffbeb;
+  --color-emerald-200: #065f46; --color-emerald-300: #047857; --color-emerald-400: #059669;
+  --color-emerald-900: #d1fae5; --color-emerald-950: #ecfdf5;
+  --color-teal-200: #115e59; --color-blue-300: #1d4ed8; --color-blue-400: #2563eb; --color-blue-950: #eff6ff;
+  --color-sky-400: #0284c7;
 }
 
 * {
@@ -69,7 +134,7 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid rgba(98, 216, 157, 0.75);
+  outline: 2px solid color-mix(in oklab, var(--accent) 75%, transparent);
   outline-offset: 2px;
 }
 
@@ -79,8 +144,8 @@ textarea {
 }
 
 ::selection {
-  background: rgba(98, 216, 157, 0.25);
-  color: #f4fff8;
+  background: color-mix(in oklab, var(--accent) 25%, transparent);
+  color: var(--text);
 }
 
 ::-webkit-scrollbar {
@@ -91,7 +156,7 @@ textarea {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2b3932;
+  background: var(--scrollbar);
   border: 2px solid transparent;
   border-radius: 999px;
   background-clip: padding-box;
@@ -99,20 +164,18 @@ textarea {
 
 .app-backdrop {
   background:
-    radial-gradient(circle at 82% -10%, rgba(50, 125, 87, 0.11), transparent 34rem),
-    var(--app-bg);
+var(--app-bg);
 }
 
 .surface {
   border: 1px solid var(--line);
   background: var(--surface);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.015) inset;
 }
 
 .surface-raised {
   border: 1px solid var(--line);
   background: var(--surface-raised);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow);
 }
 
 .panel-title {
@@ -132,18 +195,17 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  border: 1px solid #70dfa5;
+  border: 1px solid var(--accent);
   border-radius: 0.65rem;
-  background: #62d89d;
-  color: #092217;
+  background: var(--accent);
+  color: var(--accent-fg);
   font-size: 0.875rem;
   font-weight: 750;
   padding: 0.625rem 1rem;
-  box-shadow: 0 5px 18px rgba(45, 171, 112, 0.15);
 }
 .btn-primary:hover:not(:disabled) {
-  background: #7ce4ae;
-  border-color: #7ce4ae;
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 .btn-primary:disabled {
   cursor: not-allowed;
@@ -158,16 +220,16 @@ textarea {
   gap: 0.5rem;
   border: 1px solid var(--line-strong);
   border-radius: 0.65rem;
-  background: rgba(255, 255, 255, 0.025);
-  color: #d7e1db;
+  background: transparent;
+  color: var(--text-2);
   font-size: 0.875rem;
   font-weight: 650;
   padding: 0.625rem 1rem;
 }
 .btn-secondary:hover:not(:disabled) {
   background: var(--surface-hover);
-  border-color: rgba(218, 237, 226, 0.24);
-  color: #f4f8f5;
+  border-color: var(--line-strong);
+  color: var(--text);
 }
 .btn-secondary:disabled {
   cursor: not-allowed;
@@ -178,18 +240,18 @@ textarea {
   width: 100%;
   border: 1px solid var(--line-strong);
   border-radius: 0.65rem;
-  background: #0e1512;
+  background: var(--inset);
   color: var(--text);
   padding: 0.7rem 0.8rem;
   font-size: 0.875rem;
 }
 .field::placeholder {
-  color: #63726a;
+  color: var(--subtle);
 }
 .field:focus {
-  border-color: rgba(98, 216, 157, 0.55);
+  border-color: color-mix(in oklab, var(--accent) 60%, transparent);
   outline: none;
-  box-shadow: 0 0 0 3px rgba(98, 216, 157, 0.08);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 12%, transparent);
 }
 .field:disabled {
   opacity: 0.45;
@@ -218,7 +280,7 @@ textarea {
   gap: 0.3rem;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.025);
+  background: transparent;
   color: var(--muted);
   font-size: 0.6875rem;
   font-weight: 650;
@@ -229,18 +291,18 @@ textarea {
 .chat-composer {
   border: 1px solid var(--line-strong);
   border-radius: 1rem;
-  background: #141d19;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.2);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
 }
 .chat-composer:focus-within {
-  border-color: rgba(98, 216, 157, 0.45);
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.2), 0 0 0 3px rgba(98, 216, 157, 0.06);
+  border-color: color-mix(in oklab, var(--accent) 50%, transparent);
+  box-shadow: var(--shadow);
 }
 
 .auth-grid {
   background-image:
-    linear-gradient(rgba(140, 230, 184, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(140, 230, 184, 0.035) 1px, transparent 1px);
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
   background-size: 48px 48px;
   mask-image: linear-gradient(to bottom, black, transparent 88%);
 }
@@ -255,7 +317,7 @@ textarea {
   width: 6px;
   height: 6px;
   border-radius: 9999px;
-  background-color: #8ce6b8;
+  background-color: var(--accent);
   animation: typing-bounce 1.2s infinite ease-in-out;
 }
 .typing-dots span:nth-child(2) {
@@ -278,14 +340,14 @@ textarea {
 .loading-skeleton {
   position: relative;
   overflow: hidden;
-  background-color: #1a241f;
+  background-color: var(--surface-hover);
   border-radius: 0.5rem;
 }
 .loading-skeleton::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--text) 6%, transparent), transparent);
   animation: skeleton-shimmer 1.4s infinite;
 }
 @keyframes skeleton-shimmer {

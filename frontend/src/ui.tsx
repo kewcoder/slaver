@@ -2,6 +2,40 @@ import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { fetchAvatar, type SlaveBot } from "./api";
 import { useLang, type Lang } from "./i18n";
 
+export type Theme = "light" | "dark";
+
+/** The theme in use: a saved choice, else the OS preference. index.html applies it before first paint. */
+function currentTheme(): Theme {
+  const t = document.documentElement.dataset.theme;
+  return t === "light" ? "light" : "dark";
+}
+
+export function useTheme(): [Theme, (t: Theme) => void] {
+  const [theme, setThemeState] = useState<Theme>(currentTheme);
+  const setTheme = (t: Theme) => {
+    document.documentElement.dataset.theme = t;
+    try {
+      localStorage.setItem("slaver_theme", t);
+    } catch {
+      /* storage unavailable: still switches for this visit */
+    }
+    setThemeState(t);
+  };
+  return [theme, setTheme];
+}
+
+/** Header button: switch between dark and light. */
+export function ThemeToggle() {
+  const { t } = useLang();
+  const [theme, setTheme] = useTheme();
+  const next = theme === "dark" ? "light" : "dark";
+  return (
+    <button type="button" onClick={() => setTheme(next)} className="icon-button" title={t(next === "light" ? "theme.toLight" : "theme.toDark")} aria-label={t(next === "light" ? "theme.toLight" : "theme.toDark")}>
+      <Icon name={theme === "dark" ? "sun" : "moon"} size={17} />
+    </button>
+  );
+}
+
 const AVATAR_COLORS = [
   "bg-emerald-600",
   "bg-sky-600",
@@ -51,7 +85,7 @@ export function BotAvatar({ bot, size = "md" }: { bot: SlaveBot; size?: "sm" | "
   );
 }
 
-export type IconName = "home" | "chat" | "market" | "code" | "settings" | "users" | "plus" | "search" | "arrow" | "grid" | "chevron" | "spark" | "logout" | "globe" | "check" | "folder" | "menu" | "external" | "bot" | "upload" | "rocket" | "copy" | "git" | "tag" | "x";
+export type IconName = "home" | "chat" | "market" | "code" | "settings" | "users" | "plus" | "search" | "arrow" | "grid" | "chevron" | "spark" | "logout" | "globe" | "check" | "folder" | "menu" | "external" | "bot" | "upload" | "rocket" | "copy" | "git" | "tag" | "x" | "sun" | "moon" | "more";
 
 export function Icon({ name, size = 18, className = "" }: { name: IconName; size?: number; className?: string }) {
   const paths: Record<IconName, ReactNode> = {
@@ -79,6 +113,9 @@ export function Icon({ name, size = 18, className = "" }: { name: IconName; size
     git: <><circle cx="6" cy="6" r="2" /><circle cx="6" cy="18" r="2" /><circle cx="18" cy="9" r="2" /><path d="M6 8v8M18 11c0 4-6 3-10 6" /></>,
     tag: <><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9Z" /><circle cx="8" cy="8" r="1.5" /></>,
     x: <path d="M6 6l12 12M18 6 6 18" />,
+    sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>,
+    moon: <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" />,
+    more: <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>,
     bot: <><rect x="4" y="7" width="16" height="13" rx="3" /><path d="M12 3v4M8 12h.01M16 12h.01M9 16h6" /></>,
   };
   return (
@@ -91,13 +128,13 @@ export function Icon({ name, size = 18, className = "" }: { name: IconName; size
 export function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <span className="inline-flex items-center gap-2.5">
-      <span className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[#62d89d] text-[#0b2117] shadow-[0_8px_24px_rgba(50,180,120,0.16)]">
+      <span className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-accent text-accent-fg shadow-[0_8px_24px_rgba(50,180,120,0.16)]">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M6 7.5h8.5a3.5 3.5 0 0 1 0 7H9.5a3.5 3.5 0 0 0 0 7H18" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
           <path d="M6 3v4M4 5h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         </svg>
       </span>
-      {!compact && <span className="text-[19px] font-extrabold tracking-[-0.045em] text-[#f1f5f1]">slaver<span className="text-[#62d89d]">.</span></span>}
+      {!compact && <span className="text-[19px] font-extrabold tracking-[-0.045em] text-fg">slaver<span className="text-accent">.</span></span>}
     </span>
   );
 }
@@ -107,8 +144,8 @@ export function SectionHeading({ eyebrow, title, description, action }: { eyebro
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div className="min-w-0">
         {eyebrow && <div className="panel-title mb-1.5">{eyebrow}</div>}
-        <h2 className="page-heading text-[26px] font-bold text-[#f1f5f1]">{title}</h2>
-        {description && <p className="mt-1.5 max-w-2xl text-sm leading-6 text-[#8f9d96]">{description}</p>}
+        <h2 className="page-heading text-[26px] font-bold text-fg">{title}</h2>
+        {description && <p className="mt-1.5 max-w-2xl text-sm leading-6 text-muted">{description}</p>}
       </div>
       {action}
     </div>

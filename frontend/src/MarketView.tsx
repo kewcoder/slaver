@@ -194,29 +194,29 @@ export default function MarketView({
     const project = projectForTemplate(tpl.id);
     const mine = tpl.team_id === teamId;
     return (
-      <article key={tpl.id} className="surface flex flex-col rounded-2xl p-5 transition hover:border-white/[0.14]">
+      <article key={tpl.id} className="surface flex flex-col rounded-2xl p-5 transition hover:border-fg/[0.14]">
         <div className="flex items-start gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#213028] text-base font-black text-[#a2ecc3]">{tpl.name.slice(0, 1).toUpperCase()}</span>
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface-2 text-base font-black text-accent-text">{tpl.name.slice(0, 1).toUpperCase()}</span>
           <div className="min-w-0 flex-1">
-            <h4 className="truncate text-[15px] font-bold text-[#edf4ef]">{tpl.name}</h4>
+            <h4 className="truncate text-[15px] font-bold text-fg">{tpl.name}</h4>
             <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
               {tpl.category && <span className="soft-badge py-0.5">{tpl.category}</span>}
-              {isOwned && <span className="rounded-full bg-[#62d89d]/15 px-2 py-0.5 font-bold text-[#8ce6b8]">{t("market.owned")}</span>}
-              {mine && !isOwned && <span className="rounded-full bg-white/[0.06] px-2 py-0.5 font-bold text-[#b8c4bd]">{t("market.yours")}</span>}
+              {isOwned && <span className="rounded-full bg-accent/15 px-2 py-0.5 font-bold text-accent-text">{t("market.owned")}</span>}
+              {mine && !isOwned && <span className="rounded-full bg-fg/[0.06] px-2 py-0.5 font-bold text-fg-2">{t("market.yours")}</span>}
             </div>
           </div>
           <span className="text-right">
-            <span className="block text-lg font-bold text-[#edf4ef]">{(tpl.price_cents ?? 0) === 0 ? t("market.free") : formatPrice(tpl.price_cents)}</span>
-            <span className="block text-[10px] text-[#5f7268]">{t("market.oneTime")}</span>
+            <span className="block text-lg font-bold text-fg">{(tpl.price_cents ?? 0) === 0 ? t("market.free") : formatPrice(tpl.price_cents)}</span>
+            <span className="block text-[10px] text-subtle">{t("market.oneTime")}</span>
           </span>
         </div>
-        {tpl.description && <p className="mt-3 line-clamp-3 flex-1 text-sm leading-6 text-[#8f9d96]">{tpl.description}</p>}
-        <ul className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[#718078]">
-          <li className="flex items-center gap-1"><Icon name="check" size={12} className="text-[#62d89d]" />{t("market.featSource")}</li>
-          <li className="flex items-center gap-1"><Icon name="check" size={12} className="text-[#62d89d]" />{t("market.featHost")}</li>
-          <li className="flex items-center gap-1"><Icon name="check" size={12} className="text-[#62d89d]" />{t("market.featSupport")}</li>
+        {tpl.description && <p className="mt-3 line-clamp-3 flex-1 text-sm leading-6 text-muted">{tpl.description}</p>}
+        <ul className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-subtle">
+          <li className="flex items-center gap-1"><Icon name="check" size={12} className="text-accent" />{t("market.featSource")}</li>
+          <li className="flex items-center gap-1"><Icon name="check" size={12} className="text-accent" />{t("market.featHost")}</li>
+          <li className="flex items-center gap-1"><Icon name="check" size={12} className="text-accent" />{t("market.featSupport")}</li>
         </ul>
-        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-white/[0.06] pt-4">
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-fg/[0.06] pt-4">
           {isOwned ? (
             <>
               <button type="button" onClick={() => project && setInstallFor(project)} disabled={!project} className="btn-primary">
@@ -238,7 +238,7 @@ export default function MarketView({
               {(tpl.price_cents ?? 0) === 0 ? t("market.getFree") : `${t("market.buy")} · ${formatPrice(tpl.price_cents)}`}
             </button>
           )}
-          <button type="button" onClick={() => openSupport(tpl.id)} disabled={supportBusy === tpl.id} title={t("market.supportTitle")} className="ml-auto text-xs font-semibold text-[#82958a] hover:text-[#e8efeb] disabled:opacity-40">
+          <button type="button" onClick={() => openSupport(tpl.id)} disabled={supportBusy === tpl.id} title={t("market.supportTitle")} className="ml-auto text-xs font-semibold text-muted hover:text-fg disabled:opacity-40">
             {supportBusy === tpl.id ? t("market.supportOpening") : t("market.support")}
           </button>
         </div>
@@ -248,17 +248,17 @@ export default function MarketView({
 
   return (
     <div className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
-      <section className="relative overflow-hidden rounded-2xl border border-[#62d89d]/15 bg-gradient-to-br from-[#17251c] to-[#101713] p-6 sm:p-8">
-        <div className="pointer-events-none absolute -right-10 -top-20 h-64 w-64 rounded-full bg-[#62d89d]/[0.06] blur-3xl" />
+      <section className="relative overflow-hidden rounded-2xl border border-accent/15 bg-gradient-to-br from-surface to-bg p-6 sm:p-8">
+        <div className="pointer-events-none absolute -right-10 -top-20 h-64 w-64 rounded-full bg-accent/[0.06] blur-3xl" />
         <div className="relative grid items-center gap-6 lg:grid-cols-[1fr_auto]">
           <div className="max-w-2xl">
-            <div className="soft-badge border-[#62d89d]/20 text-[#8ce6b8]"><Icon name="spark" size={13} />{t("shell.flow")}</div>
+            <div className="soft-badge border-accent/20 text-accent-text"><Icon name="spark" size={13} />{t("shell.flow")}</div>
             <h2 className="page-heading mt-4 text-3xl font-bold sm:text-4xl">{t("market.heroTitle")}</h2>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-[#93a69a] sm:text-base sm:leading-7">{t("market.heroBody")}</p>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-muted sm:text-base sm:leading-7">{t("market.heroBody")}</p>
           </div>
-          <div className="flex flex-col gap-2 rounded-xl border border-[#62d89d]/15 bg-[#0b120e]/50 p-4 lg:min-w-[260px]">
-            <div className="panel-title text-[#62d89d]">{t("market.sellTitle")}</div>
-            <p className="text-xs leading-5 text-[#82958a]">{t("market.sellBody")}</p>
+          <div className="flex flex-col gap-2 rounded-xl border border-accent/15 bg-inset/50 p-4 lg:min-w-[260px]">
+            <div className="panel-title text-accent">{t("market.sellTitle")}</div>
+            <p className="text-xs leading-5 text-muted">{t("market.sellBody")}</p>
             <button type="button" onClick={onGoPublish} className="btn-secondary mt-1 self-start"><Icon name="upload" size={15} />{t("market.sellCta")}</button>
           </div>
         </div>
@@ -282,13 +282,13 @@ export default function MarketView({
         </div>
       )}
 
-      <nav className="mt-6 flex gap-1 overflow-x-auto rounded-xl border border-white/[0.07] bg-[#0e1512] p-1">
+      <nav className="mt-6 flex gap-1 overflow-x-auto rounded-xl border border-fg/[0.07] bg-surface p-1">
         {([
           ["templates", t("market.templates"), "grid", templates.length],
           ["licenses", t("market.mine"), "check", owned.length],
           ["skills", t("market.skillsTitle"), "spark", null],
         ] as const).map(([id, label, icon, count]) => (
-          <button key={id} type="button" onClick={() => setSection(id)} className={`flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2.5 text-xs font-bold ${section === id ? "bg-[#223229] text-[#a2ecc3]" : "text-[#718078] hover:text-[#dbe5df]"}`}>
+          <button key={id} type="button" onClick={() => setSection(id)} className={`flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2.5 text-xs font-bold ${section === id ? "bg-surface-2 text-accent-text" : "text-subtle hover:text-fg"}`}>
             <Icon name={icon} size={15} />{label}
             {count !== null && count > 0 && <span className="rounded-full bg-black/30 px-1.5 text-[10px]">{count}</span>}
           </button>
@@ -299,13 +299,13 @@ export default function MarketView({
         <>
           <div className="mt-5 flex flex-wrap items-center gap-2">
             <label className="relative min-w-[220px] flex-1 sm:max-w-sm">
-              <Icon name="search" size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#5f7268]" />
+              <Icon name="search" size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-subtle" />
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("market.searchPh")} className="field pl-9" />
             </label>
             {categories.length > 0 && (
               <div className="flex gap-1 overflow-x-auto">
                 {["", ...categories].map((c) => (
-                  <button key={c || "all"} type="button" onClick={() => setCategory(c)} className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold ${category === c ? "border-[#62d89d]/40 bg-[#62d89d]/10 text-[#a2ecc3]" : "border-white/[0.08] text-[#8f9d96] hover:text-[#e8efeb]"}`}>
+                  <button key={c || "all"} type="button" onClick={() => setCategory(c)} className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold ${category === c ? "border-accent/40 bg-accent/10 text-accent-text" : "border-fg/[0.08] text-muted hover:text-fg"}`}>
                     {c || t("market.allCats")}
                   </button>
                 ))}
@@ -313,7 +313,7 @@ export default function MarketView({
             )}
           </div>
           {shown.length === 0 ? (
-            <p className="surface mt-5 rounded-2xl p-10 text-center text-sm text-[#82958a]">{templates.length === 0 ? t("market.noTemplates") : t("market.noMatch")}</p>
+            <p className="surface mt-5 rounded-2xl p-10 text-center text-sm text-muted">{templates.length === 0 ? t("market.noTemplates") : t("market.noMatch")}</p>
           ) : (
             <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{shown.map(appCard)}</div>
           )}
@@ -323,17 +323,17 @@ export default function MarketView({
       {section === "licenses" && (
         <div className="mt-5">
           {!teamId ? (
-            <p className="text-sm text-[#82958a]">{t("market.minePick")}</p>
+            <p className="text-sm text-muted">{t("market.minePick")}</p>
           ) : owned.length === 0 ? (
             <div className="surface rounded-2xl p-10 text-center">
-              <p className="text-sm text-[#82958a]">{t("market.mineEmpty")}</p>
+              <p className="text-sm text-muted">{t("market.mineEmpty")}</p>
               <button type="button" onClick={() => setSection("templates")} className="btn-primary mt-4">{t("apps.emptyMarket")}<Icon name="arrow" size={15} /></button>
             </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{owned.map(appCard)}</div>
           )}
           {licenses.length > 0 && (
-            <p className="mt-4 text-[11px] text-[#5f7268]">
+            <p className="mt-4 text-[11px] text-subtle">
               {licenses.filter((l) => l.status === "active").map((l) => `${templates.find((x) => x.id === l.repo_id)?.name ?? l.repo_id.slice(0, 8)} · ${t("market.until")} ${l.support_until || "—"}`).join("  ·  ")}
             </p>
           )}
@@ -342,7 +342,7 @@ export default function MarketView({
 
       {section === "skills" && (
         <div className="mt-5">
-          <p className="mb-4 max-w-2xl text-sm leading-6 text-[#8f9d96]">{t("market.skillsBody")}</p>
+          <p className="mb-4 max-w-2xl text-sm leading-6 text-muted">{t("market.skillsBody")}</p>
           <SkillsGrid teamId={teamId} />
         </div>
       )}

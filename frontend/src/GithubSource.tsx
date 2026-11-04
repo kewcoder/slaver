@@ -138,7 +138,7 @@ export default function GithubSource({
   const msgs = (
     <>
       {error && <p className="text-xs text-red-300">{error}</p>}
-      {notice && <p className="text-xs text-[#a2ecc3]">{notice}</p>}
+      {notice && <p className="text-xs text-accent-text">{notice}</p>}
     </>
   );
 
@@ -146,15 +146,15 @@ export default function GithubSource({
   if (link) {
     return (
       <div className="flex flex-col gap-3">
-        <div className="rounded-xl border border-[#62d89d]/20 bg-[#62d89d]/[0.05] p-3">
+        <div className="rounded-xl border border-accent/20 bg-accent/[0.05] p-3">
           <div className="flex items-center gap-2">
-            <Icon name="git" size={15} className="text-[#62d89d]" />
-            <a href={`https://github.com/${link.github_repo}`} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate font-mono text-xs font-bold text-[#e8efeb] hover:underline">
+            <Icon name="git" size={15} className="text-accent" />
+            <a href={`https://github.com/${link.github_repo}`} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate font-mono text-xs font-bold text-fg hover:underline">
               {link.github_repo}
             </a>
             <span className="soft-badge py-0.5 font-mono">{link.github_branch}</span>
           </div>
-          <div className="mt-1.5 text-[11px] text-[#82958a]">{t("gh.lastSync", { ago: ago(link.github_synced_at) })} · {t("gh.autoSync")}</div>
+          <div className="mt-1.5 text-[11px] text-muted">{t("gh.lastSync", { ago: ago(link.github_synced_at) })} · {t("gh.autoSync")}</div>
           {link.github_error && <div className="mt-1.5 text-[11px] text-red-300">{link.github_error}</div>}
         </div>
         {canManage && (
@@ -172,7 +172,7 @@ export default function GithubSource({
   if (accounts.length === 0) {
     return (
       <div className="flex flex-col gap-3">
-        <p className="text-xs leading-5 text-[#82958a]">{t("gh.connectHelp")}</p>
+        <p className="text-xs leading-5 text-muted">{t("gh.connectHelp")}</p>
         {canManage && (
           <div className="flex flex-wrap gap-2">
             {oauth && <button type="button" onClick={connectOauth} disabled={!!busy} className="btn-primary">{busy === "oauth" ? <Spinner /> : <Icon name="git" size={15} />}{t("gh.connect")}</button>}
@@ -182,10 +182,10 @@ export default function GithubSource({
           </div>
         )}
         {showPat && (
-          <form onSubmit={connectPat} className="flex flex-col gap-2 rounded-xl border border-white/[0.08] bg-[#0d1411] p-3">
-            <p className="text-[11px] leading-5 text-[#82958a]">
+          <form onSubmit={connectPat} className="flex flex-col gap-2 rounded-xl border border-fg/[0.08] bg-surface p-3">
+            <p className="text-[11px] leading-5 text-muted">
               {t("gh.patHelp")}{" "}
-              <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer" className="font-semibold text-[#8ce6b8] hover:underline">{t("gh.patCreate")} ↗</a>
+              <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer" className="font-semibold text-accent-text hover:underline">{t("gh.patCreate")} ↗</a>
             </p>
             <div className="flex flex-wrap gap-2">
               <input type="password" value={pat} onChange={(e) => setPat(e.target.value)} autoComplete="off" placeholder="github_pat_…" className="field min-w-[200px] flex-1 font-mono text-xs" />
@@ -201,44 +201,44 @@ export default function GithubSource({
   // Connected: pick a repo.
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2 text-[11px] text-[#82958a]">
+      <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
         <span>{t("gh.connectedAs")}</span>
         {accounts.length > 1 ? (
           <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="field w-auto py-1 text-xs">
             {accounts.map((a) => <option key={a.id} value={a.id}>@{a.login}</option>)}
           </select>
         ) : (
-          <span className="font-semibold text-[#e8efeb]">@{accounts[0].login}</span>
+          <span className="font-semibold text-fg">@{accounts[0].login}</span>
         )}
         {canManage && (
-          <button type="button" onClick={() => { if (window.confirm(t("gh.disconnectConfirm"))) void run("dc", async () => { await githubDisconnect(teamId, accountId); await load(); }); }} className="ml-auto text-[#718078] hover:text-red-300">
+          <button type="button" onClick={() => { if (window.confirm(t("gh.disconnectConfirm"))) void run("dc", async () => { await githubDisconnect(teamId, accountId); await load(); }); }} className="ml-auto text-subtle hover:text-red-300">
             {t("host.disconnect")}
           </button>
         )}
       </div>
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("gh.searchPh")} className="field text-xs" />
-      <div className="max-h-56 overflow-y-auto rounded-lg border border-white/[0.06] bg-[#0b110e]">
+      <div className="max-h-56 overflow-y-auto rounded-lg border border-fg/[0.06] bg-inset">
         {repos === null ? (
-          <div className="flex items-center gap-2 p-3 text-xs text-[#82958a]"><Spinner />{t("common.loading")}</div>
+          <div className="flex items-center gap-2 p-3 text-xs text-muted"><Spinner />{t("common.loading")}</div>
         ) : filtered.length === 0 ? (
-          <div className="p-3 text-xs text-[#82958a]">{t("gh.noRepos")}</div>
+          <div className="p-3 text-xs text-muted">{t("gh.noRepos")}</div>
         ) : (
           filtered.map((r) => (
             <button
               key={r.full_name}
               type="button"
               onClick={() => { setPick(r); setBranch(r.default_branch); }}
-              className={`flex w-full items-center gap-2 border-b border-white/[0.04] px-3 py-2 text-left last:border-0 ${pick?.full_name === r.full_name ? "bg-[#62d89d]/[0.08]" : "hover:bg-white/[0.03]"}`}
+              className={`flex w-full items-center gap-2 border-b border-fg/[0.04] px-3 py-2 text-left last:border-0 ${pick?.full_name === r.full_name ? "bg-accent/[0.08]" : "hover:bg-fg/[0.03]"}`}
             >
-              <span className="min-w-0 flex-1 truncate font-mono text-xs text-[#e8efeb]">{r.full_name}</span>
-              {r.private && <span className="rounded-full bg-white/[0.06] px-1.5 text-[10px] font-semibold text-[#b8c4bd]">{t("gh.private")}</span>}
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">{r.full_name}</span>
+              {r.private && <span className="rounded-full bg-fg/[0.06] px-1.5 text-[10px] font-semibold text-fg-2">{t("gh.private")}</span>}
             </button>
           ))
         )}
       </div>
       {pick && (
         <div className="flex flex-wrap items-end gap-2">
-          <label className="text-xs font-semibold text-[#b8c4bd]">
+          <label className="text-xs font-semibold text-fg-2">
             {t("gh.branch")}
             <input value={branch} onChange={(e) => setBranch(e.target.value)} className="field mt-1.5 w-40 font-mono text-xs" />
           </label>

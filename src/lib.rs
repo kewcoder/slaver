@@ -20,6 +20,7 @@ pub mod platform;
 pub mod platform_api;
 pub mod pricing;
 pub mod provider;
+pub mod review;
 pub mod schedule;
 pub mod seed;
 pub mod skills;

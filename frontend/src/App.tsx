@@ -93,7 +93,7 @@ import {
   type TeamTemplate,
   type User,
 } from "./api";
-import { ArrowUpIcon, BotAvatar, Brand, Icon, MicIcon, PlusIcon, Spinner, TypingDots, WaveIcon, dayKey, dayLabel, renderMentions, type IconName } from "./ui";
+import { ArrowUpIcon, BotAvatar, Brand, Icon, MicIcon, PlusIcon, Spinner, ThemeToggle, TypingDots, WaveIcon, dayKey, dayLabel, renderMentions, type IconName } from "./ui";
 import { AuthView, OnboardingView } from "./AuthView";
 import { BotView } from "./BotView";
 import { GroupView } from "./GroupView";
@@ -893,7 +893,7 @@ function AppShell() {
         type="button"
         onClick={() => openBot(b.id)}
         title={(b.role ? `${b.role} — ` : "") + (b.title || b.name) + (partner ? ` ${t("top.partnerTag", { name: partner })}` : "")}
-        className={`group flex items-center gap-2.5 rounded-xl border px-2.5 py-2 text-left ${b.id === botId && view === "chat" ? "border-[#62d89d]/20 bg-[#62d89d]/[0.08]" : "border-transparent hover:border-white/[0.06] hover:bg-white/[0.035]"} ${indented ? "ml-5 border-l border-l-white/10" : ""}`}
+        className={`group flex items-center gap-2.5 rounded-xl border px-2.5 py-2 text-left ${b.id === botId && view === "chat" ? "border-accent/20 bg-accent/[0.08]" : "border-transparent hover:border-fg/[0.06] hover:bg-fg/[0.035]"} ${indented ? "ml-5 border-l border-l-white/10" : ""}`}
       >
         <span className="relative shrink-0">
           <BotAvatar bot={b} size="sm" />
@@ -919,19 +919,18 @@ function AppShell() {
   }
 
   const topBtn = (active: boolean) =>
-    `flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-[13px] font-semibold ${active ? "bg-[#1c2922] text-[#a2ecc3] shadow-[0_0_0_1px_rgba(98,216,157,0.12)_inset]" : "text-[#8f9d96] hover:bg-white/[0.04] hover:text-[#edf4ef]"}`;
+    `flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-[13px] font-semibold ${active ? "bg-surface-2 text-accent-text " : "text-muted hover:bg-fg/[0.04] hover:text-fg"}`;
 
   const isConversationView = view === "chat" || view === "group" || view === "meeting" || view === "bot" || view === "dm";
   const activeTeam = teams.find((team) => team.id === teamId);
   const navItems: { id: "apps" | "chat" | "publish" | "market"; icon: IconName; label: string; active: boolean; badge?: number }[] = [
     { id: "apps", icon: "home", label: t("nav.apps"), active: view === "apps", badge: updateCount },
-    { id: "chat", icon: "chat", label: t("nav.chat"), active: isConversationView },
     { id: "market", icon: "market", label: t("nav.market"), active: view === "market" },
     { id: "publish", icon: "upload", label: t("nav.publish"), active: view === "publish" },
   ];
 
   const pageMeta = (() => {
-    if (view === "apps") return { title: t("apps.title"), sub: t("apps.sub") };
+    if (view === "apps") return { title: t("apps.title"), sub: activeTeam?.name ?? t("shell.workspace") };
     if (view === "settings") return { title: t("settings.title"), sub: activeTeam?.name ?? t("shell.workspace") };
     if (view === "publish") return { title: t("pub.title"), sub: t("shell.publishSub") };
     if (view === "market") return { title: t("market.title"), sub: t("shell.marketSub") };
@@ -941,6 +940,46 @@ function AppShell() {
     if (view === "bot" && bot) return { title: bot.name, sub: t("top.botSettings") };
     return { title: bot?.name ?? t("nav.chat"), sub: bot?.role || bot?.title || t("shell.chatSub") };
   })();
+
+  function teamMenuPanel(pos: string) {
+    return (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setTeamMenuOpen(false)} />
+              <div className={`surface-raised ${pos} z-50 overflow-hidden rounded-xl`}>
+                <div className="border-b border-fg/[0.07] px-3 py-2.5 panel-title">{t("nav.teamsTitle")}</div>
+                <div className="max-h-64 overflow-y-auto p-1.5">
+                  {teams.map((team) => (
+                    <button
+                      key={team.id}
+                      type="button"
+                      onClick={() => pickTeam(team.id)}
+                      className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left hover:bg-fg/[0.05] ${team.id === teamId ? "bg-accent/[0.07]" : ""}`}
+                    >
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-xs font-black text-accent-text">
+                        {team.name.slice(0, 1).toUpperCase()}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold text-fg">{team.name}</span>
+                        <span className="block text-[11px] text-subtle">{team.role}</span>
+                      </span>
+                      {team.id === teamId && <Icon name="check" size={15} className="text-accent" />}
+                    </button>
+                  ))}
+                  {teams.length === 0 && <p className="px-3 py-2 text-xs text-subtle">{t("nav.noTeam")}</p>}
+                </div>
+                <div className="border-t border-fg/[0.07] p-1.5">
+                  <button
+                    type="button"
+                    onClick={() => goTo("settings")}
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-fg/[0.05] ${view === "settings" ? "bg-accent/[0.08] font-semibold text-accent-text" : "text-fg-2"}`}
+                  >
+                    <Icon name="settings" size={16} /> {t("nav.settings")}
+                  </button>
+                </div>
+              </div>
+            </>
+    );
+  }
 
   function mainNav(mobile = false) {
     return navItems.map((item) => (
@@ -954,26 +993,41 @@ function AppShell() {
 
 
   return (
-    <div className="app-backdrop flex h-dvh flex-col text-[#f1f5f1]">
+    <div className="app-backdrop flex h-dvh flex-col text-fg">
       {/* Global navigation */}
-      <header className="flex h-16 shrink-0 items-center gap-2 border-b border-white/[0.07] bg-[#0b100e]/95 px-3 backdrop-blur-xl sm:px-5">
-        <button type="button" onClick={() => setSideOpen((v) => !v)} title={t("nav.conversations")} className="icon-button md:hidden">
+      <header className="flex h-16 shrink-0 items-center gap-2 border-b border-fg/[0.07] bg-sidebar/95 px-3 backdrop-blur-xl sm:px-5">
+        {isConversationView && <button type="button" onClick={() => setSideOpen((v) => !v)} title={t("nav.conversations")} className="icon-button md:hidden">
           <Icon name="menu" size={20} />
-        </button>
+        </button>}
         <div className="mr-2 hidden sm:block"><Brand /></div>
         <div className="sm:hidden"><Brand compact /></div>
         <nav className="flex min-w-0 flex-1 items-center justify-center gap-1 overflow-x-auto">
           {mainNav()}
         </nav>
         <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
-          <div className="flex rounded-lg border border-white/[0.07] bg-white/[0.025] p-0.5 text-[10px] font-bold" title={t("settings.langTitle")}>
+          {!isConversationView && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setTeamMenuOpen((v) => !v)}
+                title={activeTeam?.name ? t("nav.changeTeam", { name: activeTeam.name }) : t("nav.pickTeam")}
+                className="flex max-w-[180px] items-center gap-2 rounded-lg border border-line px-2.5 py-1.5 text-sm font-semibold text-fg-2 hover:bg-hover hover:text-fg"
+              >
+                <span className="truncate">{activeTeam?.name ?? t("nav.pickTeam")}</span>
+                <Icon name="chevron" size={14} className="shrink-0 text-subtle" />
+              </button>
+              {teamMenuOpen && teamMenuPanel("absolute right-0 top-11 w-64")}
+            </div>
+          )}
+          <ThemeToggle />
+          <div className="flex rounded-lg border border-fg/[0.07] bg-fg/[0.025] p-0.5 text-[10px] font-bold" title={t("settings.langTitle")}>
             {(["en", "id"] as const).map((l) => (
               <button
                 key={l}
                 type="button"
                 disabled={langBusy}
                 onClick={() => switchLang(l)}
-                className={`rounded-md px-2 py-1.5 uppercase ${lang === l ? "bg-[#223229] text-[#8ce6b8]" : "text-[#718078] hover:text-[#e5ede8]"} disabled:opacity-40`}
+                className={`rounded-md px-2 py-1.5 uppercase ${lang === l ? "bg-surface-2 text-accent-text" : "text-subtle hover:text-fg"} disabled:opacity-40`}
               >
                 {l}
               </button>
@@ -984,7 +1038,7 @@ function AppShell() {
               type="button"
               onClick={() => setUserMenuOpen((v) => !v)}
               title={user.email}
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-[#1b2821] text-sm font-bold text-[#b9e7cd] hover:border-[#62d89d]/35 hover:bg-[#23362a]"
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-fg/10 bg-surface-2 text-sm font-bold text-accent-text hover:border-accent/35 hover:bg-surface-2"
             >
               {(user.name || user.email || "?").slice(0, 1).toUpperCase()}
             </button>
@@ -1000,7 +1054,7 @@ function AppShell() {
                     <button
                       type="button"
                       onClick={logout}
-                      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-[#b8c4bd] hover:bg-white/[0.05] hover:text-red-300"
+                      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-fg-2 hover:bg-fg/[0.05] hover:text-red-300"
                     >
                       <Icon name="logout" size={16} /> {t("settings.logout")}
                     </button>
@@ -1016,60 +1070,25 @@ function AppShell() {
       {sideOpen && (
         <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setSideOpen(false)} />
       )}
-      <aside className={`${sideOpen ? "fixed inset-y-0 left-0 z-40 flex w-[290px]" : "hidden"} shrink-0 flex-col border-r border-white/[0.07] bg-[#0c1210] md:static md:flex md:w-[264px]`}>
-        <div className="relative border-b border-white/[0.07] p-3">
+      {isConversationView && (
+      <aside className={`${sideOpen ? "fixed inset-y-0 left-0 z-40 flex w-[290px]" : "hidden"} shrink-0 flex-col border-r border-fg/[0.07] bg-sidebar md:static md:flex md:w-[264px]`}>
+        <div className="relative border-b border-fg/[0.07] p-3">
           <button
             type="button"
             onClick={() => setTeamMenuOpen((v) => !v)}
             title={activeTeam?.name ? t("nav.changeTeam", { name: activeTeam.name }) : t("nav.pickTeam")}
-            className="flex w-full items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.025] p-2.5 text-left hover:border-white/[0.14] hover:bg-white/[0.045]"
+            className="flex w-full items-center gap-3 rounded-xl border border-fg/[0.08] bg-fg/[0.025] p-2.5 text-left hover:border-fg/[0.14] hover:bg-fg/[0.045]"
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#244431] text-sm font-black text-[#a2ecc3]">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-sm font-black text-accent-text">
               {(activeTeam?.name || "S").slice(0, 1).toUpperCase()}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-bold text-[#e9f0ec]">{activeTeam?.name ?? t("nav.pickTeam")}</span>
-              <span className="mt-0.5 block text-[11px] capitalize text-[#718078]">{activeTeam?.role ?? t("shell.workspace")}</span>
+              <span className="block truncate text-sm font-bold text-fg">{activeTeam?.name ?? t("nav.pickTeam")}</span>
+              <span className="mt-0.5 block text-[11px] capitalize text-subtle">{activeTeam?.role ?? t("shell.workspace")}</span>
             </span>
-            <Icon name="chevron" size={16} className="text-[#718078]" />
+            <Icon name="chevron" size={16} className="text-subtle" />
           </button>
-          {teamMenuOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setTeamMenuOpen(false)} />
-              <div className="surface-raised absolute left-3 right-3 top-[72px] z-50 overflow-hidden rounded-xl">
-                <div className="border-b border-white/[0.07] px-3 py-2.5 panel-title">{t("nav.teamsTitle")}</div>
-                <div className="max-h-64 overflow-y-auto p-1.5">
-                  {teams.map((team) => (
-                    <button
-                      key={team.id}
-                      type="button"
-                      onClick={() => pickTeam(team.id)}
-                      className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left hover:bg-white/[0.05] ${team.id === teamId ? "bg-[#62d89d]/[0.07]" : ""}`}
-                    >
-                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#244431] text-xs font-black text-[#a2ecc3]">
-                        {team.name.slice(0, 1).toUpperCase()}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-semibold text-[#e8efeb]">{team.name}</span>
-                        <span className="block text-[11px] text-[#718078]">{team.role}</span>
-                      </span>
-                      {team.id === teamId && <Icon name="check" size={15} className="text-[#62d89d]" />}
-                    </button>
-                  ))}
-                  {teams.length === 0 && <p className="px-3 py-2 text-xs text-[#718078]">{t("nav.noTeam")}</p>}
-                </div>
-                <div className="border-t border-white/[0.07] p-1.5">
-                  <button
-                    type="button"
-                    onClick={() => goTo("settings")}
-                    className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm hover:bg-white/[0.05] ${view === "settings" ? "bg-[#62d89d]/[0.08] font-semibold text-[#a2ecc3]" : "text-[#b8c4bd]"}`}
-                  >
-                    <Icon name="settings" size={16} /> {t("nav.settings")}
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
+          {teamMenuOpen && teamMenuPanel("absolute left-3 right-3 top-[72px]")}
         </div>
 
         {isConversationView ? (
@@ -1206,11 +1225,11 @@ function AppShell() {
         </>
         ) : (
           <div className="flex flex-1 flex-col justify-between p-3">
-            <div className="rounded-2xl border border-[#62d89d]/15 bg-gradient-to-b from-[#62d89d]/[0.07] to-transparent p-4">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#62d89d]/10 text-[#8ce6b8]"><Icon name="spark" size={18} /></span>
-              <h3 className="mt-4 text-sm font-bold leading-5 text-[#e4ede8]">{t("shell.ownershipTitle")}</h3>
-              <p className="mt-2 text-xs leading-5 text-[#82958a]">{t("shell.ownershipBody")}</p>
-              <div className="mt-4 border-t border-[#62d89d]/10 pt-3 font-mono text-[10px] font-semibold text-[#62d89d]">{t("shell.flow")}</div>
+            <div className="rounded-2xl border border-accent/15 bg-gradient-to-b from-accent/[0.07] to-transparent p-4">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent/10 text-accent-text"><Icon name="spark" size={18} /></span>
+              <h3 className="mt-4 text-sm font-bold leading-5 text-fg">{t("shell.ownershipTitle")}</h3>
+              <p className="mt-2 text-xs leading-5 text-muted">{t("shell.ownershipBody")}</p>
+              <div className="mt-4 border-t border-accent/10 pt-3 font-mono text-[10px] font-semibold text-accent">{t("shell.flow")}</div>
             </div>
             {view !== "market" && (
               <button type="button" onClick={() => goTo("market")} className="btn-secondary mt-3 w-full text-xs">
@@ -1220,10 +1239,11 @@ function AppShell() {
           </div>
         )}
       </aside>
+      )}
 
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col bg-transparent">
-        <header className="flex min-h-[76px] shrink-0 items-center justify-between gap-3 border-b border-white/[0.07] bg-[#0d1310]/70 px-4 py-3 backdrop-blur-sm md:px-6">
+        <header className="flex min-h-[76px] shrink-0 items-center justify-between gap-3 border-b border-fg/[0.07] bg-surface/70 px-4 py-3 backdrop-blur-sm md:px-6">
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               {view === "bot" && bot && (
@@ -1231,25 +1251,25 @@ function AppShell() {
                   <Icon name="arrow" size={16} className="rotate-180" />
                 </button>
               )}
-              <h1 className="page-heading truncate text-lg font-bold text-[#eef4f0]">{pageMeta.title}</h1>
+              <h1 className="page-heading truncate text-lg font-bold text-fg">{pageMeta.title}</h1>
               {view === "chat" && bot && (
                 <button type="button" onClick={() => goTo("bot")} title={t("top.botSettings")} className="icon-button h-7 w-7">
                   <Icon name="settings" size={15} />
                 </button>
               )}
             </div>
-            <p className="mt-0.5 truncate text-xs text-[#718078]">{pageMeta.sub}</p>
+            <p className="mt-0.5 truncate text-xs text-subtle">{pageMeta.sub}</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {isConversationView && (
-              <span className="soft-badge hidden border-[#62d89d]/15 text-[#8ce6b8] sm:inline-flex"><span className="h-1.5 w-1.5 rounded-full bg-[#62d89d]" />{t("nav.online")}</span>
+              <span className="soft-badge hidden border-accent/15 text-accent-text sm:inline-flex"><span className="h-1.5 w-1.5 rounded-full bg-accent" />{t("nav.online")}</span>
             )}
             {(view === "chat" || view === "bot") && (
               <button
                 type="button"
                 onClick={() => { if (voiceOn) stopSpeaking(); setVoiceOn((v) => !v); }}
                 title={t("top.voiceTitle")}
-                className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${voiceOn ? "border-[#62d89d]/25 bg-[#62d89d]/[0.06] text-[#8ce6b8]" : "border-white/10 text-[#718078]"}`}
+                className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${voiceOn ? "border-accent/25 bg-accent/[0.06] text-accent-text" : "border-fg/10 text-subtle"}`}
               >
                 {voiceOn ? t("top.voiceOn") : t("top.voiceOff")}
               </button>
@@ -1436,7 +1456,7 @@ function AppShell() {
             {error && <p className="mx-auto w-full max-w-3xl px-4 text-sm text-red-400">{error}</p>}
 
             <div className="px-4 pb-4">
-              <form onSubmit={send} className="mx-auto flex max-w-3xl items-end gap-1 rounded-[28px] border border-zinc-700 bg-[#2b2d31] p-2 pl-2 shadow-lg focus-within:border-zinc-500">
+              <form onSubmit={send} className="mx-auto flex max-w-3xl items-end gap-1 rounded-[28px] border border-zinc-700 bg-surface-2 p-2 pl-2 shadow-lg focus-within:border-zinc-500">
                 <div className="relative shrink-0">
                   <button
                     type="button"

@@ -107,3 +107,36 @@ pub async fn git_show(root: &str, repo_id: &str, commit: &str) -> Result<String,
     }
     Ok(text)
 }
+
+/// Files at HEAD with their blob sizes (path, bytes). Empty when the repo has no commits.
+pub async fn git_tree_files(root: &str, repo_id: &str) -> Result<Vec<(String, u64)>, String> {
+    let b = bare(root, repo_id)?;
+    let out = git(&b, &["ls-tree", "-r", "-l", "-z", "HEAD"]).await?;
+    if !out.status.success() {
+        return Ok(vec![]);
+    }
+    let mut files = Vec::new();
+    for entry in out.stdout.split(|c| *c == 0) {
+        let line = String::from_utf8_lossy(entry);
+        // "<mode> blob <sha> <size>\t<path>"
+        let Some((meta, path)) = line.split_once('\t') else { continue };
+        let parts: Vec<&str> = meta.split_whitespace().collect();
+        if parts.get(1) != Some(&"blob") {
+            continue;
+        }
+        let size = parts.get(3).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+        files.push((path.to_string(), size));
+    }
+    Ok(files)
+}
+
+/// Text content of one file at HEAD (None when missing or not UTF-8).
+pub async fn git_read_file(root: &str, repo_id: &str, path: &str) -> Result<Option<String>, String> {
+    let b = bare(root, repo_id)?;
+    let spec = format!("HEAD:{path}");
+    let out = git(&b, &["show", &spec]).await?;
+    if !out.status.success() {
+        return Ok(None);
+    }
+    Ok(String::from_utf8(out.stdout).ok())
+}

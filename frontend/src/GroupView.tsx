@@ -253,7 +253,7 @@ export function GroupView({
                 {m.slavebot_id ? (
                   <BotAvatar bot={({ id: m.slavebot_id, name: m.bot_name ?? "?", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", relay: 1, user_id: "u", team_id: "", avatar_key: bots.find((b) => b.id === m.slavebot_id)?.avatar_key ?? "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" }) as SlaveBot} size="sm" />
                 ) : (
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-600 text-sm font-bold text-white">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-500 text-sm font-bold text-white">
                     {((m.user_id && m.user_id !== meId ? m.user_name : t("common.you")) || "?").slice(0, 1).toUpperCase()}
                   </div>
                 )}
@@ -281,7 +281,7 @@ export function GroupView({
         )}
         {error && <p className="py-1 text-sm text-red-400">{error}</p>}
         {savedNote && <p className="py-1 text-sm text-emerald-400">{savedNote}</p>}
-        <form onSubmit={sendTask} className="mt-2 flex items-end gap-1 rounded-[28px] border border-zinc-700 bg-[#2b2d31] p-2 pl-4 shadow-lg focus-within:border-zinc-500">
+        <form onSubmit={sendTask} className="mt-2 flex items-end gap-1 rounded-[28px] border border-zinc-700 bg-surface-2 p-2 pl-4 shadow-lg focus-within:border-zinc-500">
           <textarea
             value={task}
             onChange={(e) => setTask(e.target.value)}

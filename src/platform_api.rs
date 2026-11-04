@@ -52,6 +52,8 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "repos_diff", "description": "Show a commit (or working diff vs HEAD).", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" }, "commit": { "type": "string" } } } }),
         json!({ "name": "repos_fork", "description": "Fork a template repo into your team.", "inputSchema": { "type": "object", "required": ["repo_id", "team_id"], "properties": { "repo_id": { "type": "string" }, "team_id": { "type": "string" } } } }),
         json!({ "name": "repos_publish", "description": "Publish/unpublish a team repo as a marketplace template. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id", "template"], "properties": { "repo_id": { "type": "string" }, "template": { "type": "boolean" } } } }),
+        json!({ "name": "listing_review_run", "description": "Request a marketplace listing: a Meta model reviews the repo's current code (plus static checks for secrets/README) and returns a score, strengths, must-fix items and suggestions. The listing can go live only when the review is approved. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" }, "lang": { "type": "string", "enum": ["id", "en"] } } } }),
+        json!({ "name": "listing_review_get", "description": "Latest listing review of a repo (current=true when it matches the current version), or null.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
         json!({ "name": "repos_delete", "description": "Delete a team repo and its data. Owner/admin only; templates cannot be deleted.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
         json!({ "name": "licenses_buy", "description": "Buy a perpetual license for a template (mock checkout), auto-forks the repo and creates a project. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "repo_id"], "properties": { "team_id": { "type": "string" }, "repo_id": { "type": "string" }, "provider": { "type": "string" } } } }),
         json!({ "name": "licenses_checkout", "description": "Start a HitPay checkout for a template license. Returns a payment URL (or instant mock license when HitPay is not configured). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "repo_id"], "properties": { "team_id": { "type": "string" }, "repo_id": { "type": "string" } } } }),
@@ -328,6 +330,33 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }
+        "listing_review_run" | "listing_review_get" => {
+            let rid = arg_str(args, "repo_id");
+            if rid.is_empty() {
+                return Some(rpc_err(id, -32602, "repo_id is required."));
+            }
+            let git_root = state.git_root.to_string_lossy().to_string();
+            let r = match platform::get_repo(db, user_id, &rid).await {
+                Ok(Some(r)) => r,
+                Ok(None) => return Some(rpc_err(id, -32602, "Repo not found.")),
+                Err(e) => return Some(rpc_err(id, -32602, &e.to_string())),
+            };
+            if name == "listing_review_get" {
+                return Some(match crate::review::latest(db, &git_root, &rid).await {
+                    Ok(rev) => mcp_data(id, "Latest listing review.".to_string(), json!({ "review": rev })),
+                    Err(e) => rpc_err(id, -32602, &e),
+                });
+            }
+            match store::membership(db, &r.team_id, user_id).await {
+                Ok(Some(role)) if role == "owner" || role == "admin" => {}
+                _ => return Some(rpc_err(id, -32602, "Only owners and admins can request a listing.")),
+            }
+            let lang = if arg_str(args, "lang") == "en" { "en" } else { "id" };
+            match crate::review::run(db, &git_root, &rid, &r.team_id, &r.name, &r.description, lang).await {
+                Ok(rev) => mcp_data(id, format!("Review done: {}.", rev.verdict), json!({ "review": rev })),
+                Err(e) => rpc_err(id, -32602, &e),
+            }
+        }
         "repos_publish" => {
             let rid = arg_str(args, "repo_id");
             if rid.is_empty() {
@@ -339,6 +368,11 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
                     match store::membership(db, &r.team_id, user_id).await {
                         Ok(Some(role)) if role == "owner" || role == "admin" => {}
                         _ => return Some(rpc_err(id, -32602, "Only owners and admins can publish.")),
+                    }
+                    if tpl && r.template == 0 {
+                        if let Err(e) = crate::review::ensure_approved(db, &state.git_root.to_string_lossy(), &rid).await {
+                            return Some(rpc_err(id, -32602, &e));
+                        }
                     }
                     match platform::mark_template(db, &rid, tpl).await {
                         Ok(()) => mcp_data(id, if tpl { "Published as template.".to_string() } else { "Unpublished.".to_string() }, json!({ "published": tpl })),

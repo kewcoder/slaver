@@ -1003,6 +1003,36 @@ export async function forkRepo(repoId: string, teamId: string): Promise<Repo> {
   return data.repo;
 }
 
+export interface ReviewCheck {
+  level: "must" | "suggest" | "ok";
+  name: string;
+  detail: string;
+}
+
+export interface ListingReview {
+  id: string;
+  repo_id: string;
+  commit_sha: string;
+  verdict: "approved" | "changes";
+  score: number | null;
+  model: string;
+  checks: ReviewCheck[];
+  ai: { score: number | null; summary: string; strengths: string[]; must_fix: string[]; suggestions: string[] } | null;
+  ai_error: string;
+  files_reviewed: string[];
+  created_at: string;
+  current: boolean;
+}
+
+/** Ask the Meta model to review the listing's current code. Slow (up to ~1 min). */
+export async function runListingReview(repoId: string, lang: string): Promise<ListingReview> {
+  return (await callTool<{ review: ListingReview }>("listing_review_run", { repo_id: repoId, lang })).review;
+}
+
+export async function fetchListingReview(repoId: string): Promise<ListingReview | null> {
+  return (await callTool<{ review: ListingReview | null }>("listing_review_get", { repo_id: repoId })).review;
+}
+
 export async function publishRepo(repoId: string, template: boolean): Promise<void> {
   await callTool("repos_publish", { repo_id: repoId, template });
 }

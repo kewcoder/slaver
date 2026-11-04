@@ -279,7 +279,7 @@ export function MeetingView({
             {m.slavebot_id ? (
               <BotAvatar bot={avatarFor(m.slavebot_id, m.bot_name)} size="sm" />
             ) : (
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-600 text-sm font-bold text-white">{t("common.you").slice(0, 1).toUpperCase()}</div>
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-500 text-sm font-bold text-white">{t("common.you").slice(0, 1).toUpperCase()}</div>
             )}
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2">
@@ -296,7 +296,7 @@ export function MeetingView({
       {error && <p className="py-1 text-sm text-red-400">{error}</p>}
       {savedNote && <p className="py-1 text-sm text-emerald-400">{savedNote}</p>}
 
-      <form onSubmit={sendTask} className="mt-2 flex items-end gap-1 rounded-[28px] border border-zinc-700 bg-[#2b2d31] p-2 pl-4 shadow-lg focus-within:border-zinc-500">
+      <form onSubmit={sendTask} className="mt-2 flex items-end gap-1 rounded-[28px] border border-zinc-700 bg-surface-2 p-2 pl-4 shadow-lg focus-within:border-zinc-500">
         <textarea
           value={task}
           onChange={(e) => setTask(e.target.value)}
