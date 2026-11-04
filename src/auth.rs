@@ -13,6 +13,16 @@ struct UserRow {
     name: String,
     password_salt: String,
     password_hash: String,
+    #[serde(default)]
+    lang: String,
+}
+
+/// UI language codes supported by the app. Anything else falls back to English.
+pub fn norm_lang(raw: &str) -> String {
+    match raw.trim().to_lowercase().as_str() {
+        "id" | "id-id" | "in" => "id".to_string(),
+        _ => "en".to_string(),
+    }
 }
 
 fn b64url(data: &[u8]) -> String {
@@ -102,8 +112,8 @@ pub struct AuthUser {
     pub user: serde_json::Value,
 }
 
-fn user_json(id: &str, email: &str, name: &str) -> serde_json::Value {
-    serde_json::json!({ "id": id, "email": email, "name": name })
+fn user_json(id: &str, email: &str, name: &str, lang: &str) -> serde_json::Value {
+    serde_json::json!({ "id": id, "email": email, "name": name, "lang": norm_lang(lang) })
 }
 
 /// Core registration (used by the auth.register MCP tool).
@@ -123,7 +133,7 @@ pub async fn register_core(
         return Err("Password must be at least 8 characters.".to_string());
     }
     let existing: Option<UserRow> = db
-        .prepare("SELECT id, email, name, password_salt, password_hash FROM users WHERE email = ?")
+        .prepare("SELECT id, email, name, password_salt, password_hash, lang FROM users WHERE email = ?")
         .bind(&[v_text(&email)])
         .map_err(|e| e.to_string())?
         .first(None)
@@ -148,7 +158,7 @@ pub async fn register_core(
         .await
         .map_err(|e| e.to_string())?;
     let token = sign_jwt(secret, &id, &email).map_err(|e| e.to_string())?;
-    Ok(AuthUser { token, user: user_json(&id, &email, &name) })
+    Ok(AuthUser { token, user: user_json(&id, &email, &name, "en") })
 }
 
 /// Core login (used by the auth.login MCP tool).
@@ -163,7 +173,7 @@ pub async fn login_core(
         return Err("Email and password are required.".to_string());
     }
     let row: Option<UserRow> = db
-        .prepare("SELECT id, email, name, password_salt, password_hash FROM users WHERE email = ?")
+        .prepare("SELECT id, email, name, password_salt, password_hash, lang FROM users WHERE email = ?")
         .bind(&[v_text(&email)])
         .map_err(|e| e.to_string())?
         .first(None)
@@ -174,20 +184,32 @@ pub async fn login_core(
         return Err("Wrong email or password.".to_string());
     }
     let token = sign_jwt(secret, &row.id, &row.email).map_err(|e| e.to_string())?;
-    Ok(AuthUser { token, user: user_json(&row.id, &row.email, &row.name) })
+    Ok(AuthUser { token, user: user_json(&row.id, &row.email, &row.name, &row.lang) })
 }
 
 /// Core profile fetch (used by the auth.me MCP tool).
 pub async fn me_core(db: &Db, user_id: &str) -> Result<serde_json::Value, String> {
     let row: Option<crate::store::UserRecord> = db
-        .prepare("SELECT id, email, name FROM users WHERE id = ?")
+        .prepare("SELECT id, email, name, lang FROM users WHERE id = ?")
         .bind(&[v_text(user_id)])
         .map_err(|e| e.to_string())?
         .first(None)
         .await
         .map_err(|e| e.to_string())?;
-    row.map(|v| user_json(&v.id, &v.email, &v.name))
+    row.map(|v| user_json(&v.id, &v.email, &v.name, &v.lang))
         .ok_or_else(|| "User not found.".to_string())
+}
+
+/// Core UI-language update (used by the user_set_lang MCP tool).
+pub async fn set_lang_core(db: &Db, user_id: &str, lang: &str) -> Result<serde_json::Value, String> {
+    let lang = norm_lang(lang);
+    db.prepare("UPDATE users SET lang = ? WHERE id = ?")
+        .bind(&[v_text(&lang), v_text(user_id)])
+        .map_err(|e| e.to_string())?
+        .run()
+        .await
+        .map_err(|e| e.to_string())?;
+    me_core(db, user_id).await
 }
 
 fn uuid() -> String {

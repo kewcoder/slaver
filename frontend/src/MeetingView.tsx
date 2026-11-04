@@ -12,6 +12,7 @@ import {
   type MeetingMessage,
   type SlaveBot,
 } from "./api";
+import { useLang } from "./i18n";
 
 export function MeetingView({
   meetingId,
@@ -34,6 +35,7 @@ export function MeetingView({
   onOpenBot: (id: string) => void;
   onMarked: () => void;
 }) {
+  const { t } = useLang();
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [topic, setTopic] = useState("");
   const [picked, setPicked] = useState<string[] | null>(null);
@@ -64,7 +66,7 @@ export function MeetingView({
         onMarked();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load meeting.");
+      setError(err instanceof Error ? err.message : t("mtg.errLoad"));
     }
   }, [meetingId, onMarked]);
 
@@ -135,7 +137,7 @@ export function MeetingView({
       setPicked(null);
       await onCreated(created.meeting.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start meeting.");
+      setError(err instanceof Error ? err.message : t("mtg.errStart"));
     } finally {
       setBusy(false);
     }
@@ -150,23 +152,23 @@ export function MeetingView({
     try {
       const res = await meetingChat(detail.meeting.id, task.trim());
       setTask("");
-      setSavedNote(`Dijawab ${res.replies.length} asisten · ${formatUsd(res.total_cost_usd)}`);
+      setSavedNote(t("mtg.heard").replace("{n}", String(res.replies.length)).replace("{cost}", formatUsd(res.total_cost_usd)));
       await load();
       await onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Meeting chat failed.");
+      setError(err instanceof Error ? err.message : t("mtg.errChat"));
     } finally {
       setBusy(false);
     }
   }
 
   async function remove() {
-    if (!detail || !window.confirm(`Delete meeting "${detail.meeting.topic}"?`)) return;
+    if (!detail || !window.confirm(t("mtg.deleteConfirm").replace("{name}", detail.meeting.topic))) return;
     try {
       await deleteMeeting(detail.meeting.id);
       await onDeleted();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not delete meeting.");
+      setError(err instanceof Error ? err.message : t("mtg.errDelete"));
     }
   }
 
@@ -174,27 +176,26 @@ export function MeetingView({
     return (
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-6">
         <div>
-          <h2 className="text-xl font-bold">Mulai rapat</h2>
+          <h2 className="text-xl font-bold">{t("mtg.newTitle")}</h2>
           <p className="mt-1 text-sm text-zinc-400">
-            Beri tahu asisten tentang suatu topik. Masing-masing membaca tugasnya lalu memutuskan ikut atau tidak.
-            Maksimal 8 asisten per rapat.
+            {t("mtg.newBody")}
           </p>
         </div>
-        {activeBots.length === 0 && <p className="text-sm text-zinc-400">Buat asisten dulu — belum ada yang bisa diajak rapat.</p>}
+        {activeBots.length === 0 && <p className="text-sm text-zinc-400">{t("mtg.noBots")}</p>}
         <form onSubmit={start} className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
           <label className="text-sm font-semibold text-zinc-300">
-            Topik
+            {t("mtg.topic")}
             <input
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
-              placeholder="cth. Rencana promo akhir pekan"
+              placeholder={t("mtg.topicPh")}
               maxLength={500}
               className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
             />
           </label>
           {activeBots.length > 0 && (
             <div className="text-sm">
-              <div className="mb-1 font-semibold text-zinc-300">Beri tahu (masing-masing memutuskan ikut/tidak)</div>
+              <div className="mb-1 font-semibold text-zinc-300">{t("mtg.notify")}</div>
               <div className="flex flex-col gap-1">
                 {activeBots.map((b) => (
                   <label key={b.id} className="flex cursor-pointer items-center gap-2 text-zinc-200">
@@ -209,7 +210,7 @@ export function MeetingView({
           )}
           {error && <p className="text-sm text-red-400">{error}</p>}
           <button type="submit" disabled={busy || !topic.trim() || selected.length === 0} className="self-start rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
-            {busy ? "Menanyakan asisten..." : "Mulai rapat"}
+            {busy ? t("mtg.starting") : t("mtg.start")}
           </button>
         </form>
       </div>
@@ -218,7 +219,7 @@ export function MeetingView({
 
   if (!detail) {
     return (
-      <div className="mx-auto w-full max-w-3xl space-y-2 p-8" aria-label="Loading meeting">
+      <div className="mx-auto w-full max-w-3xl space-y-2 p-8" aria-label={t("common.loading")}>
         <div className="loading-skeleton h-8 w-1/3" />
         <div className="loading-skeleton h-24 w-full" />
         <div className="loading-skeleton h-24 w-full" />
@@ -235,7 +236,7 @@ export function MeetingView({
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-lg font-bold">{detail.meeting.topic}</h2>
           <button type="button" onClick={remove} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400">
-            Hapus
+            {t("mtg.delete")}
           </button>
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -244,7 +245,7 @@ export function MeetingView({
               key={p.slavebot_id}
               type="button"
               onClick={() => onOpenBot(p.slavebot_id)}
-              title={p.reason || "ikut"}
+              title={p.reason || t("mtg.joined")}
               className="flex items-center gap-1.5 rounded-full border border-emerald-800 bg-emerald-950 py-1 pl-1 pr-2 text-sm hover:bg-emerald-900"
             >
               <BotAvatar bot={avatarFor(p.slavebot_id, p.bot_name)} size="sm" />
@@ -256,7 +257,7 @@ export function MeetingView({
               key={p.slavebot_id}
               type="button"
               onClick={() => onOpenBot(p.slavebot_id)}
-              title={p.reason ? `Tidak ikut: ${p.reason}` : "Tidak ikut"}
+              title={p.reason ? t("mtg.declinedReason").replace("{reason}", p.reason) : t("mtg.declined")}
               className="flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900 py-1 pl-1 pr-2 text-sm opacity-70 hover:opacity-100"
             >
               <BotAvatar bot={avatarFor(p.slavebot_id, p.bot_name)} size="sm" />
@@ -265,24 +266,24 @@ export function MeetingView({
           ))}
         </div>
         {declined.length > 0 && (
-          <p className="mt-1 text-xs text-zinc-500">Arahkan kursor ke yang tidak ikut untuk tahu alasannya.</p>
+          <p className="mt-1 text-xs text-zinc-500">{t("mtg.declinedHint")}</p>
         )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {detail.messages.length === 0 && (
-          <p className="py-8 text-center text-zinc-500">Asisten yang ikut sudah siap. Sapa mereka untuk mulai diskusi.</p>
+          <p className="py-8 text-center text-zinc-500">{t("mtg.empty")}</p>
         )}
         {detail.messages.map((m) => (
           <div key={m.id} className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
             {m.slavebot_id ? (
               <BotAvatar bot={avatarFor(m.slavebot_id, m.bot_name)} size="sm" />
             ) : (
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-600 text-sm font-bold text-white">Y</div>
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-600 text-sm font-bold text-white">{t("common.you").slice(0, 1).toUpperCase()}</div>
             )}
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2">
-                <span className="text-sm font-bold">{m.slavebot_id ? (m.bot_name ?? "Asisten") : "Anda"}</span>
+                <span className="text-sm font-bold">{m.slavebot_id ? (m.bot_name ?? t("chat.assistantFallback")) : t("common.you")}</span>
                 <span className="text-xs text-zinc-500">{new Date(m.created_at).toLocaleString()}</span>
               </div>
               <div className="whitespace-pre-wrap break-words text-[15px] text-zinc-200">{m.content}</div>
@@ -305,12 +306,12 @@ export function MeetingView({
               sendTask();
             }
           }}
-          placeholder={joined.length === 0 ? "Nobody joined — nothing to discuss" : "Talk to the bots that joined..."}
+          placeholder={joined.length === 0 ? t("mtg.noJoinPh") : t("mtg.sendPlaceholder")}
           rows={1}
           disabled={busy || joined.length === 0}
           className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
         />
-        <button type="submit" disabled={!task.trim() || busy} title="Send" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500">
+        <button type="submit" disabled={!task.trim() || busy} title={t("chat.send")} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500">
           {busy ? <Spinner /> : <ArrowUpIcon />}
         </button>
       </form>

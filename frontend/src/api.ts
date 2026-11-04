@@ -6,6 +6,7 @@ export interface User {
   id: string;
   email: string;
   name: string;
+  lang?: string;
 }
 
 export interface ProviderInfo {
@@ -327,6 +328,11 @@ export async function login(email: string, password: string): Promise<{ token: s
 
 export async function fetchMe(): Promise<User> {
   const data = await callTool<{ user: User }>("auth_me");
+  return data.user;
+}
+
+export async function setUserLang(lang: string): Promise<User> {
+  const data = await callTool<{ user: User }>("user_set_lang", { lang });
   return data.user;
 }
 

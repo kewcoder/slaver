@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchDmHistory, markRead, sendDm, type DirectMessage, type InboxEvent } from "./api";
+import { useLang } from "./i18n";
 import { ArrowUpIcon, Spinner } from "./ui";
 
 /** User-to-user direct messages. Live via inbox SSE (feed prop). */
@@ -16,6 +17,7 @@ export function DmView({
   feed: InboxEvent | null;
   onMarked: () => void;
 }) {
+  const { t } = useLang();
   const [messages, setMessages] = useState<DirectMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -36,7 +38,7 @@ export function DmView({
         onMarked();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Tidak bisa memuat chat.");
+      setError(err instanceof Error ? err.message : t("dm.errLoad"));
     }
   }, [teamId, peer.id, onMarked]);
 
@@ -100,7 +102,7 @@ export function DmView({
         onMarked();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Gagal mengirim.");
+      setError(err instanceof Error ? err.message : t("dm.errSend"));
       setInput(text);
     } finally {
       setBusy(false);
@@ -117,24 +119,24 @@ export function DmView({
         </span>
         <div className="min-w-0">
           <div className="truncate font-bold text-zinc-100">{peer.name}</div>
-          <div className="text-xs text-zinc-500">Chat langsung · otomatis tersimpan sebagai dibaca</div>
+          <div className="text-xs text-zinc-500">{t("dm.title")}</div>
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {messages.length === 0 && (
-          <p className="py-8 text-center text-zinc-500">Belum ada pesan. Sapa {peer.name} duluan 👋</p>
+          <p className="py-8 text-center text-zinc-500">{t("dm.empty").replace("{name}", peer.name)}</p>
         )}
         {messages.map((m) => {
           const mine = m.from_user_id === meId;
           return (
             <div key={m.id} className={`flex gap-3 rounded px-2 py-2 ${mine ? "flex-row-reverse text-right" : ""}`}>
               <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold ${mine ? "bg-emerald-900 text-emerald-300" : "bg-zinc-700 text-white"}`}>
-                {(mine ? "Anda" : m.from_name || peer.name || "?").slice(0, 1).toUpperCase()}
+                {(mine ? t("dm.you") : m.from_name || peer.name || "?").slice(0, 1).toUpperCase()}
               </span>
               <div className={`min-w-0 max-w-[80%] ${mine ? "items-end" : ""}`}>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-sm font-bold">{mine ? "Anda" : m.from_name || peer.name}</span>
+                  <span className="text-sm font-bold">{mine ? t("dm.you") : m.from_name || peer.name}</span>
                   <span className="text-xs text-zinc-500">{m.created_at ? new Date(m.created_at).toLocaleString() : ""}</span>
                 </div>
                 <div className="whitespace-pre-wrap break-words text-[15px] text-zinc-200">{m.content}</div>
@@ -157,12 +159,12 @@ export function DmView({
               send();
             }
           }}
-          placeholder={`Pesan untuk ${peer.name}… (live)`}
+          placeholder={t("dm.input").replace("{name}", peer.name)}
           rows={1}
           disabled={busy}
           className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
         />
-        <button type="submit" disabled={!input.trim() || busy} title="Kirim" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500">
+        <button type="submit" disabled={!input.trim() || busy} title={t("dm.send")} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500">
           {busy ? <Spinner /> : <ArrowUpIcon />}
         </button>
       </form>

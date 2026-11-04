@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import KanbanBoard from "./KanbanBoard";
+import { useLang } from "./i18n";
 import { ArrowUpIcon, BotAvatar, Spinner } from "./ui";
 import {
   addGroupMembers,
@@ -40,6 +41,7 @@ export function GroupView({
   onVisibilityChanged: () => void;
   onMarked: () => void;
 }) {
+  const { t } = useLang();
   const [detail, setDetail] = useState<GroupDetail | null>(null);
   const [task, setTask] = useState("");
   const [renaming, setRenaming] = useState(false);
@@ -71,7 +73,7 @@ export function GroupView({
         onMarked();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load group.");
+      setError(err instanceof Error ? err.message : t("chat.errLoad"));
     }
   }, [groupId, onMarked]);
 
@@ -132,7 +134,7 @@ export function GroupView({
       await groupChat(groupId, text);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Group chat failed.");
+      setError(err instanceof Error ? err.message : t("chat.errChat"));
     } finally {
       setBusy(false);
     }
@@ -144,9 +146,9 @@ export function GroupView({
     setSavedNote("");
     try {
       await appendMemory(botId, content.slice(0, 2000));
-      setSavedNote(`Tersimpan di ingatan ${botName ?? "asisten"}.`);
+      setSavedNote(t("chat.savedMemory").replace("{name}", botName ?? t("chat.assistantFallback")));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save to memory.");
+      setError(err instanceof Error ? err.message : t("chat.errMemory"));
     }
   }
 
@@ -161,7 +163,7 @@ export function GroupView({
       setAddOpen(false);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not add member.");
+      setError(err instanceof Error ? err.message : t("chat.errAdd"));
     } finally {
       setBusy(false);
     }
@@ -177,17 +179,17 @@ export function GroupView({
       await removeGroupMember(groupId, botId);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not remove member.");
+      setError(err instanceof Error ? err.message : t("chat.errRemove"));
     }
   }
 
   async function doDelete() {
-    if (!window.confirm("Delete this group? Its discussion history will be gone.")) return;
+    if (!window.confirm(t("chat.deleteConfirm"))) return;
     try {
       await deleteGroup(groupId);
       onDeleted();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not delete group.");
+      setError(err instanceof Error ? err.message : t("chat.errDelete"));
     }
   }
 
@@ -208,7 +210,7 @@ export function GroupView({
     try {
       setDetail({ ...(detail as GroupDetail), group: await setGroupProject(groupId, pid) });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not attach board (owner/admin only).");
+      setError(err instanceof Error ? err.message : t("chat.errAttach"));
     } finally {
       setAttachBusy(false);
     }
@@ -225,7 +227,7 @@ export function GroupView({
       setDetail({ ...(detail as GroupDetail), group: await setGroupProject(groupId, p.id) });
       void loadTeamProjects();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create board.");
+      setError(err instanceof Error ? err.message : t("chat.errBoard"));
     } finally {
       setAttachBusy(false);
     }
@@ -243,30 +245,30 @@ export function GroupView({
       <>
         {!minimized && (
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {detail.messages.length === 0 && (
-              <p className="py-8 text-center text-zinc-500">Belum ada obrolan. Beri tugas ke tim di bawah.</p>
-            )}
-            {detail.messages.map((m) => (
+          {detail.messages.length === 0 && (
+            <p className="py-8 text-center text-zinc-500">{t("chat.noDiscussion")}</p>
+          )}
+          {detail.messages.map((m) => (
               <div key={m.id} className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
                 {m.slavebot_id ? (
                   <BotAvatar bot={({ id: m.slavebot_id, name: m.bot_name ?? "?", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", relay: 1, user_id: "u", team_id: "", avatar_key: bots.find((b) => b.id === m.slavebot_id)?.avatar_key ?? "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" }) as SlaveBot} size="sm" />
                 ) : (
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-600 text-sm font-bold text-white">
-                    {((m.user_id && m.user_id !== meId ? m.user_name : "Anda") || "?").slice(0, 1).toUpperCase()}
+                    {((m.user_id && m.user_id !== meId ? m.user_name : t("common.you")) || "?").slice(0, 1).toUpperCase()}
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">
-                    <span className="text-sm font-bold">{m.slavebot_id ? (m.bot_name ?? "Asisten") : m.user_id && m.user_id !== meId ? (m.user_name || "Rekan") : "Anda"}</span>
+                    <span className="text-sm font-bold">{m.slavebot_id ? (m.bot_name ?? t("chat.assistantFallback")) : m.user_id && m.user_id !== meId ? (m.user_name || t("chat.peerFallback")) : t("common.you")}</span>
                     <span className="text-xs text-zinc-500">{new Date(m.created_at).toLocaleString()}</span>
                     {m.slavebot_id && (
                       <button
                         type="button"
                         onClick={() => saveReply(m.slavebot_id, m.bot_name, m.content)}
-                        title="Simpan jawaban ini ke ingatan asisten"
+                        title={t("chat.saveMemoryTitle")}
                         className="rounded px-1 text-xs text-zinc-500 hover:bg-zinc-700 hover:text-emerald-400"
                       >
-                        Simpan ke ingatan
+                        {t("chat.saveMemory")}
                       </button>
                     )}
                   </div>
@@ -289,12 +291,12 @@ export function GroupView({
                 sendTask();
               }
             }}
-            placeholder="Tulis pesan untuk grup… (otomatis diingat semua asisten)"
+            placeholder={t("chat.groupPlaceholderLive")}
             rows={1}
             disabled={busy}
             className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
           />
-          <button type="submit" disabled={!task.trim() || busy} title="Kirim" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500">
+          <button type="submit" disabled={!task.trim() || busy} title={t("chat.send")} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500">
             {busy ? <Spinner /> : <ArrowUpIcon />}
           </button>
         </form>
@@ -304,7 +306,7 @@ export function GroupView({
 
   if (!detail) {
     return (
-      <div className="mx-auto w-full max-w-3xl space-y-2 p-8" aria-label="Loading group">
+      <div className="mx-auto w-full max-w-3xl space-y-2 p-8" aria-label={t("common.loading")}>
         <div className="loading-skeleton h-8 w-1/3" />
         <div className="loading-skeleton h-24 w-full" />
         <div className="loading-skeleton h-24 w-full" />
@@ -319,7 +321,7 @@ export function GroupView({
         <div className="mb-2 flex items-center justify-between gap-2">
           {renaming ? (
             <form
-              onSubmit={(e) => { e.preventDefault(); if (newName.trim()) void (async () => { try { await renameGroup(groupId, newName.trim()); setRenaming(false); await refresh(); } catch (err) { setError(err instanceof Error ? err.message : "Could not rename group."); } })(); }}
+              onSubmit={(e) => { e.preventDefault(); if (newName.trim()) void (async () => { try { await renameGroup(groupId, newName.trim()); setRenaming(false); await refresh(); } catch (err) { setError(err instanceof Error ? err.message : t("chat.errRename")); } })(); }}
               className="flex min-w-0 flex-1 items-center gap-2"
             >
               <input
@@ -331,31 +333,31 @@ export function GroupView({
                 className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none"
               />
               <button type="submit" disabled={!newName.trim()} className="shrink-0 rounded-md bg-emerald-600 px-2 py-1 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
-                Save
+                {t("chat.save")}
               </button>
               <button type="button" onClick={() => setRenaming(false)} className="shrink-0 rounded px-1 text-xs text-zinc-400 hover:text-zinc-200">
-                Cancel
+                {t("chat.cancel")}
               </button>
             </form>
           ) : (
             <button
               type="button"
               onClick={() => { setNewName(detail.group.name); setRenaming(true); }}
-              title="Rename group"
+              title={t("chat.renameTitle")}
               className="min-w-0 flex-1 truncate rounded px-1 text-left font-bold text-zinc-100 hover:bg-zinc-800"
             >
               {detail.group.name}
             </button>
           )}
           {!renaming && detail.group.is_public ? (
-            <span title="Grup bantuan umum — terlihat semua orang" className="shrink-0 rounded border border-emerald-700 px-2 py-0.5 text-[11px] font-bold text-emerald-400">
-              BANTUAN UMUM
+            <span title={t("chat.supportBadgeTitle")} className="shrink-0 rounded border border-emerald-700 px-2 py-0.5 text-[11px] font-bold text-emerald-400">
+              {t("chat.supportBadge")}
             </span>
           ) : null}
           {!renaming && (
             <div className="flex shrink-0 items-center">
-              <button type="button" onClick={() => { setNewName(detail.group.name); setRenaming(true); }} title="Ganti nama grup" className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200">
-                Ganti nama
+              <button type="button" onClick={() => { setNewName(detail.group.name); setRenaming(true); }} title={t("chat.renameTitle")} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200">
+                {t("chat.rename")}
               </button>
               <button
                 type="button"
@@ -367,17 +369,17 @@ export function GroupView({
                       await refresh();
                       onVisibilityChanged();
                     } catch (err) {
-                      setError(err instanceof Error ? err.message : "Could not change visibility (owner/admin only).");
+                      setError(err instanceof Error ? err.message : t("chat.errVisibility"));
                     }
                   })();
                 }}
-                title={detail.group.is_public ? "Tutup untuk umum" : "Buka untuk umum — siapa pun bisa bertanya, asistenmu menjawab"}
+                title={detail.group.is_public ? t("chat.makePrivateTitle") : t("chat.makePublicTitle")}
                 className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-emerald-400"
               >
-                {detail.group.is_public ? "Tutup" : "Buka umum"}
+                {detail.group.is_public ? t("chat.makePrivate") : t("chat.makePublic")}
               </button>
               <button type="button" onClick={doDelete} className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-red-400">
-                Hapus
+                {t("chat.delete")}
               </button>
             </div>
           )}
@@ -387,7 +389,7 @@ export function GroupView({
             <span key={m.id} className="flex items-center gap-1.5 rounded-full bg-zinc-800 py-1 pl-1 pr-2 text-sm">
               <BotAvatar bot={m} size="sm" />
               <span className="text-zinc-200">{m.name}</span>
-              <button type="button" onClick={() => doRemove(m.id)} title={`Keluarkan ${m.name}`} className="text-zinc-500 hover:text-red-400">
+              <button type="button" onClick={() => doRemove(m.id)} title={t("chat.unsupportedRemove").replace("{name}", m.name)} className="text-zinc-500 hover:text-red-400">
                 ×
               </button>
             </span>
@@ -398,16 +400,16 @@ export function GroupView({
               onClick={() => { setPicked([]); setPickFilter(""); setAddOpen(true); }}
               className="rounded-full border border-dashed border-zinc-700 px-3 py-1 text-sm text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
             >
-              + Tambah anggota
+              {t("chat.addMembers")}
             </button>
           )}
           {addOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Tambah anggota">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={t("chat.addMembersLabel")}>
               <div className="absolute inset-0 bg-black/60" onClick={() => { if (!busy) setAddOpen(false); }} />
               <div className="relative flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-zinc-700 bg-zinc-900 shadow-xl">
                 <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-                  <h3 className="font-bold text-zinc-100">Tambah anggota ke {detail.group.name}</h3>
-                  <button type="button" onClick={() => setAddOpen(false)} disabled={busy} title="Tutup" className="rounded px-2 py-1 text-lg leading-none text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40">
+                  <h3 className="font-bold text-zinc-100">{t("chat.addMembersTitle").replace("{name}", detail.group.name)}</h3>
+                  <button type="button" onClick={() => setAddOpen(false)} disabled={busy} title={t("chat.addMembersClose")} className="rounded px-2 py-1 text-lg leading-none text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40">
                     ×
                   </button>
                 </div>
@@ -415,7 +417,7 @@ export function GroupView({
                   <input
                     value={pickFilter}
                     onChange={(e) => setPickFilter(e.target.value)}
-                    placeholder="Cari asisten..."
+                    placeholder={t("chat.searchAssistant")}
                     autoFocus
                     className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
                   />
@@ -447,14 +449,14 @@ export function GroupView({
                 </div>
                 <div className="flex items-center justify-between gap-2 border-t border-zinc-800 px-4 py-3">
                   <span className="text-xs text-zinc-500">
-                    {picked.length === 0 ? "Pilih asisten untuk ditambah" : `${picked.length} dipilih`}
+                    {picked.length === 0 ? t("chat.pickToAdd") : t("chat.nSelected").replace("{n}", String(picked.length))}
                   </span>
                   <div className="flex gap-2">
                     <button type="button" onClick={() => setAddOpen(false)} disabled={busy} className="rounded-md px-3 py-1.5 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40">
-                      Batal
+                      {t("chat.cancel")}
                     </button>
                     <button type="button" onClick={doAdd} disabled={picked.length === 0 || busy} className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
-                      {busy ? "Menambah..." : `Tambah${picked.length > 0 ? ` (${picked.length})` : ""}`}
+                      {busy ? t("chat.adding") : `${t("chat.add")}${picked.length > 0 ? ` (${picked.length})` : ""}`}
                     </button>
                   </div>
                 </div>
@@ -464,14 +466,14 @@ export function GroupView({
         </div>
           <div className="mt-2 flex items-center gap-1 border-t border-zinc-800 pt-2">
           <button type="button" onClick={() => setTab("chat")} className={`rounded-md px-3 py-1 text-xs font-bold ${tab === "chat" ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-200"}`}>
-            💬 Chat
+            {t("chat.tabChat")}
           </button>
           <button type="button" onClick={openBoard} className={`rounded-md px-3 py-1 text-xs font-bold ${tab === "board" ? "bg-zinc-800 text-zinc-100" : "text-zinc-500 hover:text-zinc-200"}`}>
-            ▤ Tugas{detail.group.project_id ? "" : " +"}
+            {detail.group.project_id ? t("chat.tabBoard") : t("chat.tabBoardNew")}
           </button>
           {tab === "board" && detail.group.project_id && (
-            <button type="button" onClick={() => setBoardFull((v) => !v)} title={boardFull ? "Tampilkan chat di samping" : "Tugas layar penuh, chat mengecil"} className="ml-auto rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200">
-              {boardFull ? "⇲ Samping" : "⛶ Penuh"}
+            <button type="button" onClick={() => setBoardFull((v) => !v)} title={boardFull ? t("chat.shrinkBoardTitle") : t("chat.expandBoardTitle")} className="ml-auto rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200">
+              {boardFull ? t("chat.shrinkBoard") : t("chat.expandBoard")}
             </button>
           )}
         </div>
@@ -482,8 +484,8 @@ export function GroupView({
       ) : !detail.group.project_id ? (
         <div className="rounded-xl border border-dashed border-zinc-700 bg-zinc-900/60 p-8 text-center">
           <div className="text-2xl">▤</div>
-          <h3 className="mt-2 font-bold text-zinc-100">Channel ini belum punya daftar tugas</h3>
-          <p className="mx-auto mt-1 max-w-md text-sm text-zinc-400">Tempel daftar yang sudah ada, atau buat baru — tugas otomatis hanya untuk channel ini.</p>
+          <h3 className="mt-2 font-bold text-zinc-100">{t("chat.noBoardTitle")}</h3>
+          <p className="mx-auto mt-1 max-w-md text-sm text-zinc-400">{t("chat.noBoardBody")}</p>
           {teamProjects.length > 0 && (
             <div className="mx-auto mt-3 flex max-w-md gap-2">
               <select
@@ -492,7 +494,7 @@ export function GroupView({
                 disabled={attachBusy}
                 className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-2 py-2 text-sm text-zinc-100 focus:border-emerald-500 focus:outline-none disabled:opacity-40"
               >
-                <option value="">Pilih daftar tugas…</option>
+                <option value="">{t("chat.noBoardPick")}</option>
                 {teamProjects.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
@@ -503,11 +505,11 @@ export function GroupView({
             <input
               value={newProjName}
               onChange={(e) => setNewProjName(e.target.value)}
-              placeholder="atau nama daftar baru…"
+              placeholder={t("chat.noBoardNew")}
               className="flex-1 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
             />
             <button type="submit" disabled={!newProjName.trim() || attachBusy} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-40">
-              {attachBusy ? "…" : "Buat"}
+              {attachBusy ? "…" : t("chat.noBoardCreate")}
             </button>
           </form>
         </div>

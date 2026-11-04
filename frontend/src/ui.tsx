@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { fetchAvatar, type SlaveBot } from "./api";
+import { useLang, type Lang } from "./i18n";
 
 const AVATAR_COLORS = [
   "bg-emerald-600",
@@ -52,8 +53,9 @@ export function BotAvatar({ bot, size = "md" }: { bot: SlaveBot; size?: "sm" | "
 
 /** Small inline spinner for busy buttons. */
 export function Spinner() {
+  const { t } = useLang();
   return (
-    <svg className="inline h-4 w-4 animate-spin text-current" viewBox="0 0 24 24" fill="none" aria-label="Loading">
+    <svg className="inline h-4 w-4 animate-spin text-current" viewBox="0 0 24 24" fill="none" aria-label={t("common.loading")}>
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
     </svg>
@@ -99,23 +101,24 @@ export function WaveIcon() {
 
 /** Three bouncing dots for "bot is typing". Motion is disabled when the OS asks for reduced motion. */
 export function TypingDots() {
+  const { t } = useLang();
   return (
-    <span className="typing-dots" aria-label="Bot is typing">
+    <span className="typing-dots" aria-label={t("chat.typing")}>
       <span />
       <span />
       <span />
     </span>
   );
 }
-export function dayLabel(iso?: string): string {
+export function dayLabel(iso: string | undefined, lang: Lang): string {
   const d = iso ? new Date(iso) : new Date();
   const today = new Date();
   const yesterday = new Date();
   yesterday.setDate(today.getDate() - 1);
   const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-  if (sameDay(d, today)) return "Today";
-  if (sameDay(d, yesterday)) return "Yesterday";
-  return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  if (sameDay(d, today)) return lang === "id" ? "Hari ini" : "Today";
+  if (sameDay(d, yesterday)) return lang === "id" ? "Kemarin" : "Yesterday";
+  return d.toLocaleDateString(lang === "id" ? "id-ID" : undefined, { weekday: "long", month: "long", day: "numeric" });
 }
 
 export function dayKey(iso?: string): string {

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { useLang } from "./i18n";
 import { BotAvatar, Spinner } from "./ui";
 import {
   createSchedule,
@@ -21,6 +22,7 @@ import {
 const AURA_VOICES = ["luna", "athena", "orion", "zeus", "hera", "perseus", "angus", "stella"];
 
 export function SchedulesView({ botId }: { botId: string }) {
+  const { t } = useLang();
   const [schedules, setSchedules] = useState<BotSchedule[]>([]);
   const [kind, setKind] = useState("daily");
   const [time, setTime] = useState("07:00");
@@ -60,7 +62,7 @@ export function SchedulesView({ botId }: { botId: string }) {
       setPrompt("");
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create schedule.");
+      setError(err instanceof Error ? err.message : t("bot.errSchedCreate"));
     } finally {
       setBusy(false);
     }
@@ -72,33 +74,52 @@ export function SchedulesView({ botId }: { botId: string }) {
       await updateSchedule(s.id, !s.active);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update schedule.");
+      setError(err instanceof Error ? err.message : t("bot.errSchedUpdate"));
     }
   }
 
   async function remove(s: BotSchedule) {
-    if (!window.confirm(`Delete schedule "${s.name}"?`)) return;
+    if (!window.confirm(t("bot.schedDeleteConfirm").replace("{name}", s.name))) return;
     setError("");
     try {
       await deleteSchedule(s.id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not delete schedule.");
+      setError(err instanceof Error ? err.message : t("bot.errSchedDelete"));
     }
   }
 
   const inputCls =
     "mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none";
 
+  function daysLabel(d: string): string {
+    if (d === "weekdays") return t("bot.schedDaysWeek");
+    if (d === "weekends") return t("bot.schedDaysEnd");
+    return t("bot.schedDaysAll");
+  }
+
+  function kindLabel(k: string): string {
+    if (k === "once") return t("bot.schedOnce");
+    if (k === "interval") return t("bot.schedInterval");
+    return t("bot.schedDaily");
+  }
+
   return (
     <div className="mb-8 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
-      <h3 className="font-semibold text-zinc-200">Jadwal otomatis</h3>
+      <h3 className="font-semibold text-zinc-200">{t("bot.schedTitle")}</h3>
       <p className="mb-3 mt-1 text-xs text-zinc-500">
-        Asisten mengerjakan ini sendiri sesuai jam Jakarta — cth. ringkasan pagi yang masuk ke riwayat chat.
-        Bisa juga ketik <span className="text-zinc-300">/remind daily 07:00 ...</span> di chat, atau <span className="text-zinc-300">/schedules</span> untuk lihat daftar.
+        {t("bot.schedBody").split(/(\{remind\}|\{list\})/).map((part, i) =>
+          part === "{remind}" ? (
+            <span key={i} className="text-zinc-300">/remind daily 07:00 ...</span>
+          ) : part === "{list}" ? (
+            <span key={i} className="text-zinc-300">/schedules</span>
+          ) : (
+            <Fragment key={i}>{part}</Fragment>
+          ),
+        )}
       </p>
       {schedules.length === 0 ? (
-        <p className="mb-3 text-sm text-zinc-500">Belum ada jadwal.</p>
+        <p className="mb-3 text-sm text-zinc-500">{t("bot.noSched")}</p>
       ) : (
         <ul className="mb-4 flex flex-col gap-2">
           {schedules.map((s) => (
@@ -107,16 +128,16 @@ export function SchedulesView({ botId }: { botId: string }) {
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-semibold text-zinc-200">{s.name}</span>
                 <span className="block truncate text-xs text-zinc-500">
-                  {s.kind === "interval" ? `tiap ${s.interval_minutes} mnt` : `${s.kind} ${s.time_hhmm} (${s.days})`}
-                  {" · berikut "}{s.next_run_at || "—"}
+                  {s.kind === "interval" ? t("bot.schedEvery").replace("{n}", String(s.interval_minutes)) : `${kindLabel(s.kind)} ${s.time_hhmm} (${daysLabel(s.days)})`}
+                  {" · "}{t("bot.schedNext")} {s.next_run_at || "—"}
                   {" · "}{s.prompt}
                 </span>
               </span>
               <button type="button" onClick={() => toggle(s)} className="rounded px-2 py-1 text-xs font-semibold text-zinc-300 hover:bg-zinc-800">
-                {s.active ? "Jeda" : "Jalan"}
+                {s.active ? t("bot.schedPause") : t("bot.schedResume")}
               </button>
               <button type="button" onClick={() => remove(s)} className="rounded px-2 py-1 text-xs font-semibold text-zinc-500 hover:bg-zinc-800 hover:text-red-400">
-                Hapus
+                {t("bot.schedDelete")}
               </button>
             </li>
           ))}
@@ -124,41 +145,41 @@ export function SchedulesView({ botId }: { botId: string }) {
       )}
       <form onSubmit={create} className="grid grid-cols-2 gap-2">
         <label className="col-span-2 text-sm font-semibold text-zinc-300">
-          Tugas untuk asisten
-          <input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="cth. Kirim ringkasan pagi" maxLength={1000} className={inputCls} />
+          {t("bot.schedTask")}
+          <input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={t("bot.schedTaskPh")} maxLength={1000} className={inputCls} />
         </label>
         <label className="text-sm font-semibold text-zinc-300">
-          Ulangi
+          {t("bot.schedRepeat")}
           <select value={kind} onChange={(e) => setKind(e.target.value)} className={inputCls}>
-            <option value="daily">Harian</option>
-            <option value="once">Sekali</option>
-            <option value="interval">Tiap N menit</option>
+            <option value="daily">{t("bot.schedDaily")}</option>
+            <option value="once">{t("bot.schedOnce")}</option>
+            <option value="interval">{t("bot.schedInterval")}</option>
           </select>
         </label>
         {kind === "interval" ? (
           <label className="text-sm font-semibold text-zinc-300">
-            Menit (5 atau lebih)
+            {t("bot.schedMinutes")}
             <input value={interval} onChange={(e) => setInterval(e.target.value)} inputMode="numeric" className={inputCls} />
           </label>
         ) : (
           <label className="text-sm font-semibold text-zinc-300">
-            Jam (Jakarta)
+            {t("bot.schedTime")}
             <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputCls} />
           </label>
         )}
         {kind === "daily" && (
           <label className="col-span-2 text-sm font-semibold text-zinc-300">
-            Hari
+            {t("bot.schedDays")}
             <select value={days} onChange={(e) => setDays(e.target.value)} className={inputCls}>
-              <option value="all">Setiap hari</option>
-              <option value="weekdays">Senin–Jumat</option>
-              <option value="weekends">Akhir pekan</option>
+              <option value="all">{t("bot.schedDaysAll")}</option>
+              <option value="weekdays">{t("bot.schedDaysWeek")}</option>
+              <option value="weekends">{t("bot.schedDaysEnd")}</option>
             </select>
           </label>
         )}
         <div className="col-span-2">
           <button type="submit" disabled={busy || !prompt.trim()} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
-            {busy ? "Menambah..." : "Tambah jadwal"}
+            {busy ? t("bot.schedAdding") : t("bot.schedAdd")}
           </button>
         </div>
       </form>
@@ -168,6 +189,7 @@ export function SchedulesView({ botId }: { botId: string }) {
 }
 
 export function TeamView({ bot, onOpenBot, onTeamChanged }: { bot: SlaveBot; onOpenBot: (id: string) => void; onTeamChanged: () => void }) {
+  const { t } = useLang();
   const [children, setChildren] = useState<SlaveBot[]>([]);
   const [parent, setParent] = useState<SlaveBot | null>(null);
   const [subName, setSubName] = useState("");
@@ -209,7 +231,7 @@ export function TeamView({ bot, onOpenBot, onTeamChanged }: { bot: SlaveBot; onO
       setChildren((prev) => [...prev, child]);
       onTeamChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not spawn sub-bot.");
+      setError(err instanceof Error ? err.message : t("bot.errSpawn"));
     } finally {
       setBusy(false);
     }
@@ -217,13 +239,13 @@ export function TeamView({ bot, onOpenBot, onTeamChanged }: { bot: SlaveBot; onO
 
   return (
     <div className="mb-8 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
-      <h3 className="font-semibold text-zinc-200">Tim kecil</h3>
+      <h3 className="font-semibold text-zinc-200">{t("bot.teamTitle")}</h3>
       <p className="mb-3 mt-1 text-xs text-zinc-500">
-        Asisten bisa punya anak buah untuk tugas khusus. Anak buah lapor ke atasannya dan bisa diajak rapat, dijadwal, dan dimasukkan grup seperti asisten biasa.
+        {t("bot.teamBody")}
       </p>
       {parent && (
         <p className="mb-2 text-sm text-zinc-300">
-          Atasan:{" "}
+          {t("bot.teamReports")}{" "}
           <button type="button" onClick={() => onOpenBot(parent.id)} className="font-semibold text-emerald-400 hover:underline">
             {parent.name}
           </button>
@@ -243,32 +265,32 @@ export function TeamView({ bot, onOpenBot, onTeamChanged }: { bot: SlaveBot; onO
           ))}
         </ul>
       ) : (
-        <p className="mb-3 text-sm text-zinc-500">Belum ada anak buah.</p>
+        <p className="mb-3 text-sm text-zinc-500">{t("bot.noChildren")}</p>
       )}
       <form onSubmit={spawn} className="grid grid-cols-2 gap-2">
         <label className="text-sm font-semibold text-zinc-300">
-          Nama anak buah
+          {t("bot.childName")}
           <input
             value={subName}
             onChange={(e) => setSubName(e.target.value)}
-            placeholder="cth. Pramuniaga"
+            placeholder={t("bot.childNamePh")}
             maxLength={40}
             className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
           />
         </label>
         <label className="text-sm font-semibold text-zinc-300">
-          Tugas
+          {t("bot.childRole")}
           <input
             value={subRole}
             onChange={(e) => setSubRole(e.target.value)}
-            placeholder="cth. Catat harga kompetitor"
+            placeholder={t("bot.childRolePh")}
             maxLength={120}
             className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none"
           />
         </label>
         <div className="col-span-2">
           <button type="submit" disabled={busy || !subName.trim()} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
-            {busy ? "Menambah..." : "Tambah anak buah"}
+            {busy ? t("bot.childAdding") : t("bot.childAdd")}
           </button>
         </div>
       </form>
@@ -291,6 +313,7 @@ export function BotView({
   onOpenBot: (id: string) => void;
   onTeamChanged: () => void;
 }) {
+  const { t } = useLang();
   const [name, setName] = useState(bot.name);
   const [memory, setMemory] = useState(bot.memory);
   const [role, setRole] = useState(bot.role || "");
@@ -343,7 +366,7 @@ export function BotView({
       onSaved(updated);
       setSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save.");
+      setError(err instanceof Error ? err.message : t("bot.errSave"));
     } finally {
       setBusy(false);
     }
@@ -357,7 +380,7 @@ export function BotView({
       onSaved(updated);
       setSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update archive state.");
+      setError(err instanceof Error ? err.message : t("bot.errArchive"));
     } finally {
       setBusy(false);
     }
@@ -365,7 +388,7 @@ export function BotView({
 
   async function togglePin() {
     if (!bot.pinned && bot.archived) {
-      setError("Restore the bot before pinning it.");
+      setError(t("bot.errPinArchived"));
       return;
     }
     setBusy(true);
@@ -375,7 +398,7 @@ export function BotView({
       onSaved(updated);
       setSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update pin state.");
+      setError(err instanceof Error ? err.message : t("bot.errPin"));
     } finally {
       setBusy(false);
     }
@@ -386,10 +409,10 @@ export function BotView({
     setError("");
     try {
       const res = await runSummary(bot.id);
-      if (!res.summary) setError(res.note ?? "Nothing to summarize yet.");
+      if (!res.summary) setError(res.note ?? t("bot.errRecapEmpty"));
       setSummaries(await fetchSummaries(bot.id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Summarization failed.");
+      setError(err instanceof Error ? err.message : t("bot.errRecap"));
     } finally {
       setSummarizing(false);
     }
@@ -404,7 +427,7 @@ export function BotView({
       const detail = await fetchBotDetail(bot.id);
       onSaved(detail.slavebot);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Avatar upload failed.");
+      setError(err instanceof Error ? err.message : t("bot.errAvatar"));
     } finally {
       setAvatarBusy(false);
     }
@@ -422,7 +445,7 @@ export function BotView({
             <button
               type="button"
               onClick={() => setTitleEdit(bot.name)}
-              title="Ganti nama asisten"
+              title={t("bot.renameTitle")}
               className="rounded px-1 text-left text-xl font-bold text-zinc-100 hover:bg-zinc-800"
             >
               {bot.name}
@@ -442,7 +465,7 @@ export function BotView({
                         const updated = await updateBot(bot.id, { name: next });
                         onSaved(updated);
                       } catch (err) {
-                        setError(err instanceof Error ? err.message : "Could not rename.");
+                        setError(err instanceof Error ? err.message : t("bot.errRename"));
                       }
                     })();
                   }
@@ -454,34 +477,34 @@ export function BotView({
               onBlur={() => setTitleEdit(null)}
               autoFocus
               maxLength={40}
-              aria-label="Ganti nama asisten"
+              aria-label={t("bot.renameTitle")}
               className="w-full max-w-xs rounded-md border border-emerald-600 bg-zinc-800 px-2 py-0.5 text-xl font-bold text-zinc-100 focus:outline-none"
             />
           )}
           {bot.title && <p className="text-sm text-zinc-400">{bot.title}</p>}
-          <p className="mt-0.5 text-xs text-zinc-500">◈ Partner: {partnerName} · ganti di Pengaturan → Tim</p>
+          <p className="mt-0.5 text-xs text-zinc-500">{t("bot.ownerLine").replace("{name}", partnerName)}</p>
         </div>
       </div>
 
       <form onSubmit={save} className="mb-8 flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-5">
-        <h3 className="font-semibold text-zinc-200">Identitas</h3>
+        <h3 className="font-semibold text-zinc-200">{t("bot.identity")}</h3>
         <label className="text-sm font-semibold text-zinc-300">
-          Nama
+          {t("bot.name")}
           <input value={name} onChange={(e) => { setName(e.target.value); setSaved(false); }} maxLength={40} className={inputCls} />
         </label>
         <label className="text-sm font-semibold text-zinc-300">
-          Tugas
+          {t("bot.role")}
           <input
             value={role}
             onChange={(e) => { setRole(e.target.value); setSaved(false); }}
-            placeholder="cth. Kasir — rekap penjualan harian"
+            placeholder={t("bot.rolePh")}
             maxLength={120}
             className={inputCls}
           />
         </label>
-        <p className="-mt-2 text-xs text-zinc-500">Tugas menentukan kapan asisten ikut rapat: hanya topik yang cocok dengan pekerjaannya. Asisten baru menanyakan ini di pesan pertama.</p>
+        <p className="-mt-2 text-xs text-zinc-500">{t("bot.roleHint")}</p>
         <label className="text-sm font-semibold text-zinc-300">
-          Foto
+          {t("bot.avatar")}
           <span className="mt-1 flex items-center gap-3">
             <input
               ref={fileRef}
@@ -491,13 +514,13 @@ export function BotView({
               onChange={(e) => onAvatarFile(e.target.files?.[0])}
             />
             <button type="button" disabled={avatarBusy} onClick={() => fileRef.current?.click()} className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800 disabled:opacity-50">
-              {avatarBusy ? "Mengunggah..." : "Unggah foto (maks 2 MB)"}
+              {avatarBusy ? t("bot.avatarUpBusy") : t("bot.avatarUp")}
             </button>
           </span>
         </label>
         <label className="text-sm font-semibold text-zinc-300">
-          Model AI <span className="font-normal text-zinc-500">(nama persis dari penyedia AI)</span>
-          <input value={model} onChange={(e) => { setModel(e.target.value); setSaved(false); }} list="bot-model-list" placeholder={providerInfo?.custom_allowed ? (providerInfo.example_models || "e.g. qwen3:8b") : "pick a model"} spellCheck={false} className={`${inputCls} font-mono ${!model.trim() ? "border-amber-600" : ""}`} />
+          {t("bot.model")} <span className="font-normal text-zinc-500">{t("bot.modelHint")}</span>
+          <input value={model} onChange={(e) => { setModel(e.target.value); setSaved(false); }} list="bot-model-list" placeholder={providerInfo?.custom_allowed ? (providerInfo.example_models || "e.g. qwen3:8b") : t("bot.modelPick")} spellCheck={false} className={`${inputCls} font-mono ${!model.trim() ? "border-amber-600" : ""}`} />
           <datalist id="bot-model-list">
             {(providerInfo?.models ?? []).map((m) => (
               <option key={m.id} value={m.id}>
@@ -507,19 +530,19 @@ export function BotView({
           </datalist>
           {providerInfo && (
             <span className="mt-1 block text-xs font-normal text-zinc-500">
-              Penyedia: {providerInfo.provider_label ?? providerInfo.provider}
-              {providerInfo.default ? ` · bawaan ${providerInfo.default}` : " · ketik manual"}
+              {t("bot.provider")}: {providerInfo.provider_label ?? providerInfo.provider}
+              {providerInfo.default ? ` · ${t("bot.modelDefault")} ${providerInfo.default}` : ` · ${t("bot.modelFree")}`}
               {providerInfo.example_models ? ` · ${providerInfo.example_models}` : ""}
             </span>
           )}
           {!model.trim() && (
             <span className="mt-1 block rounded-md border border-amber-800 bg-amber-950/60 px-2 py-1 text-xs font-normal text-amber-200">
-              Model belum diisi — chat akan gagal. Isi nama model yang persis, atau cek daftar di Tim → Simpan + tes koneksi.
+              {t("bot.modelEmpty")}
             </span>
           )}
         </label>
         <label className="text-sm font-semibold text-zinc-300">
-          Suara (balasan bersuara)
+          {t("bot.voice")}
           <select value={voice} onChange={(e) => { setVoice(e.target.value); setSaved(false); }} className={inputCls}>
             {AURA_VOICES.map((v) => (
               <option key={v} value={v}>
@@ -528,7 +551,7 @@ export function BotView({
             ))}
           </select>
         </label>
-        <p className="-mt-2 text-xs text-zinc-500">Tombol Bicara dan chat hands-free memakai suara ini.</p>
+        <p className="-mt-2 text-xs text-zinc-500">{t("bot.voiceHint")}</p>
         <label className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
           <input
             type="checkbox"
@@ -536,63 +559,63 @@ export function BotView({
             onChange={(e) => { setRelay(e.target.checked); setSaved(false); }}
             className="h-4 w-4 accent-emerald-600"
           />
-          Biarkan {bot.name} bertanya ke asisten lain sendiri
+          {t("bot.relay").replace("{name}", bot.name)}
         </label>
-        <p className="-mt-2 text-xs font-normal text-zinc-500">Jika aktif, asisten boleh bertanya ke rekan timnya dulu sebelum menjawab. Kamu cukup chat ke satu asisten.</p>
+        <p className="-mt-2 text-xs font-normal text-zinc-500">{t("bot.relayHint")}</p>
         <div className="grid grid-cols-3 gap-2">
           <label className="text-sm font-semibold text-zinc-300">
-            Hari aktif
+            {t("bot.days")}
             <select value={activeDays} onChange={(e) => { setActiveDays(e.target.value); setSaved(false); }} className={inputCls}>
-              <option value="all">Setiap hari</option>
-              <option value="weekdays">Senin–Jumat</option>
-              <option value="weekends">Akhir pekan</option>
+              <option value="all">{t("bot.daysAll")}</option>
+              <option value="weekdays">{t("bot.daysWeek")}</option>
+              <option value="weekends">{t("bot.daysEnd")}</option>
             </select>
           </label>
           <label className="text-sm font-semibold text-zinc-300">
-            Aktif dari jam
+            {t("bot.from")}
             <input type="time" value={activeStart} onChange={(e) => { setActiveStart(e.target.value); setSaved(false); }} className={inputCls} />
           </label>
           <label className="text-sm font-semibold text-zinc-300">
-            Aktif sampai jam
+            {t("bot.until")}
             <input type="time" value={activeEnd} onChange={(e) => { setActiveEnd(e.target.value); setSaved(false); }} className={inputCls} />
           </label>
         </div>
-        <p className="-mt-2 text-xs text-zinc-500">Tugas terjadwal hanya jalan di jam ini (waktu Jakarta). Kosongkan agar selalu aktif.</p>
+        <p className="-mt-2 text-xs text-zinc-500">{t("bot.windowHint")}</p>
         <label className="text-sm font-semibold text-zinc-300">
-          Ingatan
+          {t("bot.memory")}
           <textarea
             value={memory}
             onChange={(e) => { setMemory(e.target.value); setSaved(false); }}
-            placeholder={"cth. Pemilik suka jawaban singkat. Menu andalan: nasi timbel…"}
+            placeholder={t("bot.memoryPh")}
             rows={5}
             maxLength={4000}
             className={inputCls}
           />
         </label>
-        <p className="-mt-1 text-xs text-zinc-500">Ingatan selalu dibaca asisten di setiap chat sebagai fakta tentang usahamu.</p>
+        <p className="-mt-1 text-xs text-zinc-500">{t("bot.memoryHint")}</p>
         {error && <p className="text-sm text-red-400">{error}</p>}
-        {saved && <p className="text-sm font-semibold text-emerald-400">Tersimpan.</p>}
+        {saved && <p className="text-sm font-semibold text-emerald-400">{t("bot.saved")}</p>}
         <div className="flex items-center gap-3">
           <button type="submit" disabled={busy} className="rounded-md bg-emerald-600 px-6 py-2 font-semibold text-white hover:bg-emerald-500 disabled:opacity-50">
-            {busy ? "Menyimpan..." : "Simpan"}
+            {busy ? t("bot.saving") : t("bot.save")}
           </button>
           <button
             type="button"
             disabled={busy}
             onClick={togglePin}
-            title={bot.pinned ? "Lepas: tidak ada asisten yang terbuka otomatis" : "Sematkan: asisten ini terbuka otomatis tiap kunjungan"}
+            title={bot.pinned ? t("bot.unpinTitle") : t("bot.pinTitle")}
             className={`rounded-md border px-4 py-2 text-sm font-semibold disabled:opacity-50 ${bot.pinned ? "border-emerald-600 text-emerald-400 hover:bg-emerald-950" : "border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
           >
-            {bot.pinned ? "Lepas" : "Sematkan"}
+            {bot.pinned ? t("bot.unpin") : t("bot.pin")}
           </button>
           <button
             type="button"
             disabled={busy}
             onClick={toggleArchive}
-            title={bot.archived ? "Kembalikan asisten ke daftar aktif" : "Sembunyikan asisten (riwayat tetap ada)"}
+            title={bot.archived ? t("bot.restoreTitle") : t("bot.archiveTitle")}
             className={`rounded-md border px-4 py-2 text-sm font-semibold disabled:opacity-50 ${bot.archived ? "border-emerald-600 text-emerald-400 hover:bg-emerald-950" : "border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
           >
-            {bot.archived ? "Kembalikan" : "Arsipkan"}
+            {bot.archived ? t("bot.restore") : t("bot.archive")}
           </button>
         </div>
       </form>
@@ -603,25 +626,25 @@ export function BotView({
 
       <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="font-semibold text-zinc-200">Ringkasan obrolan</h3>
+          <h3 className="font-semibold text-zinc-200">{t("bot.recapTitle")}</h3>
           <button type="button" disabled={summarizing} onClick={summarizeNow} className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800 disabled:opacity-50">
-            {summarizing ? <Spinner /> : "Buat ringkasan"}
+            {summarizing ? <Spinner /> : t("bot.recapNow")}
           </button>
         </div>
-        <p className="mb-3 text-xs text-zinc-500">Ringkasan harian dibuat tiap malam; mingguan tiap Senin; bulanan tiap tanggal 1. Asisten membacanya sebagai ingatan lama.</p>
+        <p className="mb-3 text-xs text-zinc-500">{t("bot.recapBody")}</p>
         {!summaries ? (
-          <div className="space-y-2" aria-label="Loading summaries">
+          <div className="space-y-2" aria-label={t("common.loading")}>
             <div className="loading-skeleton h-10 w-full" />
             <div className="loading-skeleton h-10 w-full" />
           </div>
         ) : summaries.daily.length + summaries.weekly.length + summaries.monthly.length === 0 ? (
-          <p className="text-sm text-zinc-400">Belum ada ringkasan — chat dulu, lalu buat ringkasan.</p>
+          <p className="text-sm text-zinc-400">{t("bot.recapEmpty")}</p>
         ) : (
           (["monthly", "weekly", "daily"] as const).map((period) =>
             summaries[period].map((s) => (
               <details key={s.id} className="mb-2 rounded-md border border-zinc-800 bg-zinc-950 p-3">
                 <summary className="cursor-pointer text-sm font-semibold text-zinc-300">
-                  {period === "monthly" ? "Bulanan" : period === "weekly" ? "Mingguan" : "Harian"} · {s.period_key}
+                  {period === "monthly" ? t("bot.perMonth") : period === "weekly" ? t("bot.perWeek") : t("bot.perDay")} · {s.period_key}
                 </summary>
                 <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-400">{s.content}</p>
               </details>

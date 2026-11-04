@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   addGroupMembers,
   appendMemory,
@@ -99,6 +99,7 @@ import { BotView } from "./BotView";
 import { GroupView } from "./GroupView";
 import { MeetingView } from "./MeetingView";
 import { SettingsView } from "./SettingsView";
+import { LangProvider, translate, useLang, type Lang, type StringsKey } from "./i18n";
 import {
   playAudioBlob,
   recordConversationTurn,
@@ -108,6 +109,7 @@ import {
   warmUpVoices,
   type Recorder,
 } from "./voice";
+import { setUserLang } from "./api";
 import AppsView from "./AppsView";
 import { DmView } from "./DmView";
 import CodeView from "./CodeView";
@@ -132,7 +134,8 @@ interface UiMessage {
 
 
 
-export default function App() {
+function AppShell() {
+  const { lang, t, setLang: setUILang } = useLang();
   const [user, setUser] = useState<User | null>(null);
   const [checking, setChecking] = useState(true);
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null);
@@ -167,6 +170,7 @@ export default function App() {
   const esRef = useRef<EventSource | null>(null);
   const reconnectRef = useRef<number | null>(null);
   const seenRef = useRef<Set<string>>(new Set());
+  const langRef = useRef<Lang>("en");
   const convRef = useRef({ view: "apps" as string, dmPeerId: "", groupId: "", meetingId: "", botId: "", teamId: "" });
 
   const refreshUnread = useCallback(async () => {
@@ -297,9 +301,17 @@ export default function App() {
   useEffect(() => {
     if (user) {
       fetchPublicGroups().then(setSupportGroups).catch(() => {});
+      if ((user.lang === "en" || user.lang === "id") && user.lang !== langRef.current) {
+        langRef.current = user.lang;
+        setUILang(user.lang);
+      }
+      if ("Notification" in window && Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+      }
     } else {
       setSupportGroups([]);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   // Teammates for user-to-user DMs (excluding self).
@@ -406,12 +418,12 @@ export default function App() {
         pokeUnread();
         const title =
           ev.kind === "dm"
-            ? (ev.from_name as string) || "Pesan baru"
+            ? ev.from_name || t("notif.dmFallback")
             : ev.kind === "group"
-              ? `#${(ev as { group_name?: string }).group_name || "Grup"}`
+              ? `#${(ev as { group_name?: string }).group_name || t("notif.groupFallback")}`
               : ev.kind === "meeting"
-                ? `Rapat: ${(ev as { topic?: string }).topic || "Rapat"}`
-                : (ev as { bot_name?: string }).bot_name || "Asisten";
+                ? `${t("notif.meetingPrefix")}: ${(ev as { topic?: string }).topic || t("notif.meetingPrefix")}`
+                : (ev as { bot_name?: string }).bot_name || t("notif.botFallback");
         if (ev.kind === "dm" || mentionsMe(ev.content)) {
           notify(title, ev.content);
         }
@@ -435,7 +447,7 @@ export default function App() {
       esRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, [user, lang, t]);
 
   // Live bot replies landing in the open bot chat (deduped against echoes).
   useEffect(() => {
@@ -542,11 +554,11 @@ export default function App() {
   async function newGroup() {
     setError("");
     try {
-      const created = await createGroup("Grup baru", teamId ?? undefined);
+      const created = await createGroup(t("chat.newGroupName"), teamId ?? undefined);
       await refreshGroups();
       await openGroup(created.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create group.");
+      setError(err instanceof Error ? err.message : t("chat.errNewGroup"));
     }
   }
 
@@ -566,7 +578,7 @@ export default function App() {
       localStorage.setItem("group_open_board", g.id);
       await openGroup(g.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not open board.");
+      setError(err instanceof Error ? err.message : t("chat.errOpenBoard"));
     }
   }
 
@@ -613,7 +625,7 @@ export default function App() {
         void refreshUnread();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not open slaveBot.");
+      setError(err instanceof Error ? err.message : t("chat.errOpenBot"));
     }
   }
 
@@ -627,7 +639,7 @@ export default function App() {
       await refreshBots();
       await openBot(created.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create slaveBot.");
+      setError(err instanceof Error ? err.message : t("chat.errNewBot"));
     }
   }
 
@@ -657,7 +669,7 @@ export default function App() {
         const res = await transcribeVoice(wav, teamId ?? undefined);
         setInput((prev) => (prev ? `${prev} ${res.transcript}` : res.transcript));
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Transcription failed.");
+        setError(err instanceof Error ? err.message : t("chat.errTranscribe"));
       } finally {
         setTranscribing(false);
       }
@@ -670,7 +682,7 @@ export default function App() {
       setRecSecs(0);
       recTimer.current = window.setInterval(() => setRecSecs(rec.elapsed()), 250);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not access the microphone.");
+      setError(err instanceof Error ? err.message : t("chat.errMic"));
     }
   }
 
@@ -699,7 +711,7 @@ export default function App() {
       }
       if (voiceOn && reply.trim()) speak(reply);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Command failed.");
+      setError(err instanceof Error ? err.message : t("chat.errCommand"));
       setMessages((prev) => prev.filter((m) => m.key !== assistantKey));
     } finally {
       setStreaming(false);
@@ -733,7 +745,7 @@ export default function App() {
         speak(content);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Chat failed.");
+      setError(err instanceof Error ? err.message : t("chat.errSend"));
       setMessages((prev) => prev.filter((m) => m.key !== assistantKey));
       throw err;
     } finally {
@@ -775,7 +787,7 @@ export default function App() {
           turn = await recordConversationTurn(setMicLevel);
         } catch (err) {
           if (!converseRef.current) break;
-          setError(err instanceof Error ? err.message : "Microphone error.");
+          setError(err instanceof Error ? err.message : t("chat.errMicRecord"));
           break;
         } finally {
           setMicLevel(0);
@@ -789,7 +801,7 @@ export default function App() {
         } catch (err) {
           if (!converseRef.current) break;
           if ((err as Error).name === "AbortError") break;
-          setError(err instanceof Error ? err.message : "Conversation failed.");
+          setError(err instanceof Error ? err.message : t("chat.errConverse"));
           break;
         }
       }
@@ -819,7 +831,7 @@ export default function App() {
     setMeetingId(null);
   }
 
-  if (checking) return <div className="flex min-h-screen items-center justify-center text-zinc-400">Memuat...</div>;
+  if (checking) return <div className="flex min-h-screen items-center justify-center text-zinc-400">{t("common.loading")}</div>;
   if (!user) return <AuthView onAuth={setUser} />;
 
   // Team scope: only rows of the selected team ("" = legacy row, shown as fallback).
@@ -839,7 +851,7 @@ export default function App() {
   const topBots = activeBots.filter((b) => !b.parent_id);
   const orphanBots = activeBots.filter((b) => b.parent_id && !activeBots.some((p) => p.id === b.parent_id));
 
-  const ownerName = (b: SlaveBot) => (b.owner_user_id && b.owner_user_id !== user.id ? (memberNames[b.owner_user_id] ?? "teammate") : "");
+  const ownerName = (b: SlaveBot) => (b.owner_user_id && b.owner_user_id !== user.id ? (memberNames[b.owner_user_id] ?? t("common.teammate")) : "");
   function botRow(b: SlaveBot, indented: boolean) {
     const partner = ownerName(b);
     return (
@@ -847,12 +859,12 @@ export default function App() {
         key={b.id}
         type="button"
         onClick={() => openBot(b.id)}
-        title={(b.role ? `${b.role} — ` : "") + (b.title || b.name) + (partner ? ` (partner: ${partner})` : "")}
+        title={(b.role ? `${b.role} — ` : "") + (b.title || b.name) + (partner ? ` ${t("top.partnerTag", { name: partner })}` : "")}
         className={`flex items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-zinc-800 ${b.id === botId ? "bg-zinc-800" : ""} ${indented ? "ml-5 border-l border-zinc-800" : ""}`}
       >
         <span className="relative shrink-0">
           <BotAvatar bot={b} size="sm" />
-          <span title="Active" className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-zinc-950 bg-emerald-500" />
+          <span title={t("nav.online")} className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-zinc-950 bg-emerald-500" />
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold">{b.name}</span>
@@ -867,7 +879,7 @@ export default function App() {
           ) : null;
         })()}
         {b.pinned ? (
-          <span title="Pinned — opens automatically on visit" className="shrink-0 rounded border border-emerald-700 px-1 text-[10px] font-bold text-emerald-400">PIN</span>
+          <span title={t("nav.pinTitle")} className="shrink-0 rounded border border-emerald-700 px-1 text-[10px] font-bold text-emerald-400">PIN</span>
         ) : null}
       </button>
     );
@@ -881,14 +893,14 @@ export default function App() {
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
       {/* Top bar — logo = team switcher, then workspace nav */}
       <header className="flex h-13 shrink-0 items-center gap-1 border-b border-zinc-800 bg-zinc-950 px-2 py-1">
-        <button type="button" onClick={() => setSideOpen((v) => !v)} title="Obrolan" className="shrink-0 rounded-md px-2 py-2 text-lg text-zinc-300 hover:bg-zinc-800 md:hidden">
+        <button type="button" onClick={() => setSideOpen((v) => !v)} title={t("nav.conversations")} className="shrink-0 rounded-md px-2 py-2 text-lg text-zinc-300 hover:bg-zinc-800 md:hidden">
           ☰
         </button>
         <div className="relative shrink-0">
           <button
             type="button"
             onClick={() => setTeamMenuOpen((v) => !v)}
-            title={teams.find((t) => t.id === teamId)?.name ? `Team: ${teams.find((t) => t.id === teamId)?.name} — ganti team` : "Pilih team"}
+            title={teams.find((t) => t.id === teamId)?.name ? t("nav.changeTeam", { name: teams.find((t) => t.id === teamId)!.name }) : t("nav.pickTeam")}
             className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-sm font-black text-white hover:bg-emerald-500"
           >
             {(teams.find((t) => t.id === teamId)?.name || "S").slice(0, 1).toUpperCase()}
@@ -897,7 +909,7 @@ export default function App() {
             <>
               <div className="fixed inset-0 z-40" onClick={() => setTeamMenuOpen(false)} />
               <div className="absolute left-0 top-10 z-50 w-60 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-xl">
-                <div className="border-b border-zinc-800 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-zinc-500">Ganti team</div>
+                <div className="border-b border-zinc-800 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-zinc-500">{t("nav.teamsTitle")}</div>
                 <div className="max-h-64 overflow-y-auto p-1">
                   {teams.map((t) => (
                     <button
@@ -916,18 +928,18 @@ export default function App() {
                       {t.id === teamId && <span className="shrink-0 text-xs text-emerald-400">✓</span>}
                     </button>
                   ))}
-                  {teams.length === 0 && <p className="px-3 py-2 text-xs text-zinc-500">Belum ada team — buat di Settings.</p>}
+                  {teams.length === 0 && <p className="px-3 py-2 text-xs text-zinc-500">{t("nav.noTeam")}</p>}
                 </div>
               </div>
             </>
           )}
         </div>
         <nav className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
-          <button type="button" onClick={() => setView("apps")} className={topBtn(view === "apps")}><span aria-hidden="true">⌂</span> Aplikasi</button>
-          <button type="button" onClick={() => setView("chat")} className={topBtn(view === "chat" || view === "group" || view === "bot" || view === "meeting" || view === "dm")}><span aria-hidden="true">💬</span> Chat</button>
-          <button type="button" onClick={() => setView("code")} className={topBtn(view === "code")}><span aria-hidden="true">{"</>"}</span> File</button>
-          <button type="button" onClick={() => setView("market")} className={topBtn(view === "market")}><span aria-hidden="true">◈</span> Toko</button>
-          <button type="button" onClick={() => setView("settings")} className={topBtn(view === "settings")}><span aria-hidden="true">⚙</span> Pengaturan</button>
+          <button type="button" onClick={() => setView("apps")} className={topBtn(view === "apps")}><span aria-hidden="true">⌂</span> {t("nav.apps")}</button>
+          <button type="button" onClick={() => setView("chat")} className={topBtn(view === "chat" || view === "group" || view === "bot" || view === "meeting" || view === "dm")}><span aria-hidden="true">💬</span> {t("nav.chat")}</button>
+          <button type="button" onClick={() => setView("code")} className={topBtn(view === "code")}><span aria-hidden="true">{"</>"}</span> {t("nav.files")}</button>
+          <button type="button" onClick={() => setView("market")} className={topBtn(view === "market")}><span aria-hidden="true">◈</span> {t("nav.market")}</button>
+          <button type="button" onClick={() => setView("settings")} className={topBtn(view === "settings")}><span aria-hidden="true">⚙</span> {t("nav.settings")}</button>
         </nav>
         <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800 text-sm font-bold text-zinc-200" title={user.email}>
@@ -942,22 +954,22 @@ export default function App() {
       )}
       <aside className={`${sideOpen ? "fixed inset-y-0 left-0 z-40 flex w-72" : "hidden"} shrink-0 flex-col border-r border-zinc-800 bg-zinc-950 md:static md:flex md:w-60`}>
         <div className="flex items-center justify-between px-4 pb-1 pt-3">
-          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Chat</div>
-          <button type="button" onClick={() => { setView("settings"); setSideOpen(false); }} title="Tambah asisten baru di Pengaturan" className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">{t("side.chat")}</div>
+          <button type="button" onClick={() => { setView("settings"); setSideOpen(false); }} title={t("nav.newBotTitle")} className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
             +
           </button>
         </div>
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
           {topBots.flatMap((b) => [botRow(b, false), ...(childMap.get(b.id) ?? []).map((c) => botRow(c, true))])}
           {orphanBots.map((b) => botRow(b, false))}
-          {activeBots.length === 0 && <p className="px-2 py-2 text-sm text-zinc-500">Belum ada asisten — buat satu untuk mulai.</p>}
+          {activeBots.length === 0 && <p className="px-2 py-2 text-sm text-zinc-500">{t("side.noBots")}</p>}
           {archivedBots.length > 0 && (
             <button
               type="button"
               onClick={() => setShowArchived((v) => !v)}
               className="mt-1 rounded-md px-2 py-1.5 text-left text-xs font-semibold text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
             >
-              {showArchived ? "▾ Arsip" : `▸ Arsip (${archivedBots.length})`}
+              {showArchived ? `▾ ${t("side.archived")}` : `▸ ${t("side.archived")} (${archivedBots.length})`}
             </button>
           )}
           {showArchived &&
@@ -966,47 +978,47 @@ export default function App() {
                 key={b.id}
                 type="button"
                 onClick={() => openBot(b.id)}
-                title={`${b.title || b.name} (arsip)`}
+                title={`${b.title || b.name} (${t("side.archived").toLowerCase()})`}
                 className={`flex items-center gap-2.5 rounded-md px-2 py-2 text-left opacity-60 hover:bg-zinc-800 hover:opacity-100 ${b.id === botId ? "bg-zinc-800" : ""}`}
               >
                 <BotAvatar bot={b} size="sm" />
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-semibold">{b.name}</span>
-                  <span className="block truncate text-xs text-zinc-500">arsip</span>
+                  <span className="block truncate text-xs text-zinc-500">{t("side.archived").toLowerCase()}</span>
                 </span>
               </button>
             ))}
         </nav>
         <div className="flex items-center justify-between border-t border-zinc-800 px-4 pb-1 pt-3">
-          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Rekan tim</div>
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">{t("side.teammates")}</div>
         </div>
         <nav className="flex max-h-40 flex-col gap-1 overflow-y-auto p-2 pt-1">
-          {teammates.map((t) => {
-            const n = unread[`dm:${teamId ?? ""}:${t.id}`] || 0;
+          {teammates.map((tm) => {
+            const n = unread[`dm:${teamId ?? ""}:${tm.id}`] || 0;
             return (
               <button
-                key={t.id}
+                key={tm.id}
                 type="button"
-                onClick={() => openDm(t.id, t.name)}
-                title={`Chat dengan ${t.name}`}
-                className={`flex items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-zinc-800 ${t.id === dmPeer?.id && view === "dm" ? "bg-zinc-800" : ""}`}
+                onClick={() => openDm(tm.id, tm.name)}
+                title={t("dm.chatWith", { name: tm.name })}
+                className={`flex items-center gap-2.5 rounded-md px-2 py-2 text-left hover:bg-zinc-800 ${tm.id === dmPeer?.id && view === "dm" ? "bg-zinc-800" : ""}`}
               >
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-800 text-sm font-bold text-teal-200">
-                  {t.name.slice(0, 1).toUpperCase()}
+                  {tm.name.slice(0, 1).toUpperCase()}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-sm font-semibold">{t.name}</span>
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold">{tm.name}</span>
                 {n > 0 && (
                   <span className="shrink-0 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{n > 99 ? "99+" : n}</span>
                 )}
               </button>
             );
           })}
-          {teammates.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">Belum ada rekan tim.</p>}
+          {teammates.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">{t("side.noTeammates")}</p>}
         </nav>
         <div className="flex items-center justify-between border-t border-zinc-800 px-4 pb-1 pt-3">
-          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Grup</div>
-          <button type="button" onClick={newGroup} title="Buat grup baru" className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-            + Baru
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">{t("side.groups")}</div>
+          <button type="button" onClick={newGroup} title={t("chat.menuNewGroup")} className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
+            {t("side.new")}
           </button>
         </div>
         <nav className="flex max-h-40 flex-col gap-1 overflow-y-auto p-2 pt-1">
@@ -1025,12 +1037,12 @@ export default function App() {
               </button>
             );
           })}
-          {teamGroups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">Belum ada grup.</p>}
+          {teamGroups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">{t("side.noGroups")}</p>}
         </nav>
         <div className="flex items-center justify-between border-t border-zinc-800 px-4 pb-1 pt-3">
-          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Rapat</div>
-          <button type="button" onClick={() => openMeeting(null)} title="Mulai rapat baru" className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-            + Baru
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">{t("side.meetings")}</div>
+          <button type="button" onClick={() => openMeeting(null)} title={t("chat.menuNewMeeting")} className="rounded px-1 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
+            {t("side.new")}
           </button>
         </div>
         <nav className="flex max-h-40 flex-col gap-1 overflow-y-auto p-2 pt-1">
@@ -1049,11 +1061,11 @@ export default function App() {
               </button>
             );
           })}
-          {teamMeetings.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">Belum ada rapat.</p>}
+          {teamMeetings.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">{t("side.noMeetings")}</p>}
         </nav>
         <div className="border-t border-zinc-800 px-4 pb-1 pt-3">
-          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">Bantuan</div>
-          <div className="text-[11px] text-zinc-600">Tempat tanya jawab umum</div>
+          <div className="text-xs font-bold uppercase tracking-wide text-zinc-500">{t("side.support")}</div>
+          <div className="text-[11px] text-zinc-600">{t("side.supportHint")}</div>
         </div>
         <nav className="flex max-h-32 flex-col gap-1 overflow-y-auto p-2 pt-1">
           {supportGroups.map((g) => (
@@ -1068,7 +1080,7 @@ export default function App() {
               <span className="ml-1 text-[11px] text-zinc-500">{g.team_name}</span>
             </button>
           ))}
-          {supportGroups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">Belum ada channel bantuan.</p>}
+          {supportGroups.length === 0 && <p className="px-2 pb-1 text-xs text-zinc-600">{t("side.noSupport")}</p>}
         </nav>
       </aside>
 
@@ -1077,36 +1089,36 @@ export default function App() {
         <header className="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2 md:px-4">
           <div className="flex min-w-0 items-center gap-1">
             {view === "bot" && bot ? (
-              <button type="button" onClick={() => setView("chat")} title="Kembali ke chat" className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800">
-                ← {bot.name} <span className="text-xs font-normal text-zinc-500">pengaturan</span>
+              <button type="button" onClick={() => setView("chat")} title={t("top.backChat")} className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800">
+                ← {bot.name} <span className="text-xs font-normal text-zinc-500">{t("top.botSettings")}</span>
               </button>
             ) : view === "group" ? (
-              <span className="truncate px-1 font-semibold"><span className="mr-1 font-bold text-zinc-300">#</span>{groups.find((g) => g.id === groupId)?.name ?? "group"}</span>
+              <span className="truncate px-1 font-semibold"><span className="mr-1 font-bold text-zinc-300">#</span>{groups.find((g) => g.id === groupId)?.name ?? t("top.mainTitleGroup")}</span>
             ) : view === "dm" && dmPeer ? (
               <span className="truncate px-1 font-semibold"><span className="mr-1 text-teal-300">✉</span>{dmPeer.name}</span>
             ) : view === "meeting" ? (
-              <span className="truncate px-1 font-semibold"><span className="mr-1 text-zinc-300">◉</span>{meetings.find((h) => h.id === meetingId)?.topic.slice(0, 40) ?? "meeting"}</span>
+              <span className="truncate px-1 font-semibold"><span className="mr-1 text-zinc-300">◉</span>{meetings.find((h) => h.id === meetingId)?.topic.slice(0, 40) ?? t("top.mainTitleMeeting")}</span>
             ) : view === "settings" ? (
-              <span className="px-1 font-semibold">Pengaturan</span>
+              <span className="px-1 font-semibold">{t("top.mainTitleSettings")}</span>
             ) : view === "code" ? (
-              <span className="px-1 font-semibold">File</span>
+              <span className="px-1 font-semibold">{t("top.mainTitleFiles")}</span>
             ) : view === "market" ? (
-              <span className="px-1 font-semibold">Toko</span>
+              <span className="px-1 font-semibold">{t("top.mainTitleMarket")}</span>
             ) : view === "apps" ? (
-              <span className="px-1 font-semibold">Aplikasi</span>
+              <span className="px-1 font-semibold">{t("top.mainTitleApps")}</span>
             ) : (
-              <button type="button" onClick={() => bot && setView("bot")} disabled={!bot} title={bot ? "Pengaturan asisten" : undefined} className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800 disabled:hover:bg-transparent">
-                <span className="mr-1 font-bold text-zinc-300">#</span>{bot ? bot.name : "pilih asisten"}
+              <button type="button" onClick={() => bot && setView("bot")} disabled={!bot} title={bot ? t("top.botSettings") : undefined} className="min-w-0 truncate rounded px-1 text-left font-semibold hover:bg-zinc-800 disabled:hover:bg-transparent">
+                <span className="mr-1 font-bold text-zinc-300">#</span>{bot ? bot.name : t("top.pickAssistant")}
               </button>
             )}
           </div>
           <button
             type="button"
             onClick={() => { if (voiceOn) stopSpeaking(); setVoiceOn((v) => !v); }}
-            title="Balasan bersuara nyala/mati"
+            title={t("top.voiceTitle")}
             className={`rounded-md border px-2 py-1 text-xs font-semibold ${voiceOn ? "border-emerald-600 text-emerald-400" : "border-zinc-700 text-zinc-400"}`}
           >
-              {voiceOn ? "Suara nyala" : "Suara mati"}
+              {voiceOn ? t("top.voiceOn") : t("top.voiceOff")}
           </button>
         </header>
 
@@ -1132,8 +1144,9 @@ export default function App() {
                 setTeams(list);
                 if (!list.some((t) => t.id === teamId)) setTeamId(list[0]?.id ?? null);
               }}
-              onCreateBot={(ownerId) => newBot(ownerId)}
-              onLogout={logout}
+                    onCreateBot={(ownerId) => newBot(ownerId)}
+                    onLogout={logout}
+                    onUserChanged={setUser}
             />
           </main>
         ) : view === "code" ? (
@@ -1207,7 +1220,7 @@ export default function App() {
             <BotView
               bot={bot}
               providerInfo={providerInfo}
-              partnerName={bot.owner_user_id === user.id ? "you" : (memberNames[bot.owner_user_id] ?? "teammate")}
+              partnerName={bot.owner_user_id === user.id ? t("nav.you") : (memberNames[bot.owner_user_id] ?? t("common.teammate"))}
               onSaved={(updated) => {
                 setBot(updated);
                 setBots((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
@@ -1223,17 +1236,17 @@ export default function App() {
             <main className="flex-1 overflow-y-auto px-4 py-4">
               {!bot ? (
                 <div className="mx-auto max-w-xl py-16">
-                  <h2 className="text-xl font-bold">Halo, {user.name || user.email}.</h2>
-                  <p className="mt-2 text-zinc-400">Pilih asisten di kiri untuk lanjut ngobrol — atau buat yang baru. Tiap asisten punya riwayat dan ingatannya sendiri.</p>
-                  <button type="button" onClick={() => newBot()} className="mt-4 rounded-md bg-emerald-600 px-4 py-2 font-semibold text-white hover:bg-emerald-500">
-                    + Asisten baru
+                  <h2 className="text-xl font-bold">{t("chat.hello", { name: user.name || user.email })}</h2>
+                  <p className="mt-2 text-zinc-400">{t("chat.emptyBody")}</p>
+                    <button type="button" onClick={() => newBot()} className="mt-4 rounded-md bg-emerald-600 px-4 py-2 font-semibold text-white hover:bg-emerald-500">
+                    {t("chat.newBot")}
                   </button>
                 </div>
               ) : (
                 messages.length === 0 && (
                   <div className="mx-auto max-w-xl py-16">
-                    <h2 className="text-xl font-bold">{bot.name} siap.</h2>
-                    <p className="mt-2 text-zinc-400">Ketik atau dikte pesan di bawah. Atur ingatan di tab Asisten dan {bot.name} akan mengingatnya di semua obrolan.</p>
+                    <h2 className="text-xl font-bold">{t("chat.ready", { name: bot.name })}</h2>
+                    <p className="mt-2 text-zinc-400">{t("chat.readyBody", { name: bot.name })}</p>
                   </div>
                 )
               )}
@@ -1245,15 +1258,15 @@ export default function App() {
                     {showDay && (
                       <div className="flex items-center gap-3 px-2 py-2">
                         <div className="h-px flex-1 bg-zinc-800" />
-                        <span className="rounded-full border border-zinc-700 px-3 py-0.5 text-xs font-semibold text-zinc-300">{dayLabel(m.created_at)}</span>
+                        <span className="rounded-full border border-zinc-700 px-3 py-0.5 text-xs font-semibold text-zinc-300">{dayLabel(m.created_at, lang)}</span>
                         <div className="h-px flex-1 bg-zinc-800" />
                       </div>
                     )}
                 <div className="group flex gap-3 rounded px-2 py-3 hover:bg-zinc-800/50">
-                  <BotAvatar bot={bot ?? { id: "u", name: m.role === "user" ? (user.name || "Anda") : "A", title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", relay: 1, user_id: "u", team_id: "", avatar_key: "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" } as SlaveBot} size="sm" />
+                  <BotAvatar bot={bot ?? { id: "u", name: m.role === "user" ? (user.name || t("common.you")) : t("chat.assistantFallback"), title: "", model: "", memory: "", role: "", parent_id: "", pinned: 0, pinned_by: "", owner_user_id: "", relay: 1, user_id: "u", team_id: "", avatar_key: "", archived: 0, voice: "luna", active_days: "all", active_start: "", active_end: "", created_at: "", updated_at: "" } as SlaveBot} size="sm" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
-                      <span className="text-sm font-bold">{m.role === "user" ? (user.name || "Anda") : (bot?.name ?? "Asisten")}</span>
+                      <span className="text-sm font-bold">{m.role === "user" ? (user.name || t("common.you")) : (bot?.name ?? t("chat.assistantFallback"))}</span>
                       {m.created_at && <span className="text-xs text-zinc-500">{new Date(m.created_at).toLocaleString()}</span>}
                       {m.role === "assistant" && m.content.trim() && bot && (
                         <button
@@ -1266,10 +1279,10 @@ export default function App() {
                               void speakReply(m.content, m.key, true);
                             }
                           }}
-                          title="Dengarkan jawaban ini dengan suara asisten"
+                          title={t("chat.speakTitle")}
                           className="rounded px-1 text-xs text-zinc-500 hover:bg-zinc-700 hover:text-emerald-400"
                         >
-                          {speakingKey === m.key ? "Stop" : "Bicara"}
+                          {speakingKey === m.key ? t("chat.stop") : t("chat.speak")}
                         </button>
                       )}
                     </div>
@@ -1290,7 +1303,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setPlusOpen((v) => !v)}
-                    title="Aksi lain"
+                    title={t("chat.moreActions")}
                     className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100"
                   >
                     <PlusIcon />
@@ -1300,13 +1313,13 @@ export default function App() {
                       <div className="fixed inset-0 z-30" onClick={() => setPlusOpen(false)} />
                       <div className="absolute bottom-11 left-0 z-40 w-52 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 py-1 shadow-xl">
                         <button type="button" onClick={() => { setPlusOpen(false); setView("settings"); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">
-                          Asisten baru
+                          {t("chat.menuNewBot")}
                         </button>
                         <button type="button" onClick={() => { setPlusOpen(false); newGroup(); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">
-                          Grup baru
+                          {t("chat.menuNewGroup")}
                         </button>
                         <button type="button" onClick={() => { setPlusOpen(false); openMeeting(null); }} className="block w-full px-4 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800">
-                          Rapat baru
+                          {t("chat.menuNewMeeting")}
                         </button>
                       </div>
                     </>
@@ -1321,13 +1334,13 @@ export default function App() {
                       send();
                     }
                   }}
-                  placeholder={bot ? `Pesan untuk ${bot.name}...` : "Pilih asisten dulu"}
+                  placeholder={bot ? t("chat.inputPlaceholder", { name: bot.name }) : t("chat.pickAssistant")}
                   rows={1}
                   disabled={!bot}
                   className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-40"
                 />
                 {conversing && (
-                  <span title="Mic level" className="mx-1 flex h-8 w-1.5 shrink-0 self-center overflow-hidden rounded-full bg-zinc-700">
+                  <span title={t("chat.micLevel")} className="mx-1 flex h-8 w-1.5 shrink-0 self-center overflow-hidden rounded-full bg-zinc-700">
                     <span className="mt-auto w-full bg-emerald-500" style={{ height: `${Math.round(micLevel * 100)}%` }} />
                   </span>
                 )}
@@ -1335,7 +1348,7 @@ export default function App() {
                   type="button"
                   onClick={toggleMic}
                   disabled={streaming || transcribing || conversing || !bot}
-                  title={recorder ? `Berhenti merekam (${recSecs.toFixed(0)} dtk)` : "Dikte dengan mikrofon"}
+                  title={recorder ? t("chat.micStop", { n: recSecs.toFixed(0) }) : t("chat.micDictate")}
                   className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full hover:bg-zinc-700 disabled:opacity-40 ${recorder ? "text-red-400" : "text-zinc-300"}`}
                 >
                   {recorder ? <span className="flex items-center gap-1 text-xs font-bold tabular-nums"><span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />{recSecs.toFixed(0)}</span> : transcribing ? <Spinner /> : <MicIcon />}
@@ -1344,7 +1357,7 @@ export default function App() {
                   <button
                     type="submit"
                     disabled={!input.trim() || !bot || streaming}
-                    title="Kirim"
+                    title={t("chat.send")}
                     className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 hover:bg-white disabled:bg-zinc-700 disabled:text-zinc-500"
                   >
                     {streaming ? <Spinner /> : <ArrowUpIcon />}
@@ -1354,7 +1367,7 @@ export default function App() {
                     type="button"
                     onClick={toggleConverse}
                     disabled={!bot || streaming || transcribing || !!recorder}
-                    title={conversing ? "Berhenti mode hands-free" : "Chat suara hands-free"}
+                    title={conversing ? t("chat.handsOff") : t("chat.handsOn")}
                     className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white disabled:opacity-40 ${conversing ? "bg-red-500 hover:bg-red-400" : "bg-blue-500 hover:bg-blue-400"}`}
                   >
                     <WaveIcon />
@@ -1367,5 +1380,26 @@ export default function App() {
       </div>
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  const [lang, setLangState] = useState<Lang>(() => (localStorage.getItem("slaver_lang") === "id" ? "id" : "en"));
+  const setLang = useCallback((l: Lang) => {
+    setLangState(l);
+    try {
+      localStorage.setItem("slaver_lang", l);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const value = useMemo(
+    () => ({ lang, setLang, t: (key: StringsKey, vars?: Record<string, string | number>) => translate(lang, key, vars) }),
+    [lang, setLang],
+  );
+  return (
+    <LangProvider value={value}>
+      <AppShell />
+    </LangProvider>
   );
 }

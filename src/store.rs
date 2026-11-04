@@ -11,6 +11,8 @@ pub struct UserRecord {
     pub id: String,
     pub email: String,
     pub name: String,
+    #[serde(default)]
+    pub lang: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -49,7 +51,7 @@ pub struct BotRow {
 
 
 pub async fn get_user(db: &Db, id: &str) -> Result<Option<UserRecord>> {
-    db.prepare("SELECT id, email, name FROM users WHERE id = ?")
+    db.prepare("SELECT id, email, name, lang FROM users WHERE id = ?")
         .bind(&[v_text(id)])?
         .first(None)
         .await
