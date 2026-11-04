@@ -21,15 +21,18 @@ Butuh [Bun](https://bun.sh) 1.2 atau lebih baru.
 
 ```bash
 cd apps/fnb-suite
-bun run setup                       # install dependensi, build, buat data contoh
+bun run setup                       # install dependensi dan build
 export ADMIN_TOKEN=$(openssl rand -hex 32)
+OWNER_PASSWORD='ganti-password-ini' bun run owner -- --email pemilik@usaha.id --name "Nama Pemilik" --business "Nama Usaha"
 bun run start                       # http://localhost:8080
 ```
 
-`bun run setup` membuat satu akun owner dan satu team contoh (McD, nama dan harga placeholder). Untuk memilih password sendiri:
+`bun run owner` membuat team dan akun owner untuk usaha Anda. Hanya bisa dijalankan sekali per database.
+
+Untuk demo, ada data contoh **Saung Ranggon** (menu, harga, dan paket dari menu asli rumah makan):
 
 ```bash
-SAMPLE_PASSWORD='ganti-password-ini' bun run seed
+bun run seed                        # login: demo@saung-ranggon.local, password ditampilkan sekali
 ```
 
 Buka:
