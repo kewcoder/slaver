@@ -92,7 +92,18 @@ pub fn secret_hits(text: &str) -> Vec<&'static str> {
     if token_after("AKIA", 16, |c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
         hits.push("AWS access key");
     }
-    if text.contains("PRIVATE KEY-----") {
+    // A real PEM block: the header line followed by base64 key material (not a regex that mentions it).
+    let pem = text.match_indices("PRIVATE KEY-----").any(|(i, m)| {
+        let before = &text[..i];
+        let header_start = before.rfind('\n').map(|n| n + 1).unwrap_or(0);
+        before[header_start..].trim_start().starts_with("-----BEGIN")
+            && text[i + m.len()..]
+                .lines()
+                .nth(1)
+                .map(|l| l.trim().len() >= 40 && l.trim().chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='))
+                .unwrap_or(false)
+    });
+    if pem {
         hits.push("private key block");
     }
     // NAME = "long-literal" for typical secret variable names.
@@ -103,12 +114,22 @@ pub fn secret_hits(text: &str) -> Vec<&'static str> {
         }
         let Some(pos) = line.find(['=', ':']) else { continue };
         let val = line[pos + 1..].trim().trim_matches(|c| c == '"' || c == '\'' || c == ',' || c == ';');
-        if val.len() >= 24 && val.chars().all(key_char) {
+        if val.len() >= 24 && val.chars().all(key_char) && looks_random(val) {
             hits.push("hard-coded API key assignment");
             break;
         }
     }
     hits
+}
+
+/// A credential looks random: letters and digits mixed, not an identifier such as
+/// `OPENAI_API_KEY` or `ACCESS_TOKEN_REFRESH_SKEW_SECONDS` (env var names, constants).
+fn looks_random(v: &str) -> bool {
+    let digits = v.chars().filter(|c| c.is_ascii_digit()).count();
+    let letters = v.chars().filter(|c| c.is_ascii_alphabetic()).count();
+    let upper_ident = v.contains('_') && v.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+    let lower_ident = v.contains('_') && v.chars().all(|c| c.is_ascii_lowercase() || c == '_');
+    digits >= 2 && letters >= 8 && !upper_ident && !lower_ident
 }
 
 pub fn model_provider_from_env() -> Option<(Provider, String)> {
@@ -186,6 +207,19 @@ struct Scan {
     tree: Vec<String>,
 }
 
+/// Tests, fixtures and docs: key-like strings there are usually fake examples.
+fn is_fixture(path: &str) -> bool {
+    let l = path.to_ascii_lowercase();
+    let name = l.rsplit('/').next().unwrap_or(&l);
+    l.ends_with(".md")
+        || l.ends_with(".mdx")
+        || ["test/", "tests/", "__tests__/", "fixtures/", "e2e/", "docs/", "examples/"].iter().any(|d| l.starts_with(d) || l.contains(&format!("/{d}")))
+        || name.starts_with("test_")
+        || name.contains(".test.")
+        || name.contains(".spec.")
+        || name.contains("_test.")
+}
+
 /// `.env`, `.env.local`, ... but not `.env.example` / `.env.sample` or direnv's `.envrc`.
 fn is_env_file(name: &str) -> bool {
     (name == ".env" || name.starts_with(".env.")) && !name.ends_with(".example") && !name.ends_with(".sample")
@@ -199,6 +233,7 @@ async fn scan(git_root: &str, repo_id: &str) -> Result<Scan, String> {
     // Read text files and run static checks.
     let mut contents: Vec<(String, String)> = Vec::new();
     let mut secret_files: Vec<String> = Vec::new();
+    let mut fixture_secrets: Vec<String> = Vec::new();
     let mut big: Vec<String> = Vec::new();
     for (path, size) in &files {
         if *size > MAX_FILE_BYTES {
@@ -210,7 +245,8 @@ async fn scan(git_root: &str, repo_id: &str) -> Result<Scan, String> {
         if let Some(text) = crate::git::git_read_file(git_root, repo_id, path).await? {
             let hits = secret_hits(&text);
             if !hits.is_empty() {
-                secret_files.push(format!("{path} ({})", hits.join(", ")));
+                let entry = format!("{path} ({})", hits.join(", "));
+                if is_fixture(path) { fixture_secrets.push(entry) } else { secret_files.push(entry) }
             } else {
                 contents.push((path.clone(), text));
             }
@@ -227,6 +263,15 @@ async fn scan(git_root: &str, repo_id: &str) -> Result<Scan, String> {
         d.extend(env_files.iter().map(|p| format!("{p} (environment file committed)")));
         Check { level: "must".into(), name: "Secrets".into(), detail: format!("Remove credentials from: {}", d.join("; ")) }
     });
+    if !fixture_secrets.is_empty() {
+        let n = fixture_secrets.len();
+        let shown: Vec<&String> = fixture_secrets.iter().take(5).collect();
+        checks.push(Check {
+            level: "suggest".into(),
+            name: "Test keys".into(),
+            detail: format!("Key-like strings in {n} test/doc file(s), e.g. {}. Make sure they are fake.", shown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("; ")),
+        });
+    }
     checks.push(if has("README.md") {
         Check { level: "ok".into(), name: "README".into(), detail: "README.md found.".into() }
     } else {
@@ -382,9 +427,14 @@ mod tests {
     fn finds_secrets() {
         assert!(secret_hits("const k = 'sk-abcdefghijklmnopqrstuvwxyz123';").contains(&"OpenAI-style key"));
         assert!(secret_hits("API_KEY=abcdefghijklmnopqrstuvwxyz0123").contains(&"hard-coded API key assignment"));
-        assert!(secret_hits("-----BEGIN RSA PRIVATE KEY-----").contains(&"private key block"));
         assert!(secret_hits("const apiKey = process.env.MODEL_API_KEY;").is_empty());
         assert!(secret_hits("task-runner and disk-usage").is_empty());
+        // Names and patterns, not secrets.
+        assert!(secret_hits("API_KEY_ENV = \"ANTHROPIC_API_KEY_OVERRIDE_NAME\"").is_empty());
+        assert!(secret_hits("MIN_TTL = ACCESS_TOKEN_REFRESH_SKEW_SECONDS").is_empty());
+        assert!(secret_hits("re.compile(r\"-----BEGIN[A-Z ]*PRIVATE KEY-----[\\s\\S]*?\")").is_empty());
+        assert!(secret_hits("-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun\n").contains(&"private key block"));
+        assert!(secret_hits("TOKEN = \"a8f3k2m9x7q4w1e6r5t0y2u8i3o\"").contains(&"hard-coded API key assignment"));
     }
 
     #[test]
@@ -401,6 +451,39 @@ mod tests {
         assert!(ignored("apps/a/node_modules/x.js"));
         assert!(ignored("bun.lock"));
         assert!(!ignored("src/server.ts"));
+    }
+
+    /// `SCAN_DIR=/path cargo test scan_dir -- --ignored --nocapture`: secret hits in a source tree.
+    #[test]
+    #[ignore]
+    fn scan_dir() {
+        fn walk(d: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() { walk(&p, out) } else { out.push(p) }
+            }
+        }
+        let root = std::path::PathBuf::from(std::env::var("SCAN_DIR").unwrap());
+        let mut files = vec![];
+        walk(&root, &mut files);
+        for f in files {
+            let rel = f.strip_prefix(&root).unwrap().to_string_lossy().to_string();
+            if ignored(&rel) || !is_text(&rel) { continue }
+            if let Ok(t) = std::fs::read_to_string(&f) {
+                let h = secret_hits(&t);
+                if !h.is_empty() { println!("{rel}: {h:?}") }
+            }
+        }
+    }
+
+    #[test]
+    fn fixture_paths() {
+        assert!(is_fixture("tests/tools/test_approval.py"));
+        assert!(is_fixture("apps/desktop/e2e/a.spec.ts"));
+        assert!(is_fixture("website/docs/guide.md"));
+        assert!(is_fixture("src/foo.test.ts"));
+        assert!(!is_fixture("hermes_cli/auth.py"));
+        assert!(!is_fixture("src/server.ts"));
     }
 
     #[test]

@@ -171,6 +171,7 @@ const en = {
   "auth.loginTitle": "Welcome back",
   "auth.registerTitle": "Start your workspace",
   "auth.demoLabel": "Live demo · Restaurant workspace",
+  "auth.demoSeller": "Live demo · Seller workspace (Slaver Labs)",
   "auth.secureNote": "Your apps. Your server. Your rules.",
 
 
@@ -583,6 +584,7 @@ const id: Record<StringsKey, string> = {
   "auth.loginTitle": "Selamat datang kembali",
   "auth.registerTitle": "Mulai workspace-mu",
   "auth.demoLabel": "Demo live · Workspace rumah makan",
+  "auth.demoSeller": "Demo live · Workspace penjual (Slaver Labs)",
   "auth.secureNote": "Aplikasimu. Servermu. Aturanmu.",
 
 

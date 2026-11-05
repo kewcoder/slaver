@@ -129,7 +129,29 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, apps_dir: &str)
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
     ensure_demo(db, &git_root.to_string_lossy()).await;
-    ensure_demo_reviews(db, &git_root.to_string_lossy()).await;
+    move_listings_to_labs(db).await;
+    // Scanning a big repo takes minutes (one git read per file): never block boot on it.
+    let (db, root) = (db.clone(), git_root.to_string_lossy().to_string());
+    tokio::spawn(async move { ensure_demo_reviews(&db, &root).await });
+}
+
+/// The seller demo (labs@slaver.app, team "Slaver Labs") sells Slaver's own
+/// apps: once that team exists, the seeded F&B Suite listing moves to it.
+async fn move_listings_to_labs(db: &crate::db::Db) {
+    let r = async {
+        db.prepare(
+            "UPDATE repos SET team_id = (SELECT t.id FROM teams t JOIN users u ON u.id = t.owner_user_id WHERE u.email = ? AND t.name = 'Slaver Labs' ORDER BY t.created_at LIMIT 1) \
+             WHERE team_id = 'system-templates' AND name = 'F&B Suite' AND template = 1 \
+             AND EXISTS (SELECT 1 FROM teams t JOIN users u ON u.id = t.owner_user_id WHERE u.email = ? AND t.name = 'Slaver Labs')",
+        )
+        .bind(&[crate::db::v_text(LABS_EMAIL), crate::db::v_text(LABS_EMAIL)])?
+        .run()
+        .await
+    }
+    .await;
+    if let Err(e) = r {
+        eprintln!("seed: move listings to Slaver Labs failed: {e}");
+    }
 }
 
 /// Slaver's own seller account that submits Hermes Agent to the marketplace.
@@ -145,7 +167,6 @@ async fn ensure_demo_reviews(db: &crate::db::Db, git_root: &str) {
     let demos = [
         (
             "F&B Suite",
-            "system@slaver.app",
             AiReview {
                 score: Some(8.4),
                 summary: "A complete, installable F&B app: admin, online store and AI agents all go through one MCP endpoint with role checks, and the README gets a new owner running in minutes.".into(),
@@ -165,7 +186,6 @@ async fn ensure_demo_reviews(db: &crate::db::Db, git_root: &str) {
         ),
         (
             "Hermes Agent",
-            LABS_EMAIL,
             AiReview {
                 score: Some(8.6),
                 summary: "A mature, well-tested self-hosted AI companion with a clear install path. The codebase is large, so buyers will rely on the README and the Docker setup.".into(),
@@ -184,11 +204,11 @@ async fn ensure_demo_reviews(db: &crate::db::Db, git_root: &str) {
             },
         ),
     ];
-    for (name, owner_email, ai) in demos {
+    for (name, ai) in demos {
         // Only Slaver's own listings (owned by these accounts' teams), never a seller's look-alike.
         let rows: Vec<serde_json::Value> = match db
-            .prepare("SELECT r.id FROM repos r JOIN teams t ON t.id = r.team_id JOIN users u ON u.id = t.owner_user_id WHERE r.name = ? AND u.email = ? AND r.fork_of = ''")
-            .bind(&[crate::db::v_text(name), crate::db::v_text(owner_email)])
+            .prepare("SELECT r.id FROM repos r JOIN teams t ON t.id = r.team_id JOIN users u ON u.id = t.owner_user_id WHERE r.name = ? AND u.email IN ('system@slaver.app', ?) AND r.fork_of = ''")
+            .bind(&[crate::db::v_text(name), crate::db::v_text(LABS_EMAIL)])
         {
             Ok(q) => match q.all().await {
                 Ok(r) => r.results().unwrap_or_default(),

@@ -32,10 +32,10 @@ export function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
 
   const inputCls = "field mt-2";
 
-  function fillDemo() {
+  function fillDemo(demoEmail: string) {
     setMode("login");
     setError("");
-    setEmail("resto@slaver.app");
+    setEmail(demoEmail);
     setPassword("demo1234");
   }
 
@@ -97,14 +97,21 @@ export function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
               <p className="mt-1.5 text-sm leading-6 text-muted">{t("auth.loginHint")}</p>
             </div>
 
-            <button type="button" onClick={fillDemo} className="group mb-6 flex w-full items-center gap-3 rounded-xl border border-accent/20 bg-accent/[0.055] p-3 text-left hover:border-accent/40 hover:bg-accent/[0.08]">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent-text"><Icon name="spark" size={19} /></span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-xs font-bold text-accent-text">{t("auth.demoLabel")}</span>
-                <span className="mt-1 block truncate font-mono text-[11px] text-muted">resto@slaver.app / demo1234</span>
-              </span>
-              <Icon name="arrow" size={16} className="text-accent" />
-            </button>
+            <div className="mb-6 flex flex-col gap-2">
+              {([
+                ["resto@slaver.app", t("auth.demoLabel")],
+                ["labs@slaver.app", t("auth.demoSeller")],
+              ] as const).map(([demoEmail, label]) => (
+                <button key={demoEmail} type="button" onClick={() => fillDemo(demoEmail)} className="group flex w-full items-center gap-3 rounded-xl border border-accent/20 bg-accent/[0.055] p-3 text-left hover:border-accent/40 hover:bg-accent/[0.08]">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent-text"><Icon name={demoEmail.startsWith("labs") ? "upload" : "spark"} size={19} /></span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-bold text-accent-text">{label}</span>
+                    <span className="mt-1 block truncate font-mono text-[11px] text-muted">{demoEmail} / demo1234</span>
+                  </span>
+                  <Icon name="arrow" size={16} className="text-accent" />
+                </button>
+              ))}
+            </div>
 
             <div className="mb-5 grid grid-cols-2 rounded-lg bg-sidebar p-1">
               {(["login", "register"] as const).map((m) => (
