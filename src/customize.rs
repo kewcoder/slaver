@@ -32,6 +32,14 @@ mod tests {
         assert_eq!(e["ADMIN_DIR"], "/home/sprite/app/admin/dist");
         assert_eq!(e["PORT"], "8080");
     }
+
+    #[test]
+    fn parses_framed_exec() {
+        assert_eq!(super::parse_exec(b"\x01hi\n__EXIT=0\n\x03\x00"), (0, "hi\n__EXIT=0\n".to_string()));
+        assert_eq!(super::parse_exec(b"\x02tar: boom\n\x01__EXIT=2\n\x03\x00").0, 2);
+        assert_eq!(super::parse_exec(b"plain\n__EXIT=0\n").0, 0);
+        assert_eq!(super::parse_exec(b"\x02killed\n\x03\x89").0, 137);
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -186,12 +194,24 @@ async fn sx(token: &str, sprite: &str, script: &str, stdin: Option<Vec<u8>>) -> 
     }
     let r = req.query(&q).send().await.map_err(|e| format!("sprites: {e}"))?;
     let status = r.status();
-    let text = r.text().await.unwrap_or_default();
+    let body = r.bytes().await.map_err(|e| format!("sprites: {e}"))?;
     if !status.is_success() {
-        return Err(format!("sprites exec failed ({status}): {}", text.chars().take(300).collect::<String>()));
+        return Err(format!("sprites exec failed ({status}): {}", String::from_utf8_lossy(&body).chars().take(300).collect::<String>()));
     }
-    let code = text.rsplit("__EXIT=").next().and_then(|t| t.trim().parse::<i32>().ok()).unwrap_or(1);
-    Ok((code, text))
+    Ok(parse_exec(&body))
+}
+
+/// Exec output is a framed stream: 0x01 stdout / 0x02 stderr chunks, ending with
+/// an exit frame 0x03 <code>. Older responses were plain text; both carry our
+/// `__EXIT=` marker, used as the fallback exit code.
+fn parse_exec(body: &[u8]) -> (i32, String) {
+    let (data, frame_code) = match body {
+        [rest @ .., 0x03, c] => (rest, Some(*c as i32)),
+        _ => (body, None),
+    };
+    let text: String = String::from_utf8_lossy(&data.iter().copied().filter(|b| !matches!(b, 0x00..=0x03)).collect::<Vec<u8>>()).into_owned();
+    let marker = text.rsplit("__EXIT=").next().and_then(|t| t.split_whitespace().next()).and_then(|t| t.parse::<i32>().ok());
+    (marker.or(frame_code).unwrap_or(1), text)
 }
 
 async fn sprite_url(token: &str, sprite: &str) -> Option<String> {
