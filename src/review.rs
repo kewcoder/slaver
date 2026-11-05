@@ -111,15 +111,25 @@ pub fn secret_hits(text: &str) -> Vec<&'static str> {
     hits
 }
 
-fn model_provider_from_env() -> Option<(Provider, String)> {
+pub fn model_provider_from_env() -> Option<(Provider, String)> {
     let key = std::env::var("MODEL_API_KEY").ok().filter(|k| !k.trim().is_empty())?;
     let base = std::env::var("AI_BASE_URL").ok().filter(|b| !b.trim().is_empty()).unwrap_or_else(|| "https://api.meta.ai/v1".to_string());
     let model = std::env::var("AI_TEXT_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| provider::default_model_for("meta").to_string());
     Some((Provider { preset: "meta".to_string(), base_url: provider::normalize_base_url(&base), api_key: key.trim().to_string() }, model))
 }
 
+/// Model for a team: the server MODEL_API_KEY (Meta) when set, else the team's own key.
+pub async fn model_for(db: &Db, team_id: &str) -> Result<(Provider, String), String> {
+    if let Some(pm) = model_provider_from_env() {
+        return Ok(pm);
+    }
+    let p = provider::provider_for(db, team_id).await.map_err(|e| e.to_string())?;
+    let m = provider::default_model_for(&p.preset).to_string();
+    Ok((p, m))
+}
+
 /// Pull the first JSON object out of a model reply (handles ```json fences and prose around it).
-fn parse_ai(text: &str) -> Result<AiReview, String> {
+pub fn parse_ai(text: &str) -> Result<AiReview, String> {
     let start = text.find('{').ok_or("model did not return JSON")?;
     let end = text.rfind('}').ok_or("model did not return JSON")?;
     let v: Value = serde_json::from_str(&text[start..=end]).map_err(|e| format!("bad JSON from model: {e}"))?;

@@ -1,14 +1,15 @@
 # Slaver
 
-Self-hosted full-stack AI chat — zero Cloudflare. **API + MCP in Rust** (axum + rusqlite), **React SPA** (Vite + Tailwind) served by the same server, **Codex-like harness** with local tool execution. Slack-style UI. One Docker image, one deploy (Fly.io or any VPS).
+**Don't just connect software. Own it.**
 
-- SlaveBots with identity, memory, per-bot model/avatar/voice, sub-bots, schedules, archive, pin.
-- Teams with owner/admin/staff roles, per-staff bot grants, per-bot partnership (owner), team activity feed.
-- Each team brings its own AI provider (Meta default, Baseten, Modal, OpenRouter, OpenCode, Ollama, custom) configured in Teams settings — the only env secret is `JWT_SECRET`; spoken replies use the browser voice.
-- Groups (channels) with one-input broadcast + optional memory save, huddles with self-select join, voice dictation + hands-free mode, daily/weekly/monthly summaries, usage ledger + $10 demo credit.
-- Bots can consult peer bots on their own before replying (toggle per bot).
-- Harness runs: agentic coding runs with shell/file tools in per-run workspaces, streamed to the UI.
-- `POST /mcp` — MCP Streamable HTTP: chat, models, bot archive/pin/role/spawn/send, teams, schedules, huddles.
+Slaver is an app marketplace where small business owners buy software once, own the source code, run it on their own server, and customize it in plain language. Meta's models (Muse Spark via Meta Model API) do two jobs:
+
+- **Review every submission.** Static checks (leaked secrets, README, runnable, tests) run first, then Muse Spark scores the app and lists must-fix items. A listing only goes live when the current commit is approved (`src/review.rs`, `scripts/review-app.ts`, PR workflow in `.github/workflows/app-review.yml`).
+- **Customize apps for owners.** The owner types what to change, Muse Spark picks the files and rewrites them, Slaver commits to a `staging` branch, rebuilds a live preview in the owner's own sandbox, and the owner applies it to production (`src/customize.rs`).
+
+Buyers pay once (HitPay), get their own repo copy, and install with one click on their own Fly.io account (`src/hosting.rs`). First marketplace app: **F&B Suite** (`apps/fnb-suite/`). Hackathon submission details: [`SUBMISSION.md`](SUBMISSION.md).
+
+**Stack:** API + MCP in Rust (axum + rusqlite), React SPA (Vite + Tailwind) served by the same server, git service, team chat with AI bots. One Docker image, one deploy (Fly.io or any VPS). Each team brings its own AI provider (Meta by default) in Teams settings; the only env secret is `JWT_SECRET` (plus optional `MODEL_API_KEY` for platform-wide reviews).
 
 ## Prerequisites
 

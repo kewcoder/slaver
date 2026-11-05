@@ -10,6 +10,7 @@ import {
   type Project,
 } from "./api";
 import { InstallDialog, providerMeta } from "./HostingPanel";
+import CustomizeView from "./CustomizeView";
 import { useLang } from "./i18n";
 import { Icon, Spinner, type IconName } from "./ui";
 
@@ -31,6 +32,7 @@ export default function AppsView({
   const [updates, setUpdates] = useState<AppUpdate[]>([]);
   const [error, setError] = useState("");
   const [installFor, setInstallFor] = useState<Project | null>(null);
+  const [customizeFor, setCustomizeFor] = useState<Project | null>(null);
 
   const refresh = useCallback(async () => {
     if (!teamId) return setApps([]);
@@ -91,10 +93,27 @@ export default function AppsView({
               install={installs.find((i) => i.project_id === p.id) ?? null}
               update={updates.find((u) => u.project_id === p.id) ?? null}
               onInstall={() => setInstallFor(p)}
+              onCustomize={() => setCustomizeFor(p)}
               onChanged={refresh}
             />
           ))}
         </ul>
+      )}
+
+      {customizeFor && (
+        <CustomizeView
+          projectId={customizeFor.id}
+          teamId={teamId}
+          onClose={() => {
+            setCustomizeFor(null);
+            void refresh();
+          }}
+          onRedeploy={() => {
+            const p = customizeFor;
+            setCustomizeFor(null);
+            setInstallFor(p);
+          }}
+        />
       )}
 
       {installFor && (
@@ -118,12 +137,14 @@ function AppRow({
   install,
   update,
   onInstall,
+  onCustomize,
   onChanged,
 }: {
   project: Project;
   install: Install | null;
   update: AppUpdate | null;
   onInstall: () => void;
+  onCustomize: () => void;
   onChanged: () => Promise<void>;
 }) {
   const { t } = useLang();
@@ -233,6 +254,12 @@ function AppRow({
         </div>
 
         <div className="flex items-center gap-1.5">
+          {canInstall && (
+            <button type="button" onClick={onCustomize} className="btn-secondary px-3.5 py-2">
+              <Icon name="spark" size={15} />
+              {t("cz.open")}
+            </button>
+          )}
           {state === "live" ? (
             <a href={liveUrl} target="_blank" rel="noreferrer" className="btn-primary px-3.5 py-2">
               <Icon name="external" size={15} />

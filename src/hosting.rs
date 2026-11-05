@@ -91,6 +91,16 @@ async fn validate_token(provider: &str, token: &str, _account_ref: &str) -> Resu
     }
 }
 
+/// The team's Sprites token (staging sandboxes run on the customer's own Sprites org).
+pub async fn sprites_token(db: &Db, team_id: &str) -> Result<Option<String>> {
+    let row: Option<Value> = db
+        .prepare("SELECT api_token FROM hosting_accounts WHERE team_id = ? AND provider = 'sprites' ORDER BY created_at DESC LIMIT 1")
+        .bind(&[v_text(team_id)])?
+        .first(None)
+        .await?;
+    Ok(row.and_then(|r| r.get("api_token").and_then(|t| t.as_str()).map(|t| t.to_string())).filter(|t| !t.is_empty()))
+}
+
 pub async fn connect(db: &Db, team_id: &str, user_id: &str, provider: &str, name: &str, account_ref: &str, token: &str) -> Result<HostingAccount> {
     require_manager(db, team_id, user_id).await?;
     let token = token.trim();

@@ -492,3 +492,35 @@ export async function fetchUpdates(teamId: string): Promise<AppUpdate[]> {
 export async function applyUpdate(repoId: string): Promise<{ status: "updated" | "conflict" | "up_to_date"; sha?: string; branch?: string }> {
   return callTool("updates_apply", { repo_id: repoId });
 }
+
+// ---------- customize (AI edits on a staging sandbox) ----------
+
+export interface CustomizeChange {
+  id: string;
+  prompt: string;
+  status: "working" | "done" | "failed";
+  step: string;
+  summary: string;
+  files: string[];
+  commit: string;
+  error: string;
+  created_at: string;
+}
+
+export interface CustomizeStatus {
+  staging: { sprite: string; url: string; changes: CustomizeChange[] };
+  sprites_connected: boolean;
+  project: Project;
+}
+
+export async function fetchCustomize(projectId: string): Promise<CustomizeStatus> {
+  return callTool<CustomizeStatus>("customize_status", { project_id: projectId });
+}
+
+export async function sendCustomize(projectId: string, prompt: string): Promise<CustomizeChange> {
+  return (await callTool<{ change: CustomizeChange }>("customize_send", { project_id: projectId, prompt })).change;
+}
+
+export async function promoteCustomize(projectId: string): Promise<{ merged: boolean; commit: string }> {
+  return callTool("customize_promote", { project_id: projectId });
+}

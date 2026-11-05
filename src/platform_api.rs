@@ -49,6 +49,9 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "repos_publish", "description": "Publish/unpublish a team repo as a marketplace template. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id", "template"], "properties": { "repo_id": { "type": "string" }, "template": { "type": "boolean" } } } }),
         json!({ "name": "listing_review_run", "description": "Request a marketplace listing: a Meta model reviews the repo's current code (plus static checks for secrets/README) and returns a score, strengths, must-fix items and suggestions. The listing can go live only when the review is approved. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" }, "lang": { "type": "string", "enum": ["id", "en"] } } } }),
         json!({ "name": "listing_review_get", "description": "Latest listing review of a repo (current=true when it matches the current version), or null.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
+        json!({ "name": "customize_status", "description": "Staging sandbox (URL) and AI change history for an owned app.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
+        json!({ "name": "customize_send", "description": "Ask the Meta model to customize an owned app (e.g. 'make the primary color red'). Edits land on the staging branch and the staging sandbox is rebuilt. Runs in background; poll customize_status. Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id", "prompt"], "properties": { "project_id": { "type": "string" }, "prompt": { "type": "string" } } } }),
+        json!({ "name": "customize_promote", "description": "Apply staging to production: merge the staging branch into main. Redeploy production afterwards with install_start. Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
         json!({ "name": "repos_delete", "description": "Delete a team repo and its data. Owner/admin only; templates cannot be deleted.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
         json!({ "name": "licenses_buy", "description": "Buy a perpetual license for a template (mock checkout), auto-forks the repo and creates a project. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "repo_id"], "properties": { "team_id": { "type": "string" }, "repo_id": { "type": "string" }, "provider": { "type": "string" } } } }),
         json!({ "name": "licenses_checkout", "description": "Start a HitPay checkout for a template license. Returns a payment URL (or instant mock license when HitPay is not configured). Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "repo_id"], "properties": { "team_id": { "type": "string" }, "repo_id": { "type": "string" } } } }),
@@ -224,6 +227,21 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             match platform::fork_repo(db, user_id, &team_id, &rid, &state.git_root.to_string_lossy()).await {
                 Ok(r) => mcp_data(id, format!("Forked as {}.", r.name), json!({ "repo": r, "clone_url": format!("/git/{}", r.id) })),
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "customize_status" | "customize_send" | "customize_promote" => {
+            let pid = arg_str(args, "project_id");
+            if pid.is_empty() {
+                return Some(rpc_err(id, -32602, "project_id is required."));
+            }
+            let r = match name {
+                "customize_status" => crate::customize::status(state, user_id, &pid).await,
+                "customize_send" => crate::customize::send(state, user_id, &pid, &arg_str(args, "prompt")).await,
+                _ => crate::customize::promote(state, user_id, &pid).await,
+            };
+            match r {
+                Ok(v) => mcp_data(id, "OK.".to_string(), v),
+                Err(e) => rpc_err(id, -32602, &e),
             }
         }
         "listing_review_run" | "listing_review_get" => {

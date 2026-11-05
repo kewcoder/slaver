@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod auth;
+pub mod customize;
 pub mod db;
 pub mod fly;
 pub mod git;

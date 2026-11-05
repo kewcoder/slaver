@@ -98,9 +98,7 @@ Belum dipakai: Muse Image, SAM, Voice Transcribe.
 
 ## Untuk hackathon
 
-Karya baru untuk Meta Global AI Developer Hackathon adalah seluruh folder `apps/fnb-suite/`. Platform Slaver di root repo (`src/`, `frontend/`) sudah ada sebelumnya dan bukan bagian submission.
-
-Yang dibangun untuk submission: backend MCP dengan role, alur order dan stok, kasir, admin SPA, toko Astro SSR, fitur iklan dan kamera AI dengan Muse Spark, script seed dan reset, dan review AI untuk submission app lewat GitHub Actions.
+F&B Suite adalah app pertama di marketplace Slaver, dibangun selama Meta Global AI Developer Hackathon (27 Okt – 4 Nov 2026) bersama platform Slaver itu sendiri. App ini dipakai untuk mendemokan alur marketplace dari awal sampai akhir: review submission oleh Muse Spark, beli sekali, install ke server sendiri, lalu customize lewat AI di staging. Detail submission ada di [`SUBMISSION.md`](../../SUBMISSION.md).
 
 ## Keterbatasan
 
