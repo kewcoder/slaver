@@ -193,5 +193,47 @@ export function openDb(path: string): Database {
   const db = new Database(path, { create: true });
   if (path !== ":memory:") db.exec("PRAGMA journal_mode = WAL;");
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+// ---------- Versioned migrations ----------
+//
+// The base SCHEMA above is idempotent (IF NOT EXISTS), so it is safe on old
+// databases. Anything that changes an EXISTING table goes here as a numbered
+// migration instead, so already-installed deployments upgrade automatically on
+// next start without losing data.
+//
+// Rules: never edit a migration that has been released; only append new ones
+// and bump SCHEMA_VERSION to match the highest version.
+export const SCHEMA_VERSION = 1;
+
+const MIGRATIONS: { version: number; sql: string }[] = [
+  // Example (do not reuse version numbers):
+  // { version: 2, sql: "ALTER TABLE products ADD COLUMN sku TEXT NOT NULL DEFAULT '';" },
+];
+
+export function getSchemaVersion(db: Database): number {
+  const row = db.query("PRAGMA user_version").get() as { user_version: number } | null;
+  return row?.user_version ?? 0;
+}
+
+// Applies pending migrations and stamps legacy databases (user_version = 0,
+// created before versioning existed) with the current version. The base
+// SCHEMA already ran, so stamping is safe: nothing is missing.
+export function migrate(db: Database): { from: number; to: number } {
+  const from = getSchemaVersion(db);
+  let v = from;
+  db.transaction(() => {
+    for (const m of MIGRATIONS.filter((m) => m.version > v).sort((a, b) => a.version - b.version)) {
+      db.exec(m.sql);
+      db.exec(`PRAGMA user_version = ${m.version}`);
+      v = m.version;
+    }
+    if (v < SCHEMA_VERSION) {
+      db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+      v = SCHEMA_VERSION;
+    }
+  })();
+  return { from, to: v };
 }

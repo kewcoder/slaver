@@ -5,6 +5,8 @@ import * as d from "./domain.ts";
 import * as acc from "./accounts.ts";
 import * as ads from "./ads.ts";
 import * as cam from "./camera.ts";
+import { checkForUpdates, type UpdateCheckConfig } from "./update.ts";
+import { APP_VERSION } from "./version.ts";
 import type { AiConfig } from "./ai.ts";
 import { DomainError, FULFILLMENTS, ORDER_STATUSES, PAYMENT_METHODS, TABLE_STATUSES } from "./domain.ts";
 import { can, type Role } from "./accounts.ts";
@@ -47,10 +49,11 @@ export interface McpOptions {
   userId: string | null;
   token: string | null; // bearer token used for this request (for logout)
   ai: AiConfig | null;
+  update?: UpdateCheckConfig | null; // update-check source (UPDATE_CHECK_URL)
 }
 
 export function createMcpServer(db: Database, opts: McpOptions) {
-  const server = new McpServer({ name: "fnb-suite", version: "0.3.0" });
+  const server = new McpServer({ name: "fnb-suite", version: APP_VERSION });
   const role = opts.role;
 
   // Registers the tool only if the caller's role is at least `min`.
@@ -390,6 +393,13 @@ export function createMcpServer(db: Database, opts: McpOptions) {
     description: "Revenue, order count, payment mix, and top products for one shop-local date (YYYY-MM-DD).",
     inputSchema: { date: isoDate },
   }, ({ date }) => d.salesSummary(db, date));
+
+  reg("manager", "update_status", {
+    title: "Check for updates",
+    description:
+      "Compare the running app version against UPDATE_CHECK_URL. Returns whether an update is available. Disabled when no check URL is configured.",
+    inputSchema: { refresh: z.boolean().optional().describe("Ignore the cache and check again now") },
+  }, (args) => checkForUpdates(opts.update ?? {}, { refresh: args.refresh }));
 
   reg("manager", "ad_generate", {
     title: "Generate ad copy",

@@ -14,7 +14,7 @@ const TOKEN_KEY = "fnb-admin-session";
 
 function connectWith(token: string | null): Promise<Client> {
   return (async () => {
-    const c = new Client({ name: "fnb-admin", version: "0.3.0" });
+    const c = new Client({ name: "fnb-admin", version: "0.4.0" });
     await c.connect(
       new StreamableHTTPClientTransport(new URL("/mcp", location.origin), {
         requestInit: token ? { headers: { Authorization: `Bearer ${token}` } } : {},
@@ -86,6 +86,23 @@ export function logout() {
   localStorage.removeItem(TOKEN_KEY);
   client?.close().catch(() => {});
   client = null;
+}
+
+// Update check (manager+). Returns null when the server has no check URL
+// configured or is too old to have the tool — the banner simply stays hidden.
+export async function updateStatus(): Promise<{
+  configured: boolean;
+  current: string;
+  latest: string | null;
+  update_available: boolean;
+  notes?: string;
+  url?: string;
+} | null> {
+  try {
+    return await call("update_status");
+  } catch {
+    return null;
+  }
 }
 
 export async function call<T = any>(name: string, args: Record<string, unknown> = {}): Promise<T> {

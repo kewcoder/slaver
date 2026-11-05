@@ -4,7 +4,10 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { openDb } from "./db.ts";
 import { createMcpServer } from "./mcp.ts";
 import { resolveAuth } from "./accounts.ts";
+import { hasOwner } from "./accounts.ts";
 import { aiFromEnv, type AiConfig } from "./ai.ts";
+import { getSchemaVersion, SCHEMA_VERSION } from "./db.ts";
+import { APP_VERSION } from "./version.ts";
 import { tickCampaigns } from "./ads.ts";
 
 // One public port. Routes:
@@ -21,6 +24,8 @@ export interface AppConfig {
   storeUrl?: string;
   ai?: AiConfig | null;
   campaignTickMs?: number;
+  updateCheckUrl?: string;
+  updateCheckTtlMs?: number;
 }
 
 export function startServer(cfg: AppConfig) {
@@ -39,6 +44,16 @@ export function startServer(cfg: AppConfig) {
 
       if (path === "/healthz") return new Response("ok");
 
+      if (path === "/version") {
+        return Response.json({
+          app: "fnb-suite",
+          version: APP_VERSION,
+          schema_version: SCHEMA_VERSION,
+          db_schema_version: getSchemaVersion(db),
+          needs_setup: !hasOwner(db),
+        });
+      }
+
       if (path === "/mcp") {
         // Stateless server: no server-initiated SSE stream. Clients fall back to POST only.
         if (req.method === "GET" || req.method === "DELETE") {
@@ -47,7 +62,13 @@ export function startServer(cfg: AppConfig) {
         const bearer = bearerOf(req);
         const auth = resolveAuth(db, bearer, cfg.adminToken);
         // Stateless: a fresh server + transport per request, no session state.
-        const server = createMcpServer(db, { role: auth.role, userId: auth.userId, token: bearer, ai });
+        const server = createMcpServer(db, {
+          role: auth.role,
+          userId: auth.userId,
+          token: bearer,
+          ai,
+          update: { url: cfg.updateCheckUrl, ttlMs: cfg.updateCheckTtlMs },
+        });
         const transport = new WebStandardStreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
           enableJsonResponse: true,
@@ -143,6 +164,7 @@ if (import.meta.main) {
     adminDir: process.env.ADMIN_DIR ?? "./admin/dist",
     storeUrl: storeEntry ? `http://127.0.0.1:${storePort}` : undefined,
     ai: aiFromEnv(),
+    updateCheckUrl: process.env.UPDATE_CHECK_URL ?? "",
   });
   console.log(`fnb-suite on http://localhost:${server.port} (mcp: /mcp, admin: /admin)`);
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { login, restore, logout, call, setupStatus, setupOwner, type Session, type Role } from "./api";
+import { login, restore, logout, call, setupStatus, setupOwner, updateStatus, type Session, type Role } from "./api";
 import { Dashboard, Pos, Orders, Menu, Tables, Customers, Promotions, Settings } from "./pages";
 import { Ads, Camera, Team } from "./pages2";
 import { Msg, useAction } from "./ui";
@@ -31,6 +31,8 @@ export default function App() {
   const [page, setPage] = useState<PageId>("pos");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [update, setUpdate] = useState<{ current: string; latest: string | null; update_available: boolean; notes?: string; url?: string } | null>(null);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
   const act = useAction();
 
   useEffect(() => {
@@ -53,6 +55,13 @@ export default function App() {
     });
     const first = PAGES.find((p) => allowed(session.role, p.min));
     if (first) setPage(first.id);
+    // Update banner for manager+. Silent when unconfigured or on old servers.
+    if (allowed(session.role, "manager")) {
+      setUpdateDismissed(false);
+      updateStatus().then(setUpdate).catch(() => {});
+    } else {
+      setUpdate(null);
+    }
   }, [session]);
 
   if (checking) return <div className="login"><p className="muted">Memuat…</p></div>;
@@ -106,6 +115,18 @@ export default function App() {
         </button>
       </nav>
       <main>
+        {update?.update_available && !updateDismissed && (
+          <div className="msg ok">
+            Update tersedia: v{update.current} → v{update.latest}.
+            {update.notes ? ` ${update.notes}` : ""}
+            {update.url ? (
+              <> <a href={update.url} target="_blank" rel="noreferrer">Lihat catatan rilis</a>.</>
+            ) : (
+              " Update image/container ke versi terbaru (data di volume tetap aman)."
+            )}{" "}
+            <button className="ghost small" onClick={() => setUpdateDismissed(true)}>Tutup</button>
+          </div>
+        )}
         {page === "dashboard" && <Dashboard offset={offset} />}
         {page === "pos" && <Pos offset={offset} />}
         {page === "orders" && <Orders offset={offset} />}

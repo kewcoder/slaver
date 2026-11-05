@@ -65,10 +65,30 @@ Satu container per klien. SQLite hanya boleh satu writer, jadi jalankan satu ins
 | `MODEL_API_KEY` | tidak | Key [Meta Model API](https://dev.meta.ai). Tanpa key: iklan memakai template, kamera AI tidak aktif. |
 | `AI_BASE_URL` | tidak | Default `https://api.meta.ai/v1`. Bisa diarahkan ke endpoint OpenAI-compatible lain. |
 | `AI_TEXT_MODEL`, `AI_VISION_MODEL` | tidak | Default `muse-spark-1.3`. |
+| `UPDATE_CHECK_URL` | tidak | URL dokumen JSON `{version, notes?, url?}` untuk cek update. Tanpa ini, banner update di admin tidak tampil. |
 | `DB_PATH` | tidak | Default `./data/fnb.db`. |
 | `PORT` | tidak | Default `8080`. |
 
 Salin `.env.example` ke `.env` untuk mengisinya.
+
+## Update (sinkron ke production)
+
+Satu container per klien, database di volume (`/data/fnb.db`). Update = ganti image/container, data tetap aman selama volume dipakai ulang dan `ADMIN_TOKEN` sama:
+
+```bash
+# Docker
+docker build -t fnb-suite . && docker stop fnb && docker rm fnb
+docker run -d --name fnb -p 8080:8080 -e ADMIN_TOKEN='<sama>' -v fnb-data:/data fnb-suite
+
+# Fly.io (volume fnb_data persist otomatis)
+fly deploy
+
+# Lokal
+git pull && bun run setup && bun run start
+```
+
+- **Migrasi schema otomatis.** Perubahan tabel lama ditulis sebagai migrasi berversi di `src/db.ts` (`MIGRATIONS` + `SCHEMA_VERSION`, tercatat di `PRAGMA user_version`). Saat server start, migrasi yang belum jalan diterapkan dalam transaksi — instalasi lama ikut upgrade tanpa kehilangan data. Aturan: jangan ubah migrasi yang sudah rilis, hanya tambah baru.
+- **Cek update.** Isi `UPDATE_CHECK_URL` dengan JSON seperti `{"version":"0.5.0","notes":"Yang baru...","url":"https://.../rilis"}` (bisa file statis di repo rilis atau endpoint marketplace). Manajer/owner lalu melihat banner "Update tersedia" di admin; tool MCP `update_status` mengembalikan perbandingan versi. Versi jalan bisa dicek siapa saja di `GET /version` (butuh login? tidak — publik, hanya nomor versi + status setup).
 
 ## Customize
 
@@ -87,7 +107,7 @@ Ubah menu, promo, meja, dan pengaturan toko lewat admin, atau langsung lewat MCP
 ## Tes
 
 ```bash
-bun test          # 59 tes: alur order, stok, promo, role, iklan, kamera, seed, routing
+bun test          # 73 tes: order, stok, promo, role, iklan, kamera, seed, routing, setup, update
 bun run typecheck
 ```
 
