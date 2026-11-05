@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   applyUpdate,
+  fetchDesktopMeta,
   fetchUpdates,
   fetchInstalls,
   fetchProjects,
   setProjectUrls,
   type AppUpdate,
+  type DesktopMeta,
   type Install,
   type Project,
 } from "./api";
+import { isDesktop } from "./slaver-local";
 import { InstallDialog, providerMeta } from "./HostingPanel";
 import CustomizeView from "./CustomizeView";
+import LocalRunPanel from "./LocalRunPanel";
 import { useLang } from "./i18n";
 import { Icon, Spinner, type IconName } from "./ui";
 
@@ -33,6 +37,17 @@ export default function AppsView({
   const [error, setError] = useState("");
   const [installFor, setInstallFor] = useState<Project | null>(null);
   const [customizeFor, setCustomizeFor] = useState<Project | null>(null);
+  const [localCapable, setLocalCapable] = useState(false);
+
+  useEffect(() => {
+    if (isDesktop()) {
+      setLocalCapable(true);
+      return;
+    }
+    fetchDesktopMeta()
+      .then((m) => setLocalCapable(m.desktop || m.bun.found))
+      .catch(() => {});
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!teamId) return setApps([]);
@@ -92,6 +107,7 @@ export default function AppsView({
               project={p}
               install={installs.find((i) => i.project_id === p.id) ?? null}
               update={updates.find((u) => u.project_id === p.id) ?? null}
+              canLocal={localCapable}
               onInstall={() => setInstallFor(p)}
               onCustomize={() => setCustomizeFor(p)}
               onChanged={refresh}
@@ -136,6 +152,7 @@ function AppRow({
   project: p,
   install,
   update,
+  canLocal,
   onInstall,
   onCustomize,
   onChanged,
@@ -143,13 +160,14 @@ function AppRow({
   project: Project;
   install: Install | null;
   update: AppUpdate | null;
+  canLocal: boolean;
   onInstall: () => void;
   onCustomize: () => void;
   onChanged: () => Promise<void>;
 }) {
   const { t } = useLang();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [panel, setPanel] = useState<"none" | "url" | "preview">("none");
+  const [panel, setPanel] = useState<"none" | "url" | "preview" | "run">("none");
   const [prodUrl, setProdUrl] = useState(p.prod_url);
   const [devUrl, setDevUrl] = useState(p.dev_url);
   const [busy, setBusy] = useState(false);
@@ -211,6 +229,7 @@ function AppRow({
   }
 
   const menuItems: { label: string; icon: IconName; run: () => void; show: boolean }[] = [
+    { label: t("run.menu"), icon: "play", run: () => setPanel("run"), show: canInstall && canLocal },
     { label: t("apps.mReinstall"), icon: "rocket", run: onInstall, show: canInstall && state !== "none" },
     { label: panel === "preview" ? t("apps.mHidePreview") : t("apps.mPreview"), icon: "external", run: () => setPanel(panel === "preview" ? "none" : "preview"), show: !!liveUrl },
     {
@@ -335,6 +354,8 @@ function AppRow({
           </div>
         </div>
       )}
+
+      {panel === "run" && canLocal && <LocalRunPanel projectId={p.id} projectName={p.name} repoId={p.repo_id} />}
 
       {panel === "preview" && liveUrl && (
         <div className="border-t border-line">

@@ -511,6 +511,7 @@ export interface CustomizeChange {
 export interface CustomizeStatus {
   staging: { sprite: string; url: string; changes: CustomizeChange[] };
   sprites_connected: boolean;
+  sandbox: "sprites" | "local";
   project: Project;
 }
 
@@ -518,8 +519,8 @@ export async function fetchCustomize(projectId: string): Promise<CustomizeStatus
   return callTool<CustomizeStatus>("customize_status", { project_id: projectId });
 }
 
-export async function sendCustomize(projectId: string, prompt: string): Promise<CustomizeChange> {
-  return (await callTool<{ change: CustomizeChange }>("customize_send", { project_id: projectId, prompt })).change;
+export async function sendCustomize(projectId: string, prompt: string, ship?: "none"): Promise<CustomizeChange> {
+  return (await callTool<{ change: CustomizeChange }>("customize_send", { project_id: projectId, prompt, ...(ship ? { ship } : {}) })).change;
 }
 
 export async function discardCustomize(projectId: string): Promise<{ discarded: number; rebuilding: boolean }> {
@@ -528,4 +529,59 @@ export async function discardCustomize(projectId: string): Promise<{ discarded: 
 
 export async function promoteCustomize(projectId: string): Promise<{ merged: boolean; commit: string }> {
   return callTool("customize_promote", { project_id: projectId });
+}
+
+// ---------- desktop: local runs, tunnels, cloud sync ----------
+
+export interface DesktopMeta {
+  desktop: boolean;
+  bun: { found: boolean; path?: string };
+  git: { found: boolean; path?: string };
+  cloudflared: { found: boolean; path?: string };
+}
+
+export async function fetchDesktopMeta(): Promise<DesktopMeta> {
+  return callTool("desktop_meta", {});
+}
+
+export interface LocalRunStatus {
+  project_id: string;
+  running: boolean;
+  url: string | null;
+  port: number | null;
+}
+
+export async function localrunStart(projectId: string): Promise<LocalRunStatus> {
+  return callTool("localrun_start", { project_id: projectId });
+}
+
+export async function localrunStop(projectId: string): Promise<LocalRunStatus> {
+  return callTool("localrun_stop", { project_id: projectId });
+}
+
+export async function localrunStatus(projectId: string): Promise<LocalRunStatus> {
+  return callTool("localrun_status", { project_id: projectId });
+}
+
+export async function localrunLogs(projectId: string, tail = 80): Promise<{ project_id: string; lines: string[] }> {
+  return callTool("localrun_logs", { project_id: projectId, tail });
+}
+
+export interface TunnelState {
+  running: boolean;
+  url: string | null;
+  mode: string | null;
+  started_at: string | null;
+}
+
+export async function tunnelStart(port: number): Promise<TunnelState> {
+  return callTool("tunnel_start", { port });
+}
+
+export async function tunnelStop(): Promise<TunnelState> {
+  return callTool("tunnel_stop", {});
+}
+
+export async function tunnelStatus(): Promise<TunnelState> {
+  return callTool("tunnel_status", {});
 }

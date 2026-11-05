@@ -10,13 +10,14 @@
 //! history lives in `customize_changes` (the live step text stays in memory).
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::ai::ChatMessage;
 use crate::db::{v_int, v_text, Db};
+use crate::localapp;
 use crate::AppState;
 
 const SPRITES_API: &str = "https://api.sprites.dev/v1";
@@ -25,14 +26,6 @@ const BRANCH: &str = "staging";
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn maps_docker_env() {
-        let e = super::env_from_dockerfile("ENV NODE_ENV=production \\\n    DB_PATH=/data/fnb.db \\\n    ADMIN_DIR=/app/admin/dist\n");
-        assert_eq!(e["DB_PATH"], "/home/sprite/app/data/fnb.db");
-        assert_eq!(e["ADMIN_DIR"], "/home/sprite/app/admin/dist");
-        assert_eq!(e["PORT"], "8080");
-    }
-
     #[test]
     fn parses_framed_exec() {
         assert_eq!(super::parse_exec(b"\x01hi\n__EXIT=0\n\x03\x00"), (0, "hi\n__EXIT=0\n".to_string()));
@@ -223,22 +216,11 @@ async fn sprite_url(token: &str, sprite: &str) -> Option<String> {
     v["url"].as_str().map(String::from)
 }
 
-/// Env for the app inside the sprite, from the Dockerfile's ENV lines (/app and /data remapped).
-fn env_from_dockerfile(dockerfile: &str) -> serde_json::Map<String, Value> {
-    let mut env = serde_json::Map::new();
-    let joined = dockerfile.replace("\\\n", " ");
-    for line in joined.lines() {
-        let Some(rest) = line.trim().strip_prefix("ENV ") else { continue };
-        for pair in rest.split_whitespace() {
-            if let Some((k, v)) = pair.split_once('=') {
-                let v = v.trim_matches('"');
-                let v = if let Some(r) = v.strip_prefix("/app") { format!("{APP_DIR}{r}") } else if let Some(r) = v.strip_prefix("/data") { format!("{APP_DIR}/data{r}") } else { v.to_string() };
-                env.insert(k.to_string(), Value::String(v));
-            }
-        }
-    }
+/// Env for the app inside the sprite: Dockerfile ENV lines with /app and
+/// /data remapped, PORT forced to the sprite's HTTP port.
+fn sprite_env(dockerfile: &str) -> serde_json::Map<String, Value> {
+    let mut env = localapp::env_from_dockerfile(dockerfile, APP_DIR, &format!("{APP_DIR}/data"));
     env.insert("PORT".into(), Value::String("8080".into()));
-    env.entry("NODE_ENV".to_string()).or_insert(Value::String("production".into()));
     env
 }
 
@@ -269,7 +251,7 @@ async fn ensure_sprite(state: &AppState, token: &str, project_id: &str, repo_id:
     ship(state, token, &sprite, &git_root, repo_id, project_id, change_id, true).await?;
     set_step(project_id, change_id, "Starting the app…");
     let dockerfile = crate::git::git_read_file_at(&git_root, repo_id, BRANCH, "Dockerfile").await?.unwrap_or_default();
-    let mut env = env_from_dockerfile(&dockerfile);
+    let mut env = sprite_env(&dockerfile);
     let mut key = [0u8; 32];
     getrandom::getrandom(&mut key).map_err(|e| e.to_string())?;
     env.insert("ADMIN_TOKEN".into(), Value::String(hex::encode(key)));
@@ -285,8 +267,144 @@ async fn ensure_sprite(state: &AppState, token: &str, project_id: &str, repo_id:
         return Err(format!("Could not start the app on staging ({}).", r.status()));
     }
     let _ = r.text().await;
-    let url = sprite_url(token, &sprite).await.unwrap_or_default();
+    let url = sprite_url(&token, &sprite).await.unwrap_or_default();
     Ok((sprite, url))
+}
+
+// ---------- local staging (no Sprites account) ----------
+//
+// Same flow as sprites, but the sandbox is a plain dir on this machine and
+// the app runs under the user's own Bun. Used automatically when the team
+// has no Sprites token (e.g. the desktop app). The staging DB lives next to
+// the checkout so rebuilds keep it.
+
+fn staging_key(project_id: &str) -> String {
+    format!("staging:{project_id}")
+}
+
+fn staging_dir(state: &AppState, project_id: &str) -> std::path::PathBuf {
+    state.workspace_dir.join("staging").join(project_id)
+}
+
+fn staging_data_dir(state: &AppState, project_id: &str) -> std::path::PathBuf {
+    state.workspace_dir.join("staging-data").join(project_id)
+}
+
+/// Prepare, build, and (re)start the local staging app. Returns its URL.
+async fn ship_local(state: &AppState, project_id: &str, repo_id: &str, change_id: &str, first: bool) -> Result<String, String> {
+    let key = staging_key(project_id);
+    let dir = staging_dir(state, project_id);
+    let data_dir = staging_data_dir(state, project_id);
+    std::fs::create_dir_all(&data_dir).map_err(|e| format!("mkdir data: {e}"))?;
+
+    let bun = localapp::find_bun().ok_or_else(|| localapp::bun_hint().to_string())?;
+    let git_root = state.git_root.to_string_lossy().to_string();
+
+    if !change_id.is_empty() {
+        set_step(project_id, change_id, "Preparing local staging…");
+    }
+    // Keep the staging DB across rebuilds: set it aside, extract, restore.
+    let data_backup = dir.with_extension("data.bak");
+    let had_data = dir.join("data").is_dir();
+    if had_data {
+        let _ = std::fs::remove_dir_all(&data_backup);
+        std::fs::rename(dir.join("data"), &data_backup).map_err(|e| format!("backup data: {e}"))?;
+    }
+    localapp::prepare_dir(&git_root, repo_id, BRANCH, &dir).await?;
+    if had_data {
+        let _ = std::fs::remove_dir_all(dir.join("data"));
+        std::fs::rename(&data_backup, dir.join("data")).map_err(|e| format!("restore data: {e}"))?;
+    }
+
+    if !change_id.is_empty() {
+        set_step(project_id, change_id, if first { "Installing and building (first time)…" } else { "Rebuilding…" });
+    }
+    let seed = first && !data_dir.join("app.db").is_file();
+    if let Err(e) = localapp::build_app(&bun, &dir, seed).await {
+        return Err(format!("Local build failed. {e}"));
+    }
+
+    // Old process out before the new one binds the port.
+    localapp::kill(&key).await;
+    let port = localapp::free_port();
+    if port == 0 {
+        return Err("No free port for staging.".to_string());
+    }
+    let dir_s = dir.to_string_lossy().to_string();
+    let data_s = data_dir.to_string_lossy().to_string();
+    let mut env = localapp::env_from_dockerfile(
+        &crate::git::git_read_file_at(&git_root, repo_id, BRANCH, "Dockerfile").await?.unwrap_or_default(),
+        &dir_s,
+        &data_s,
+    );
+    env.insert("PORT".into(), Value::String(port.to_string()));
+    env.insert("DB_PATH".into(), Value::String(data_dir.join("app.db").to_string_lossy().to_string()));
+    let mut token_bytes = [0u8; 32];
+    getrandom::getrandom(&mut token_bytes).map_err(|e| format!("random: {e}"))?;
+    env.insert("ADMIN_TOKEN".into(), Value::String(hex::encode(token_bytes)));
+    if let Ok(k) = std::env::var("MODEL_API_KEY") {
+        if !k.trim().is_empty() {
+            env.insert("MODEL_API_KEY".into(), Value::String(k));
+        }
+    }
+    let env_vec: Vec<(String, String)> = env
+        .into_iter()
+        .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+        .collect();
+    let child = localapp::spawn_bun(&bun, &dir, &env_vec)?;
+    let url = format!("http://127.0.0.1:{port}");
+    let log = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+    localapp::register(&key, child, port, url.clone(), log);
+    if !change_id.is_empty() {
+        set_step(project_id, change_id, "Starting the app…");
+    }
+    if !localapp::wait_healthy(port, "/healthz").await {
+        localapp::kill(&key).await;
+        let tail = localapp::app_logs(&key, 15).join("\n");
+        // logs are gone with the registry entry; report what we kept
+        let _ = tail;
+        return Err(format!("The staging app did not answer on port {port}. See the app log in the run panel."));
+    }
+    Ok(url)
+}
+
+/// Local staging is only allowed when explicitly enabled (desktop-embedded
+/// or self-hosted with Bun). The shared cloud server never runs user code.
+fn local_staging_enabled() -> bool {
+    std::env::var("SLAVER_LOCAL_STAGING").map(|v| v == "1").unwrap_or(false)
+}
+
+#[derive(PartialEq)]
+enum StagingKind {
+    Sprite,
+    Local,
+}
+
+struct StagingTarget {
+    kind: StagingKind,
+    name: String,
+    url: String,
+}
+
+/// Boot the staging sandbox: team's Sprite when a token is connected,
+/// otherwise a local dir + Bun on this machine.
+async fn ensure_staging(
+    state: &AppState,
+    token: Option<&str>,
+    project_id: &str,
+    repo_id: &str,
+    change_id: &str,
+) -> Result<(StagingTarget, Option<String>), String> {
+    match token {
+        Some(t) => {
+            let (sprite, url) = ensure_sprite(state, t, project_id, repo_id, change_id).await?;
+            Ok((StagingTarget { kind: StagingKind::Sprite, name: sprite, url }, Some(t.to_string())))
+        }
+        None => {
+            let url = ship_local(state, project_id, repo_id, change_id, true).await?;
+            Ok((StagingTarget { kind: StagingKind::Local, name: "local".to_string(), url }, None))
+        }
+    }
 }
 
 /// Upload the staging branch into the sprite and build it.
@@ -399,7 +517,7 @@ async fn ai_edit(state: &AppState, team_id: &str, repo_id: &str, prompt: &str, h
     Ok((summary, edits))
 }
 
-async fn run_change(state: AppState, team_id: String, project_id: String, repo_id: String, token: String, change_id: String, prompt: String) {
+async fn run_change(state: AppState, team_id: String, project_id: String, repo_id: String, token: Option<String>, change_id: String, prompt: String, ship_none: bool) {
     let res = async {
         let git_root = state.git_root.to_string_lossy().to_string();
         // staging branch starts from main
@@ -407,20 +525,39 @@ async fn run_change(state: AppState, team_id: String, project_id: String, repo_i
             let main = crate::git::git_rev(&git_root, &repo_id, "HEAD").await?.ok_or("This app has no code yet.")?;
             crate::git::git_set_branch(&git_root, &repo_id, BRANCH, &main, None).await?;
         }
-        let (sprite, url) = ensure_sprite(&state, &token, &project_id, &repo_id, &change_id).await?;
-        update(&project_id, |s| {
-            s.sprite = sprite.clone();
-            s.url = url.clone();
-        });
+        // ship:none (desktop): the client runs the staging branch itself.
+        let target = if ship_none {
+            update(&project_id, |s| {
+                s.sprite = "local-client".to_string();
+            });
+            None
+        } else {
+            let (t, tok) = ensure_staging(&state, token.as_deref(), &project_id, &repo_id, &change_id).await?;
+            update(&project_id, |s| {
+                s.sprite = t.name.clone();
+                s.url = t.url.clone();
+            });
+            Some((t, tok))
+        };
         set_step(&project_id, &change_id, "Meta model is editing the code…");
         let history = jobs().lock().unwrap().get(&project_id).map(|s| s.changes.clone()).unwrap_or_default();
         let (summary, edits) = ai_edit(&state, &team_id, &repo_id, &prompt, &history).await?;
         let parent = crate::git::git_rev(&git_root, &repo_id, BRANCH).await?.ok_or("staging branch missing")?;
         let commit = crate::git::git_commit_files(&git_root, &repo_id, &parent, &edits, &format!("AI: {prompt}\n\n{summary}")).await?;
         crate::git::git_set_branch(&git_root, &repo_id, BRANCH, &commit, Some(&parent)).await?;
-        ship(&state, &token, &sprite, &git_root, &repo_id, &project_id, &change_id, false).await?;
-        set_step(&project_id, &change_id, "Restarting…");
-        let _ = client().post(format!("{SPRITES_API}/sprites/{sprite}/services/app/restart")).bearer_auth(&token).send().await;
+        if let Some((target, token)) = target {
+            match (&target.kind, token.as_deref()) {
+                (StagingKind::Sprite, Some(t)) => {
+                    ship(&state, t, &target.name, &git_root, &repo_id, &project_id, &change_id, false).await?;
+                    set_step(&project_id, &change_id, "Restarting…");
+                    let _ = client().post(format!("{SPRITES_API}/sprites/{}/services/app/restart", target.name)).bearer_auth(t).send().await;
+                }
+                // Local staging: ship rebuilds and restarts in one step.
+                _ => {
+                    ship_local(&state, &project_id, &repo_id, &change_id, false).await?;
+                }
+            }
+        }
         Ok::<_, String>((summary, edits.into_iter().map(|(p, _)| p).collect::<Vec<_>>(), commit))
     }
     .await;
@@ -470,7 +607,18 @@ pub async fn status(state: &AppState, user_id: &str, project_id: &str) -> Result
     load(&state.db, project_id).await?;
     let mut st = jobs().lock().unwrap().get(project_id).cloned().unwrap_or_default();
     let token = crate::hosting::sprites_token(&state.db, &p.team_id).await.map_err(|e| e.to_string())?;
-    if st.url.is_empty() {
+    let sandbox = if token.is_some() { "sprites" } else if local_staging_enabled() { "local" } else { "none" };
+    if sandbox == "local" {
+        // A local staging keeps its URL in the process registry.
+        if let Some(url) = localapp::get_url(&staging_key(project_id)) {
+            st.sprite = "local".to_string();
+            st.url = url.clone();
+            update(project_id, |s| {
+                s.sprite = st.sprite.clone();
+                s.url = url;
+            });
+        }
+    } else if st.url.is_empty() {
         if let Some(t) = &token {
             if let Some(url) = sprite_url(t, &sprite_name(project_id)).await {
                 st.sprite = sprite_name(project_id);
@@ -482,10 +630,10 @@ pub async fn status(state: &AppState, user_id: &str, project_id: &str) -> Result
             }
         }
     }
-    Ok(json!({ "staging": st, "sprites_connected": token.is_some(), "project": p }))
+    Ok(json!({ "staging": st, "sprites_connected": token.is_some(), "sandbox": sandbox, "project": p }))
 }
 
-pub async fn send(state: &AppState, user_id: &str, project_id: &str, prompt: &str) -> Result<Value, String> {
+pub async fn send(state: &AppState, user_id: &str, project_id: &str, prompt: &str, ship_none: bool) -> Result<Value, String> {
     let p = project_for(state, user_id, project_id, true).await?;
     let prompt = prompt.trim();
     if prompt.is_empty() {
@@ -493,8 +641,17 @@ pub async fn send(state: &AppState, user_id: &str, project_id: &str, prompt: &st
     }
     let token = crate::hosting::sprites_token(&state.db, &p.team_id)
         .await
-        .map_err(|e| e.to_string())?
-        .ok_or("Connect your Sprites account first (staging runs there).")?;
+        .map_err(|e| e.to_string())?;
+    // ship:none (desktop): the server only edits+commits; the desktop runs staging.
+    if !ship_none && token.is_none() {
+        if local_staging_enabled() {
+            if localapp::find_bun().is_none() {
+                return Err(format!("{}. Or connect Sprites for cloud staging.", localapp::bun_hint()));
+            }
+        } else {
+            return Err("Connect your Sprites account first (staging runs there).".to_string());
+        }
+    }
     load(&state.db, project_id).await?;
     if jobs().lock().unwrap().get(project_id).map(|s| s.changes.iter().any(|c| c.status == "working")).unwrap_or(false) {
         return Err("A change is still running. Wait for it to finish.".into());
@@ -513,7 +670,7 @@ pub async fn send(state: &AppState, user_id: &str, project_id: &str, prompt: &st
     };
     save(&state.db, project_id, &change).await?;
     update(project_id, |s| s.changes.push(change.clone()));
-    tokio::spawn(run_change(state.clone(), p.team_id.clone(), p.id.clone(), p.repo_id.clone(), token, change.id.clone(), change.prompt.clone()));
+    tokio::spawn(run_change(state.clone(), p.team_id.clone(), p.id.clone(), p.repo_id.clone(), token, change.id.clone(), change.prompt.clone(), ship_none));
     Ok(json!({ "change": change }))
 }
 
@@ -599,7 +756,21 @@ pub async fn discard(state: &AppState, user_id: &str, project_id: &str) -> Resul
             });
             true
         }
-        _ => false,
+        _ => {
+            // Local staging: rebuild when it is running.
+            let key = staging_key(project_id);
+            if localapp::is_running(&key) {
+                let (st, pid, rid) = (state.clone(), project_id.to_string(), p.repo_id.clone());
+                tokio::spawn(async move {
+                    if let Err(e) = ship_local(&st, &pid, &rid, "", false).await {
+                        eprintln!("customize: local rebuild after discard failed: {e}");
+                    }
+                });
+                true
+            } else {
+                false
+            }
+        }
     };
     Ok(json!({ "discarded": n, "rebuilding": rebuilding }))
 }

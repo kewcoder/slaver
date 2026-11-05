@@ -36,7 +36,7 @@ export function ThemeToggle() {
 }
 
 
-export type IconName = "home" | "chat" | "market" | "code" | "settings" | "users" | "plus" | "search" | "arrow" | "grid" | "chevron" | "spark" | "logout" | "globe" | "check" | "folder" | "menu" | "external" | "bot" | "upload" | "rocket" | "copy" | "git" | "tag" | "x" | "sun" | "moon" | "more";
+export type IconName = "home" | "chat" | "market" | "code" | "settings" | "users" | "plus" | "search" | "arrow" | "grid" | "chevron" | "spark" | "logout" | "globe" | "check" | "folder" | "menu" | "external" | "bot" | "upload" | "rocket" | "copy" | "git" | "tag" | "x" | "sun" | "moon" | "more" | "cloud" | "play" | "stop" | "terminal" | "link";
 
 export function Icon({ name, size = 18, className = "" }: { name: IconName; size?: number; className?: string }) {
   const paths: Record<IconName, ReactNode> = {
@@ -68,6 +68,11 @@ export function Icon({ name, size = 18, className = "" }: { name: IconName; size
     moon: <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" />,
     more: <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>,
     bot: <><rect x="4" y="7" width="16" height="13" rx="3" /><path d="M12 3v4M8 12h.01M16 12h.01M9 16h6" /></>,
+    cloud: <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10Z" />,
+    play: <path d="M6 4l14 8-14 8Z" />,
+    stop: <rect x="6" y="6" width="12" height="12" rx="1.5" />,
+    terminal: <><path d="m4 17 6-6-6-6M12 19h8" /></>,
+    link: <><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></>,
   };
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

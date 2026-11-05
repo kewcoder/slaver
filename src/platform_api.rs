@@ -50,7 +50,7 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "listing_review_run", "description": "Request a marketplace listing: a Meta model reviews the repo's current code (plus static checks for secrets/README) and returns a score, strengths, must-fix items and suggestions. The listing can go live only when the review is approved. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" }, "lang": { "type": "string", "enum": ["id", "en"] } } } }),
         json!({ "name": "listing_review_get", "description": "Latest listing review of a repo (current=true when it matches the current version), or null.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
         json!({ "name": "customize_status", "description": "Staging sandbox (URL) and AI change history for an owned app.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
-        json!({ "name": "customize_send", "description": "Ask the Meta model to customize an owned app (e.g. 'make the primary color red'). Edits land on the staging branch and the staging sandbox is rebuilt. Runs in background; poll customize_status. Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id", "prompt"], "properties": { "project_id": { "type": "string" }, "prompt": { "type": "string" } } } }),
+        json!({ "name": "customize_send", "description": "Ask the Meta model to customize an owned app (e.g. 'make the primary color red'). Edits land on the staging branch and the staging sandbox is rebuilt. Runs in background; poll customize_status. Owner/admin only. Pass ship: 'none' when the desktop app runs the staging preview itself.", "inputSchema": { "type": "object", "required": ["project_id", "prompt"], "properties": { "project_id": { "type": "string" }, "prompt": { "type": "string" }, "ship": { "type": "string" } } } }),
         json!({ "name": "customize_discard", "description": "Discard staging changes that are not in production yet: reset the staging branch to main and rebuild the staging sandbox. Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
         json!({ "name": "customize_promote", "description": "Apply staging to production: merge the staging branch into main. Redeploy production afterwards with install_start. Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
         json!({ "name": "repos_delete", "description": "Delete a team repo and its data. Owner/admin only; templates cannot be deleted.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
@@ -82,6 +82,14 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "github_link_get", "description": "GitHub link of a listing (repo, branch, last sync, error), or null.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
         json!({ "name": "updates_list", "description": "Owned apps with a newer version from the creator. Nothing changes until updates_apply.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
         json!({ "name": "updates_apply", "description": "Merge the creator's latest version into the team's own copy (repo_id). On conflict the copy is untouched and the update is parked on branch slaver-update. Then redeploy. Owner/admin only.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
+        json!({ "name": "desktop_meta", "description": "Local runtime info: whether this server is the desktop app, and which local binaries (bun/git/cloudflared) are available for local runs and tunnels.", "inputSchema": { "type": "object", "properties": { } } }),
+        json!({ "name": "localrun_start", "description": "Run an owned app (project HEAD) on this machine with the local Bun. Stable port per project; dev_url is updated. Any team member can run their own copy.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
+        json!({ "name": "localrun_stop", "description": "Stop the locally running app.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
+        json!({ "name": "localrun_status", "description": "Local run status (running, url, port) of an owned app.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
+        json!({ "name": "localrun_logs", "description": "Recent log lines of the locally running app.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" }, "tail": { "type": "integer" } } } }),
+        json!({ "name": "tunnel_start", "description": "Expose a local port to the internet via a Cloudflare quick tunnel (trycloudflare.com URL). Anyone logged in can publish a port on this machine.", "inputSchema": { "type": "object", "required": ["port"], "properties": { "port": { "type": "integer" } } } }),
+        json!({ "name": "tunnel_stop", "description": "Stop the public tunnel.", "inputSchema": { "type": "object", "properties": { } } }),
+        json!({ "name": "tunnel_status", "description": "Public tunnel status (running, url).", "inputSchema": { "type": "object", "properties": { } } }),
     ]
 }
 
@@ -237,7 +245,7 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             }
             let r = match name {
                 "customize_status" => crate::customize::status(state, user_id, &pid).await,
-                "customize_send" => crate::customize::send(state, user_id, &pid, &arg_str(args, "prompt")).await,
+                "customize_send" => crate::customize::send(state, user_id, &pid, &arg_str(args, "prompt"), arg_str(args, "ship") == "none").await,
                 "customize_discard" => crate::customize::discard(state, user_id, &pid).await,
                 _ => crate::customize::promote(state, user_id, &pid).await,
             };
@@ -533,6 +541,50 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             Ok(v) => mcp_data(id, format!("Update: {}.", v["status"].as_str().unwrap_or("")), v),
             Err(e) => rpc_err(id, -32602, &e.to_string()),
         },
+        "desktop_meta" => {
+            let bin = |n: &str| match crate::localapp::find_bin(n) {
+                Some(p) => json!({ "found": true, "path": p.to_string_lossy() }),
+                None => json!({ "found": false }),
+            };
+            mcp_data(id, "Desktop meta.".to_string(), json!({
+                "desktop": std::env::var("SLAVER_DESKTOP").map(|v| v == "1").unwrap_or(false),
+                "bun": bin("bun"),
+                "git": bin("git"),
+                "cloudflared": bin("cloudflared"),
+            }))
+        }
+        "localrun_start" | "localrun_stop" | "localrun_status" | "localrun_logs" => {
+            let pid = arg_str(args, "project_id");
+            if pid.is_empty() {
+                return Some(rpc_err(id, -32602, "project_id is required."));
+            }
+            let r = match name {
+                "localrun_start" => crate::localrun::start(state, user_id, &pid).await,
+                "localrun_stop" => crate::localrun::stop(state, user_id, &pid).await,
+                "localrun_logs" => crate::localrun::logs(state, user_id, &pid, args.get("tail").and_then(|v| v.as_u64()).unwrap_or(80) as usize).await,
+                _ => crate::localrun::status(state, user_id, &pid).await,
+            };
+            match r {
+                Ok(v) => mcp_data(id, "OK.".to_string(), v),
+                Err(e) => rpc_err(id, -32602, &e),
+            }
+        }
+        "tunnel_start" | "tunnel_stop" | "tunnel_status" => {
+            if name == "tunnel_stop" {
+                return Some(mcp_data(id, "Tunnel stopped.".to_string(), serde_json::to_value(crate::tunnel::stop().await).unwrap_or(json!({})))); 
+            }
+            if name == "tunnel_status" {
+                return Some(mcp_data(id, "Tunnel status.".to_string(), serde_json::to_value(crate::tunnel::status()).unwrap_or(json!({}))));
+            }
+            let port = args.get("port").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+            if port == 0 {
+                return Some(rpc_err(id, -32602, "port is required."));
+            }
+            match crate::tunnel::start_quick(port).await {
+                Ok(v) => mcp_data(id, "Tunnel live.".to_string(), serde_json::to_value(v).unwrap_or(json!({}))),
+                Err(e) => rpc_err(id, -32602, &e),
+            }
+        }
         _ => return None,
     };
     Some(out)

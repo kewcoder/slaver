@@ -1,0 +1,11 @@
+{
+  "name": "slaver-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "bundle": "./scripts/bundle.sh",
+    "dev": "cargo tauri dev",
+    "dist": "./scripts/bundle.sh && cargo tauri build"
+  }
+}

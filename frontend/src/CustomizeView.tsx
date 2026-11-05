@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { connectHosting, discardCustomize, fetchCustomize, promoteCustomize, sendCustomize, type CustomizeStatus } from "./api";
+import { connectHosting, discardCustomize, fetchCustomize, getToken, promoteCustomize, sendCustomize, type CustomizeStatus } from "./api";
+import { isDesktop, localRunApp } from "./slaver-local";
 import { useLang } from "./i18n";
 import { Icon, Spinner } from "./ui";
 
@@ -15,6 +16,10 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [discardNote, setDiscardNote] = useState("");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const stagedFor = useRef<Set<string>>(new Set());
+  const desktop = isDesktop();
   const endRef = useRef<HTMLDivElement>(null);
   const lastDone = useRef("");
 
@@ -37,6 +42,45 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
   }, [refresh]);
 
   const working = !!st?.staging.changes.some((c) => c.status === "working");
+  // Sprites cloud sandbox, the server's local sandbox, or the desktop which
+  // runs the staging branch itself (ship:none).
+  const connected = !!st && (st.sprites_connected || st.sandbox === "local" || desktop);
+
+  // Desktop: run the finished staging commit locally and preview it here.
+  async function stageLocal(commit: string) {
+    if (!st || previewBusy) return;
+    const jwt = getToken();
+    if (!jwt) {
+      setError("Login first.");
+      return;
+    }
+    setPreviewBusy(true);
+    try {
+      const r = await localRunApp({
+        key: `staging-${projectId}`,
+        cloneUrl: `${window.location.origin}/git/${st.project.repo_id}`,
+        jwt,
+        branch: "staging",
+      });
+      setPreviewUrl(r.url);
+      setFrameKey((k) => k + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!desktop || !st || previewBusy) return;
+    const done = st.staging.changes.filter((c) => c.status === "done" && c.commit);
+    const latest = done[done.length - 1];
+    if (latest && !st.staging.url && !stagedFor.current.has(latest.id)) {
+      stagedFor.current.add(latest.id);
+      void stageLocal(latest.commit);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [st, desktop, previewBusy]);
   useEffect(() => {
     if (!working) return;
     const h = window.setInterval(() => void refresh(), 2500);
@@ -60,7 +104,7 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
     setNotice("");
     setDiscardNote("");
     try {
-      await sendCustomize(projectId, prompt.trim());
+      await sendCustomize(projectId, prompt.trim(), desktop ? "none" : undefined);
       setPrompt("");
       await refresh();
     } catch (err) {
@@ -116,7 +160,7 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
     }
   }
 
-  const url = st?.staging.url ?? "";
+  const url = previewUrl ?? st?.staging.url ?? "";
   const changes = st?.staging.changes ?? [];
   const pending = changes.filter((c) => c.status === "done" && !c.applied).length;
   const examples = [t("cz.ex1"), t("cz.ex2"), t("cz.ex3")];
@@ -152,13 +196,20 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
           <div className="flex-1 space-y-4 overflow-y-auto p-4">
             {!st ? (
               <div className="loading-skeleton h-20" />
-            ) : !st.sprites_connected ? (
+            ) : !connected ? (
+              st.sandbox === "local" || desktop ? (
+                <div className="surface flex flex-col gap-1 rounded-xl p-4">
+                  <div className="text-sm font-bold text-fg">{t("cz.localTitle")}</div>
+                  <p className="text-xs leading-5 text-muted">{t("cz.localBody")}</p>
+                </div>
+              ) : (
               <form onSubmit={connect} className="surface flex flex-col gap-3 rounded-xl p-4">
                 <div className="text-sm font-bold text-fg">{t("cz.connectTitle")}</div>
                 <p className="text-xs leading-5 text-muted">{t("cz.connectBody")} <a href="https://sprites.dev/account" target="_blank" rel="noreferrer" className="font-semibold text-accent-text hover:underline">sprites.dev/account ↗</a></p>
                 <input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="org/id/secret" autoComplete="off" className="field font-mono text-xs" />
                 <button type="submit" disabled={busy || !token.trim()} className="btn-primary self-start">{busy ? <Spinner /> : <Icon name="check" size={15} />}{t("host.connect")}</button>
               </form>
+              )
             ) : changes.length === 0 ? (
               <div className="py-6 text-center">
                 <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-accent/10 text-accent-text"><Icon name="spark" size={22} /></span>
@@ -211,7 +262,7 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
             {error && <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>}
             <div ref={endRef} />
           </div>
-          {st?.sprites_connected && (
+          {connected && (
             <form onSubmit={send} className="border-t border-line p-3">
               <div className="flex items-end gap-2 rounded-xl border border-line bg-surface p-2 focus-within:border-accent/50">
                 <textarea
@@ -245,12 +296,16 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
             </div>
             <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-subtle">{url ? `${url}${path}` : t("cz.noStaging")}</span>
             <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-200">staging</span>
-            {url && (
+            {url ? (
               <>
                 <button type="button" onClick={() => setFrameKey((k) => k + 1)} className="icon-button h-8 w-8" title={t("cz.reload")}><Icon name="arrow" size={14} /></button>
                 <a href={`${url}${path}`} target="_blank" rel="noreferrer" className="icon-button h-8 w-8" title={t("apps.btnOpen")}><Icon name="external" size={14} /></a>
               </>
-            )}
+            ) : desktop && st?.staging.changes.some((c) => c.status === "done" && c.commit) ? (
+              <button type="button" disabled={previewBusy} onClick={() => { const d = st.staging.changes.filter((c) => c.status === "done" && c.commit); const l = d[d.length - 1]; if (l && !stagedFor.current.has(l.id)) stagedFor.current.add(l.id); if (l) void stageLocal(l.commit); }} className="btn-secondary px-2.5 py-1 text-xs">
+                {previewBusy ? <Spinner /> : <Icon name="play" size={13} />}{t("cz.localPreview")}
+              </button>
+            ) : null}
           </div>
           {url ? (
             <iframe key={`${frameKey}-${path}`} src={`${url}${path}`} title="staging preview" className="min-h-0 w-full flex-1 bg-white" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" />
