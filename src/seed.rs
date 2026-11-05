@@ -7,9 +7,10 @@ fn new_id() -> String {
     crate::util::new_id()
 }
 
-const SEEDS: &[(&str, &str)] = &[
-    ("fnb-suite", "F&B Suite — all-in-one toko makanan & minuman: menu & stok, kasir, meja + kamera AI, booking, pelanggan, promo, iklan AI, toko online, MCP; install 1 perintah"),
-];
+// No bundled templates right now: the F&B Suite seed app was retired, and the
+// only production listing (Hermes Agent, sold by Slaver Labs) is submitted
+// through the normal seller API (scripts/submit-hermes.mjs), not from apps/.
+const SEEDS: &[(&str, &str)] = &[];
 
 pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, apps_dir: &str) {
     eprintln!("seed: checking templates (dir={apps_dir})");
@@ -69,7 +70,6 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, apps_dir: &str)
             }
         };
         let name = match *dir_name {
-            "fnb-suite" => "F&B Suite",
             other => other,
         };
         if existing.iter().any(|n| n == name) {
@@ -128,30 +128,11 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, apps_dir: &str)
         }
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
-    ensure_demo(db, &git_root.to_string_lossy()).await;
-    move_listings_to_labs(db).await;
+    ensure_demo_user(db).await;
+    cleanup_fnb_suite(db, &git_root.to_string_lossy()).await;
     // Scanning a big repo takes minutes (one git read per file): never block boot on it.
     let (db, root) = (db.clone(), git_root.to_string_lossy().to_string());
     tokio::spawn(async move { ensure_demo_reviews(&db, &root).await });
-}
-
-/// The seller demo (labs@slaver.app, team "Slaver Labs") sells Slaver's own
-/// apps: once that team exists, the seeded F&B Suite listing moves to it.
-async fn move_listings_to_labs(db: &crate::db::Db) {
-    let r = async {
-        db.prepare(
-            "UPDATE repos SET team_id = (SELECT t.id FROM teams t JOIN users u ON u.id = t.owner_user_id WHERE u.email = ? AND t.name = 'Slaver Labs' ORDER BY t.created_at LIMIT 1) \
-             WHERE team_id = 'system-templates' AND name = 'F&B Suite' AND template = 1 \
-             AND EXISTS (SELECT 1 FROM teams t JOIN users u ON u.id = t.owner_user_id WHERE u.email = ? AND t.name = 'Slaver Labs')",
-        )
-        .bind(&[crate::db::v_text(LABS_EMAIL), crate::db::v_text(LABS_EMAIL)])?
-        .run()
-        .await
-    }
-    .await;
-    if let Err(e) = r {
-        eprintln!("seed: move listings to Slaver Labs failed: {e}");
-    }
 }
 
 /// Slaver's own seller account that submits Hermes Agent to the marketplace.
@@ -165,25 +146,6 @@ async fn ensure_demo_reviews(db: &crate::db::Db, git_root: &str) {
     use crate::review::AiReview;
     let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
     let demos = [
-        (
-            "F&B Suite",
-            AiReview {
-                score: Some(8.4),
-                summary: "A complete, installable F&B app: admin, online store and AI agents all go through one MCP endpoint with role checks, and the README gets a new owner running in minutes.".into(),
-                strengths: s(&[
-                    "README.md has a working local install and a real sample menu (Saung Ranggon) via `bun run seed`.",
-                    "Every action goes through MCP (src/mcp.ts) with role checks from src/accounts.ts, so admin, store and agents share one permission model.",
-                    "src/server.ts refuses to start without an ADMIN_TOKEN of at least 32 characters.",
-                    "Tests cover orders, promos, MCP tools, routes and scripts (test/).",
-                ]),
-                must_fix: vec![],
-                suggestions: s(&[
-                    "admin/src/pages.tsx is 800+ lines; splitting it per screen makes owner customizations smaller and safer.",
-                    "src/domain.ts holds most business rules; separate modules for orders, bookings and promos would help buyers find what to change.",
-                    "Document backing up and restoring the SQLite file (DB_PATH) in README.md.",
-                ]),
-            },
-        ),
         (
             "Hermes Agent",
             AiReview {
@@ -234,10 +196,11 @@ async fn ensure_demo_reviews(db: &crate::db::Db, git_root: &str) {
     }
 }
 
-/// Demo F&B account (used by the login-page demo button): resto@slaver.app
-/// owns a "Saung Ranggon" team that already owns the F&B Suite app. Idempotent —
-/// skipped when the user already exists.
-async fn ensure_demo(db: &crate::db::Db, git_root: &str) {
+/// Demo buyer account (used by the login-page demo button): resto@slaver.app
+/// owns a "Saung Ranggon" team. It used to come with the F&B Suite app
+/// pre-installed; since that app was retired the account is created empty.
+/// Idempotent — skipped when the user already exists.
+async fn ensure_demo_user(db: &crate::db::Db) {
     let email = "resto@slaver.app";
     let row: Option<serde_json::Value> = match db
         .prepare("SELECT id FROM users WHERE email = ?")
@@ -249,8 +212,7 @@ async fn ensure_demo(db: &crate::db::Db, git_root: &str) {
             return;
         }
     };
-    if let Some(uid) = row.as_ref().and_then(|r| r.get("id")).and_then(|v| v.as_str()) {
-        repair_demo(db, git_root, uid).await;
+    if row.is_some() {
         return;
     }
     let mut salt_b = [0u8; 16];
@@ -279,46 +241,106 @@ async fn ensure_demo(db: &crate::db::Db, git_root: &str) {
         eprintln!("seed: demo insert failed: {e}");
         return;
     }
-    let team = match crate::store::create_team(db, &id, "Saung Ranggon", false).await {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("seed: demo team failed: {e}");
-            return;
-        }
-    };
-    give_demo_app(db, git_root, &team.id, &id).await;
-}
-
-/// Older demo accounts (from the AI-agent era) had a "Saung Rangon" team with
-/// bots and no apps: fix the name and give it the F&B Suite app once.
-async fn repair_demo(db: &crate::db::Db, git_root: &str, user_id: &str) {
-    if let Ok(q) = db.prepare("UPDATE teams SET name = 'Saung Ranggon' WHERE owner_user_id = ? AND name = 'Saung Rangon'").bind(&[crate::db::v_text(user_id)]) {
-        let _ = q.run().await;
-    }
-    if let Ok(q) = db.prepare("UPDATE users SET name = 'Saung Ranggon (demo)' WHERE id = ? AND name = 'Saung Rangon (demo)'").bind(&[crate::db::v_text(user_id)]) {
-        let _ = q.run().await;
-    }
-    let team: Option<serde_json::Value> = match db
-        .prepare("SELECT t.id FROM teams t WHERE t.owner_user_id = ? AND t.personal = 0 AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.team_id = t.id) ORDER BY t.created_at LIMIT 1")
-        .bind(&[crate::db::v_text(user_id)])
-    {
-        Ok(q) => q.first(None).await.unwrap_or(None),
-        Err(_) => None,
-    };
-    if let Some(tid) = team.and_then(|v| v.get("id").and_then(|x| x.as_str()).map(String::from)) {
-        give_demo_app(db, git_root, &tid, user_id).await;
+    if let Err(e) = crate::store::create_team(db, &id, "Saung Ranggon", false).await {
+        eprintln!("seed: demo team failed: {e}");
     }
 }
 
-async fn give_demo_app(db: &crate::db::Db, git_root: &str, team_id: &str, user_id: &str) {
-    let tpl: Option<serde_json::Value> = match db.prepare("SELECT id FROM repos WHERE template = 1 AND name LIKE 'F&B Suite%' ORDER BY created_at LIMIT 1").bind(&[]) {
-        Ok(q) => q.first(None).await.unwrap_or(None),
-        Err(_) => None,
-    };
-    if let Some(tid) = tpl.and_then(|v| v.get("id").and_then(|x| x.as_str()).map(String::from)) {
-        match crate::platform::buy_bundle(db, git_root, team_id, user_id, &tid, "mock", 0).await {
-            Ok(_) => eprintln!("seed: demo team owns F&B Suite"),
-            Err(e) => eprintln!("seed: demo license failed: {e}"),
+/// Remove every trace of the retired F&B Suite app so that Hermes Agent is the
+/// only production listing:
+/// - the "F&B Suite" template listing, its listing reviews and its bare git repo;
+/// - the demo buyer account's (resto@slaver.app) installed copy: projects plus
+///   their installs, customize runs and local runs, licenses, payments and
+///   fork repos (DB rows + bare git repos).
+/// Forks owned by any other team are deliberately left alone: buyers keep what
+/// they bought, they just can no longer buy it anew. Idempotent.
+async fn cleanup_fnb_suite(db: &crate::db::Db, git_root: &str) {
+    // Sub-selects (inlined into the statements below; no user input involved).
+    const TPL: &str = "SELECT id FROM repos WHERE template = 1 AND (name LIKE 'F&B Suite%' OR name LIKE 'fnb-suite%')";
+    const DEMO_TEAMS: &str = "SELECT t.id FROM teams t JOIN users u ON u.id = t.owner_user_id WHERE u.email = 'resto@slaver.app'";
+    const DEMO_FORKS: &str = "SELECT id FROM repos WHERE fork_of IN (SELECT id FROM repos WHERE template = 1 AND (name LIKE 'F&B Suite%' OR name LIKE 'fnb-suite%')) AND team_id IN (SELECT t.id FROM teams t JOIN users u ON u.id = t.owner_user_id WHERE u.email = 'resto@slaver.app')";
+    const DEMO_PROJECTS: &str = "SELECT p.id FROM projects p WHERE p.team_id IN (SELECT t.id FROM teams t JOIN users u ON u.id = t.owner_user_id WHERE u.email = 'resto@slaver.app') AND (p.repo_id IN (SELECT id FROM repos WHERE template = 1 AND (name LIKE 'F&B Suite%' OR name LIKE 'fnb-suite%')) OR p.repo_id IN (SELECT id FROM repos WHERE fork_of IN (SELECT id FROM repos WHERE template = 1 AND (name LIKE 'F&B Suite%' OR name LIKE 'fnb-suite%'))) OR p.name LIKE '%F&B Suite%' OR p.name LIKE '%Saung Ranggon%')";
+
+    async fn exec(db: &crate::db::Db, sql: &str) {
+        // Failures are logged, never fatal: boot must not die on cleanup.
+        match db.prepare(sql).bind(&[]) {
+            Ok(q) => {
+                if let Err(e) = q.run().await {
+                    eprintln!("seed: fnb cleanup failed ({sql}): {e}");
+                }
+            }
+            Err(e) => eprintln!("seed: fnb cleanup prepare failed: {e}"),
         }
+    }
+    async fn ids(db: &crate::db::Db, sql: &str) -> Vec<String> {
+        match db.prepare(sql).bind(&[]) {
+            Ok(q) => match q.all().await {
+                Ok(rows) => rows
+                    .results::<serde_json::Value>()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|v| {
+                        v.get("id")
+                            .and_then(|x| x.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .collect(),
+                Err(e) => {
+                    eprintln!("seed: fnb cleanup query failed: {e}");
+                    vec![]
+                }
+            },
+            Err(e) => {
+                eprintln!("seed: fnb cleanup prepare failed: {e}");
+                vec![]
+            }
+        }
+    }
+
+    // Collect bare-repo ids before deleting their rows.
+    let mut doomed: Vec<String> = ids(db, TPL).await;
+    doomed.extend(ids(db, DEMO_FORKS).await);
+
+    // Demo projects and everything hanging off them. (Note: the issues and
+    // deployments tables were dropped in migration 0011, so they are not here.)
+    for child in [
+        "customize_changes WHERE project_id",
+        "installs WHERE project_id",
+        "local_runs WHERE project_id",
+        "payments WHERE project_id",
+    ] {
+        exec(db, &format!("DELETE FROM {child} IN ({DEMO_PROJECTS})")).await;
+    }
+    exec(db, &format!("DELETE FROM projects WHERE id IN ({DEMO_PROJECTS})")).await;
+    // Demo licenses/payments referencing the template or its forks.
+    exec(
+        db,
+        &format!("DELETE FROM licenses WHERE repo_id IN ({TPL}) AND team_id IN ({DEMO_TEAMS})"),
+    )
+    .await;
+    exec(
+        db,
+        &format!(
+            "DELETE FROM payments WHERE team_id IN ({DEMO_TEAMS}) AND (repo_id IN ({TPL}) OR fork_repo_id IN ({DEMO_FORKS}))"
+        ),
+    )
+    .await;
+    // Reviews, then the fork rows and the template rows themselves.
+    exec(db, &format!("DELETE FROM listing_reviews WHERE repo_id IN ({TPL})")).await;
+    exec(db, &format!("DELETE FROM repos WHERE id IN ({DEMO_FORKS})")).await;
+    exec(db, &format!("DELETE FROM repos WHERE id IN ({TPL})")).await;
+
+    let mut removed_dirs = 0;
+    for rid in &doomed {
+        let path = crate::platform::bare_repo_path(git_root, rid);
+        if path.exists() {
+            match tokio::fs::remove_dir_all(&path).await {
+                Ok(()) => removed_dirs += 1,
+                Err(e) => eprintln!("seed: cannot remove bare repo {rid}: {e}"),
+            }
+        }
+    }
+    if !doomed.is_empty() {
+        eprintln!("seed: retired F&B Suite ({} repo rows, {} bare repos removed)", doomed.len(), removed_dirs);
     }
 }

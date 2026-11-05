@@ -4,8 +4,8 @@
 // This script runs in CI (.github/workflows/app-review.yml) and posts feedback as
 // a PR comment. It also runs locally before you submit:
 //
-//   bun scripts/review-app.ts apps/fnb-suite            # print report
-//   bun scripts/review-app.ts apps/fnb-suite --no-ai    # static checks only
+//   bun scripts/review-app.ts apps/<name>            # print report
+//   bun scripts/review-app.ts apps/<name> --no-ai    # static checks only
 //   bun scripts/review-app.ts --changed --base origin/main --pr 12   # CI mode
 //
 // Static checks always run. The AI review runs when MODEL_API_KEY is set, using

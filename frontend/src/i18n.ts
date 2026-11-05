@@ -170,7 +170,7 @@ const en = {
   "auth.stepShapeBody": "Customize it with AI or the original creator.",
   "auth.loginTitle": "Welcome back",
   "auth.registerTitle": "Start your workspace",
-  "auth.demoLabel": "Live demo · Restaurant workspace",
+  "auth.demoLabel": "Live demo · Buyer workspace",
   "auth.demoSeller": "Live demo · Seller workspace (Slaver Labs)",
   "auth.secureNote": "Your apps. Your server. Your rules.",
 
@@ -609,7 +609,7 @@ const id: Record<StringsKey, string> = {
   "auth.stepShapeBody": "Sesuaikan dengan AI atau kreator aslinya.",
   "auth.loginTitle": "Selamat datang kembali",
   "auth.registerTitle": "Mulai workspace-mu",
-  "auth.demoLabel": "Demo live · Workspace rumah makan",
+  "auth.demoLabel": "Demo live · Workspace pembeli",
   "auth.demoSeller": "Demo live · Workspace penjual (Slaver Labs)",
   "auth.secureNote": "Aplikasimu. Servermu. Aturanmu.",
 
