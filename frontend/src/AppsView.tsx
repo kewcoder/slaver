@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   applyUpdate,
+  deleteProject,
   fetchDesktopMeta,
   fetchUpdates,
   fetchInstalls,
@@ -228,6 +229,20 @@ function AppRow({
     }
   }
 
+  async function removeApp() {
+    if (busy || !window.confirm(t("apps.removeConfirm", { name: p.name }))) return;
+    setBusy(true);
+    setNote(null);
+    try {
+      await deleteProject(p.id);
+      await onChanged();
+    } catch (err) {
+      setNote({ kind: "err", text: err instanceof Error ? err.message : t("apps.errRemove") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const menuItems: { label: string; icon: IconName; run: () => void; show: boolean }[] = [
     { label: t("run.menu"), icon: "play", run: () => setPanel("run"), show: canInstall && canLocal },
     { label: t("apps.mReinstall"), icon: "rocket", run: onInstall, show: canInstall && state !== "none" },
@@ -243,6 +258,7 @@ function AppRow({
       show: true,
     },
     { label: t("apps.mSource"), icon: "git", run: copyClone, show: canInstall },
+    { label: t("apps.mRemove"), icon: "x", run: removeApp, show: true },
   ];
 
   return (

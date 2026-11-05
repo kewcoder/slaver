@@ -39,6 +39,7 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "projects_list", "description": "List projects on a team with progress stats.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }),
         json!({ "name": "projects_get", "description": "One project with progress stats.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
         json!({ "name": "project_set_repo", "description": "Attach a git repo to a project. Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id", "repo_id"], "properties": { "project_id": { "type": "string" }, "repo_id": { "type": "string" } } } }),
+        json!({ "name": "projects_delete", "description": "Remove an installed app: deletes the project with its customize history, installs and payments, its team-owned source-code fork, and cancels the team's license for it (so it can be bought again). Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
         json!({ "name": "repos_create", "description": "Create a git repo on a team.", "inputSchema": { "type": "object", "required": ["team_id", "name"], "properties": { "team_id": { "type": "string" }, "name": { "type": "string" }, "description": { "type": "string" } } } }),
         json!({ "name": "repos_list", "description": "List git repos on a team.", "inputSchema": { "type": "object", "required": ["team_id"], "properties": { "team_id": { "type": "string" } } } }  ),
         json!({ "name": "repos_templates", "description": "List public marketplace template repos.", "inputSchema": { "type": "object", "properties": { } } } ),
@@ -137,6 +138,17 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             }
             match platform::set_project_repo(db, user_id, &pid, &rid).await {
                 Ok(p) => mcp_data(id, "Repo attached.".to_string(), json!({ "project": p })),
+                Err(e) => rpc_err(id, -32602, &e.to_string()),
+            }
+        }
+        "projects_delete" => {
+            let pid = arg_str(args, "project_id");
+            if pid.is_empty() {
+                return Some(rpc_err(id, -32602, "project_id is required."));
+            }
+            match platform::delete_project(db, user_id, &pid, &state.git_root.to_string_lossy(), &state.workspace_dir.to_string_lossy()).await {
+                Ok(true) => mcp_data(id, "Installed app removed.".to_string(), json!({ "deleted": true })),
+                Ok(false) => rpc_err(id, -32602, "Project not found or not allowed."),
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }

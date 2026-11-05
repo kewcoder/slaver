@@ -94,6 +94,94 @@ pub async fn set_project_repo(db: &Db, user_id: &str, project_id: &str, repo_id:
     get_project(db, user_id, project_id).await?.ok_or_else(|| anyhow!("Project not found."))
 }
 
+/// Remove an installed app: the project, everything hanging off it
+/// (customize runs, installs, local-run state, payments), its team-owned
+/// source-code fork (DB row + bare git repo + reviews), and the team's active
+/// license for the fork's template (so the app can be bought again later).
+/// Also stops a locally running copy and wipes its staging/run workdirs.
+/// Owner/admin of the owning team only. Templates are never deleted: when the
+/// project points at a template (or at another team's repo) only the project
+/// rows go. Returns false when the project does not exist or is not visible.
+pub async fn delete_project(db: &Db, user_id: &str, project_id: &str, git_root: &str, workspace_root: &str) -> Result<bool, String> {
+    let p = get_project(db, user_id, project_id).await.map_err(|e| e.to_string())?;
+    let p = match p {
+        Some(p) => p,
+        None => return Ok(false),
+    };
+    require_manager(db, &p.team_id, user_id).await.map_err(|e| e.to_string())?;
+    // Stop a locally running copy (best effort; nothing running is fine).
+    crate::localapp::kill(&format!("run:{}", p.id)).await;
+    for child in [
+        "customize_changes WHERE project_id",
+        "installs WHERE project_id",
+        "local_runs WHERE project_id",
+        "payments WHERE project_id",
+    ] {
+        db.prepare(&format!("DELETE FROM {child} = ?"))
+            .bind(&[v_text(&p.id)])
+            .map_err(|e| e.to_string())?
+            .run()
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    // The attached source fork goes too (unless it is a template or belongs
+    // to another team — then only the project rows go).
+    if !p.repo_id.is_empty() {
+        let fork: Option<RepoRow> = db
+            .prepare("SELECT id, team_id, name, description, price_cents, template, fork_of, category, created_at FROM repos WHERE id = ?")
+            .bind(&[v_text(&p.repo_id)])
+            .map_err(|e| e.to_string())?
+            .first(None)
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(f) = fork {
+            if f.team_id == p.team_id && f.template == 0 {
+                if !f.fork_of.is_empty() {
+                    // Cancel the license for the template so the app can be
+                    // bought (and forked) again later.
+                    db.prepare("UPDATE licenses SET status = 'cancelled' WHERE team_id = ? AND repo_id = ? AND status = 'active'")
+                        .bind(&[v_text(&p.team_id), v_text(&f.fork_of)])
+                        .map_err(|e| e.to_string())?
+                        .run()
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
+                db.prepare("DELETE FROM listing_reviews WHERE repo_id = ?")
+                    .bind(&[v_text(&f.id)])
+                    .map_err(|e| e.to_string())?
+                    .run()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                db.prepare("DELETE FROM repos WHERE id = ?")
+                    .bind(&[v_text(&f.id)])
+                    .map_err(|e| e.to_string())?
+                    .run()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let path = bare_repo_path(git_root, &f.id);
+                if path.exists() {
+                    tokio::fs::remove_dir_all(&path).await.map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
+    db.prepare("DELETE FROM projects WHERE id = ?")
+        .bind(&[v_text(&p.id)])
+        .map_err(|e| e.to_string())?
+        .run()
+        .await
+        .map_err(|e| e.to_string())?;
+    // Staging + local-run workdirs (best effort).
+    let root = std::path::PathBuf::from(workspace_root);
+    for sub in ["staging", "staging-data", "run", "run-data"] {
+        let dir = root.join(sub).join(&p.id);
+        if dir.exists() {
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+        }
+    }
+    Ok(true)
+}
+
 #[derive(Deserialize, Serialize, Clone)]
 pub struct RepoRow {
     pub id: String,
@@ -608,4 +696,85 @@ pub async fn fly_disconnect(db: &Db, team_id: &str, user_id: &str, account_id: &
         .run()
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod delete_project_tests {
+    use super::*;
+    use crate::db::Db;
+
+    async fn count(db: &Db, sql: &str) -> i64 {
+        #[derive(serde::Deserialize)]
+        struct R {
+            n: i64,
+        }
+        let row: Option<R> = db.prepare(sql).bind(&[]).unwrap().first(None).await.unwrap();
+        row.map(|r| r.n).unwrap_or(-1)
+    }
+
+    #[tokio::test]
+    async fn removes_project_fork_license_and_disk() {
+        let base = std::env::temp_dir().join(format!("slaver-del-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let db = Db::open(base.join("t.db").to_str().unwrap()).unwrap();
+        db.run_migrations(&format!("{}/migrations", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let git_root = base.join("git").to_str().unwrap().to_string();
+        let ws_root = base.join("ws").to_str().unwrap().to_string();
+
+        // Owner + team.
+        db.prepare("INSERT INTO users (id, email, name, password_salt, password_hash) VALUES ('u1', 'o@x.co', 'O', '', '')")
+            .bind(&[]).unwrap().run().await.unwrap();
+        let team = crate::store::create_team(&db, "u1", "T", false).await.unwrap();
+
+        // Template with a bare repo, a bought fork, an active license and a project.
+        db.prepare("INSERT INTO repos (id, team_id, name, template) VALUES ('tpl', ?, 'Tpl', 1)")
+            .bind(&[v_text(&team.id)]).unwrap().run().await.unwrap();
+        ensure_bare_repo(&git_root, "tpl").await.unwrap();
+        db.prepare("INSERT INTO repos (id, team_id, name, fork_of) VALUES ('fork', ?, 'Tpl-fork', 'tpl')")
+            .bind(&[v_text(&team.id)]).unwrap().run().await.unwrap();
+        ensure_bare_repo(&git_root, "fork").await.unwrap();
+        db.prepare("INSERT INTO licenses (id, team_id, repo_id, status) VALUES ('lic', ?, 'tpl', 'active')")
+            .bind(&[v_text(&team.id)]).unwrap().run().await.unwrap();
+        let project = create_project(&db, &team.id, "u1", "App", "").await.unwrap();
+        set_project_repo(&db, "u1", &project.id, "fork").await.unwrap();
+        db.prepare("INSERT INTO installs (id, team_id, project_id) VALUES ('n1', ?, ?)")
+            .bind(&[v_text(&team.id), v_text(&project.id)]).unwrap().run().await.unwrap();
+        std::fs::create_dir_all(format!("{ws_root}/staging/{}", project.id)).unwrap();
+
+        assert!(delete_project(&db, "u1", &project.id, &git_root, &ws_root).await.unwrap());
+        assert_eq!(count(&db, "SELECT COUNT(*) AS n FROM projects").await, 0);
+        assert_eq!(count(&db, "SELECT COUNT(*) AS n FROM repos WHERE id = 'fork'").await, 0);
+        assert!(!bare_repo_path(&git_root, "fork").exists());
+        // Template survives; license is cancelled so the app can be re-bought.
+        assert_eq!(count(&db, "SELECT COUNT(*) AS n FROM repos WHERE id = 'tpl'").await, 1);
+        assert!(bare_repo_path(&git_root, "tpl").exists());
+        let st: Option<LicenseRow> = db
+            .prepare("SELECT id, team_id, repo_id, kind, support_until, status, provider, amount_cents, created_at FROM licenses WHERE id = 'lic'")
+            .bind(&[]).unwrap().first(None).await.unwrap();
+        assert_eq!(st.unwrap().status, "cancelled");
+        assert_eq!(count(&db, "SELECT COUNT(*) AS n FROM installs").await, 0);
+        assert!(!std::path::Path::new(&format!("{ws_root}/staging/{}", project.id)).exists());
+        // Second call: already gone.
+        assert!(!delete_project(&db, "u1", &project.id, &git_root, &ws_root).await.unwrap());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn non_manager_cannot_delete() {
+        let base = std::env::temp_dir().join(format!("slaver-del-test-staff-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let db = Db::open(base.join("t.db").to_str().unwrap()).unwrap();
+        db.run_migrations(&format!("{}/migrations", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        db.prepare("INSERT INTO users (id, email, name, password_salt, password_hash) VALUES ('u1', 'o@x.co', 'O', '', ''), ('u2', 's@x.co', 'S', '', '')")
+            .bind(&[]).unwrap().run().await.unwrap();
+        let team = crate::store::create_team(&db, "u1", "T", false).await.unwrap();
+        db.prepare("INSERT INTO team_members (team_id, user_id, role) VALUES (?, 'u2', 'staff')")
+            .bind(&[v_text(&team.id)]).unwrap().run().await.unwrap();
+        let project = create_project(&db, &team.id, "u1", "App", "").await.unwrap();
+        let r = delete_project(&db, "u2", &project.id, "/tmp", "/tmp").await;
+        assert!(r.is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

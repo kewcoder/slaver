@@ -298,6 +298,10 @@ export async function setProjectUrls(projectId: string, urls: { prod_url?: strin
   return data.project;
 }
 
+export async function deleteProject(projectId: string): Promise<void> {
+  await callTool("projects_delete", { project_id: projectId });
+}
+
 export async function createRepo(teamId: string, name: string, description?: string): Promise<{ repo: Repo; clone_url: string }> {
   return callTool("repos_create", { team_id: teamId, name, description: description ?? "" });
 }
