@@ -128,7 +128,6 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, apps_dir: &str)
         }
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
-    ensure_demo_user(db).await;
     cleanup_fnb_suite(db, &git_root.to_string_lossy()).await;
     // Scanning a big repo takes minutes (one git read per file): never block boot on it.
     let (db, root) = (db.clone(), git_root.to_string_lossy().to_string());
@@ -196,70 +195,26 @@ async fn ensure_demo_reviews(db: &crate::db::Db, git_root: &str) {
     }
 }
 
-/// Demo buyer account (used by the login-page demo button): resto@slaver.app
-/// owns a "Saung Ranggon" team. It used to come with the F&B Suite app
-/// pre-installed; since that app was retired the account is created empty.
-/// Idempotent — skipped when the user already exists.
-async fn ensure_demo_user(db: &crate::db::Db) {
-    let email = "resto@slaver.app";
-    let row: Option<serde_json::Value> = match db
-        .prepare("SELECT id FROM users WHERE email = ?")
-        .bind(&[crate::db::v_text(email)])
-    {
-        Ok(q) => q.first(None).await.unwrap_or(None),
-        Err(e) => {
-            eprintln!("seed: demo lookup failed: {e}");
-            return;
-        }
-    };
-    if row.is_some() {
-        return;
-    }
-    let mut salt_b = [0u8; 16];
-    if getrandom::getrandom(&mut salt_b).is_err() {
-        eprintln!("seed: demo salt failed");
-        return;
-    }
-    let salt = hex::encode(salt_b);
-    let digest = {
-        use sha2::Digest;
-        let mut h = sha2::Sha256::new();
-        h.update(salt.as_bytes());
-        h.update(b":");
-        h.update(b"demo1234");
-        hex::encode(h.finalize())
-    };
-    let id = new_id();
-    let inserted = match db
-        .prepare("INSERT INTO users (id, email, name, password_salt, password_hash) VALUES (?, 'resto@slaver.app', 'Saung Ranggon (demo)', ?, ?)")
-        .bind(&[crate::db::v_text(&id), crate::db::v_text(&salt), crate::db::v_text(&digest)])
-    {
-        Ok(q) => q.run().await.map_err(|e| e.to_string()),
-        Err(e) => Err(e.to_string()),
-    };
-    if let Err(e) = inserted {
-        eprintln!("seed: demo insert failed: {e}");
-        return;
-    }
-    if let Err(e) = crate::store::create_team(db, &id, "Saung Ranggon", false).await {
-        eprintln!("seed: demo team failed: {e}");
-    }
-}
-
 /// Remove every trace of the retired F&B Suite app so that Hermes Agent is the
-/// only production listing:
+/// only production listing, and delete the retired resto@slaver.app demo
+/// ("Saung Ranggon") account along with it:
 /// - the "F&B Suite" template listing, its listing reviews and its bare git repo;
-/// - the demo buyer account's (resto@slaver.app) installed copy: projects plus
-///   their installs, customize runs and local runs, licenses, payments and
-///   fork repos (DB rows + bare git repos).
-/// Forks owned by any other team are deliberately left alone: buyers keep what
-/// they bought, they just can no longer buy it anew. Idempotent.
+/// - the demo account's F&B Suite install (projects, licenses, forks);
+/// - everything else owned by the demo account's teams (repos, projects and
+///   their children, licenses, payments, installs, connected accounts);
+/// - the demo teams, their memberships and the demo user itself.
+/// Forks of F&B Suite owned by any other team are deliberately left alone:
+/// buyers keep what they bought, they just can no longer buy it anew.
+/// Idempotent.
 async fn cleanup_fnb_suite(db: &crate::db::Db, git_root: &str) {
     // Sub-selects (inlined into the statements below; no user input involved).
     const TPL: &str = "SELECT id FROM repos WHERE template = 1 AND (name LIKE 'F&B Suite%' OR name LIKE 'fnb-suite%')";
     const DEMO_TEAMS: &str = "SELECT t.id FROM teams t JOIN users u ON u.id = t.owner_user_id WHERE u.email = 'resto@slaver.app'";
+    const DEMO_USER: &str = "SELECT id FROM users WHERE email = 'resto@slaver.app'";
     const DEMO_FORKS: &str = "SELECT id FROM repos WHERE fork_of IN (SELECT id FROM repos WHERE template = 1 AND (name LIKE 'F&B Suite%' OR name LIKE 'fnb-suite%')) AND team_id IN (SELECT t.id FROM teams t JOIN users u ON u.id = t.owner_user_id WHERE u.email = 'resto@slaver.app')";
     const DEMO_PROJECTS: &str = "SELECT p.id FROM projects p WHERE p.team_id IN (SELECT t.id FROM teams t JOIN users u ON u.id = t.owner_user_id WHERE u.email = 'resto@slaver.app') AND (p.repo_id IN (SELECT id FROM repos WHERE template = 1 AND (name LIKE 'F&B Suite%' OR name LIKE 'fnb-suite%')) OR p.repo_id IN (SELECT id FROM repos WHERE fork_of IN (SELECT id FROM repos WHERE template = 1 AND (name LIKE 'F&B Suite%' OR name LIKE 'fnb-suite%'))) OR p.name LIKE '%F&B Suite%' OR p.name LIKE '%Saung Ranggon%')";
+    const DEMO_ALL_PROJECTS: &str = "SELECT id FROM projects WHERE team_id IN (SELECT t.id FROM teams t JOIN users u ON u.id = t.owner_user_id WHERE u.email = 'resto@slaver.app')";
+    const DEMO_REPOS: &str = "SELECT id FROM repos WHERE team_id IN (SELECT t.id FROM teams t JOIN users u ON u.id = t.owner_user_id WHERE u.email = 'resto@slaver.app')";
 
     async fn exec(db: &crate::db::Db, sql: &str) {
         // Failures are logged, never fatal: boot must not die on cleanup.
@@ -299,7 +254,7 @@ async fn cleanup_fnb_suite(db: &crate::db::Db, git_root: &str) {
 
     // Collect bare-repo ids before deleting their rows.
     let mut doomed: Vec<String> = ids(db, TPL).await;
-    doomed.extend(ids(db, DEMO_FORKS).await);
+    doomed.extend(ids(db, DEMO_REPOS).await);
 
     // Demo projects and everything hanging off them. (Note: the issues and
     // deployments tables were dropped in migration 0011, so they are not here.)
@@ -329,6 +284,44 @@ async fn cleanup_fnb_suite(db: &crate::db::Db, git_root: &str) {
     exec(db, &format!("DELETE FROM listing_reviews WHERE repo_id IN ({TPL})")).await;
     exec(db, &format!("DELETE FROM repos WHERE id IN ({DEMO_FORKS})")).await;
     exec(db, &format!("DELETE FROM repos WHERE id IN ({TPL})")).await;
+    // Whatever is left of the demo account: all its projects and children,
+    // licenses, payments, installs, repos and connected accounts, then the
+    // teams, memberships and the user itself.
+    for child in [
+        "customize_changes WHERE project_id",
+        "installs WHERE project_id",
+        "local_runs WHERE project_id",
+        "payments WHERE project_id",
+    ] {
+        exec(db, &format!("DELETE FROM {child} IN ({DEMO_ALL_PROJECTS})")).await;
+    }
+    exec(db, &format!("DELETE FROM projects WHERE id IN ({DEMO_ALL_PROJECTS})")).await;
+    exec(db, &format!("DELETE FROM licenses WHERE team_id IN ({DEMO_TEAMS})")).await;
+    exec(db, &format!("DELETE FROM payments WHERE team_id IN ({DEMO_TEAMS})")).await;
+    exec(db, &format!("DELETE FROM installs WHERE team_id IN ({DEMO_TEAMS})")).await;
+    exec(db, &format!("DELETE FROM listing_reviews WHERE repo_id IN ({DEMO_REPOS})")).await;
+    exec(db, &format!("DELETE FROM repos WHERE id IN ({DEMO_REPOS})")).await;
+    for accounts in ["hosting_accounts", "fly_accounts", "github_accounts"] {
+        exec(db, &format!("DELETE FROM {accounts} WHERE team_id IN ({DEMO_TEAMS})")).await;
+    }
+    exec(
+        db,
+        &format!("DELETE FROM oauth_clients WHERE team_id IN ({DEMO_TEAMS}) OR created_by IN ({DEMO_USER})"),
+    )
+    .await;
+    exec(db, &format!("DELETE FROM oauth_codes WHERE user_id IN ({DEMO_USER})")).await;
+    exec(db, &format!("DELETE FROM oauth_tokens WHERE user_id IN ({DEMO_USER})")).await;
+    exec(
+        db,
+        &format!("DELETE FROM team_members WHERE team_id IN ({DEMO_TEAMS}) OR user_id IN ({DEMO_USER})"),
+    )
+    .await;
+    exec(
+        db,
+        &format!("DELETE FROM teams WHERE id IN ({DEMO_TEAMS}) OR owner_user_id IN ({DEMO_USER})"),
+    )
+    .await;
+    exec(db, "DELETE FROM users WHERE email = 'resto@slaver.app'").await;
 
     let mut removed_dirs = 0;
     for rid in &doomed {
@@ -341,6 +334,6 @@ async fn cleanup_fnb_suite(db: &crate::db::Db, git_root: &str) {
         }
     }
     if !doomed.is_empty() {
-        eprintln!("seed: retired F&B Suite ({} repo rows, {} bare repos removed)", doomed.len(), removed_dirs);
+        eprintln!("seed: retired F&B Suite and the resto demo account ({} repo rows, {} bare repos removed)", doomed.len(), removed_dirs);
     }
 }

@@ -58,8 +58,8 @@
 ## 2. Auth + Onboarding
 
 ### 2.1 Login (default, demo prefill)
-- Satu layar, dua tab. Tab **Log in** default dengan email + password **sudah terisi akun demo** (`resto@slaver.app / demo1234`) → reviewer klik Log in langsung masuk.
-- Tombol "Try the restaurant demo →" mengisi ulang kredensial demo kapan saja.
+- Satu layar, dua tab. Tab **Log in** default dengan email + password **sudah terisi akun demo** (`labs@slaver.app / demo1234`) → reviewer klik Log in langsung masuk.
+- Tombol "Live demo · Seller workspace" mengisi ulang kredensial demo kapan saja.
 - Error: pesan merah di atas tombol ("Wrong email or password.").
 - Token JWT disimpan di `localStorage`; semua request bawa `Authorization: Bearer`.
 

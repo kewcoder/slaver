@@ -7,7 +7,7 @@ export function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
   const { t, lang, setLang } = useLang();
   // Demo-first: reviewer langsung login tanpa registrasi.
   const [mode, setMode] = useState<"login" | "register">("login");
-  const [email, setEmail] = useState("resto@slaver.app");
+  const [email, setEmail] = useState("labs@slaver.app");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("demo1234");
   const [busy, setBusy] = useState(false);
@@ -99,7 +99,6 @@ export function AuthView({ onAuth }: { onAuth: (user: User) => void }) {
 
             <div className="mb-6 flex flex-col gap-2">
               {([
-                ["resto@slaver.app", t("auth.demoLabel")],
                 ["labs@slaver.app", t("auth.demoSeller")],
               ] as const).map(([demoEmail, label]) => (
                 <button key={demoEmail} type="button" onClick={() => fillDemo(demoEmail)} className="group flex w-full items-center gap-3 rounded-xl border border-accent/20 bg-accent/[0.055] p-3 text-left hover:border-accent/40 hover:bg-accent/[0.08]">
