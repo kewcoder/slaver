@@ -21,7 +21,7 @@ export async function checkTables(
   input: { image: string; mime?: string; table_ids?: string[] },
 ) {
   if (!ai) {
-    throw new DomainError("AI camera is not configured. Set MODEL_API_KEY (Meta Model API) or AI_BASE_URL + AI_API_KEY.");
+    throw new DomainError("AI camera is not configured. Set MODEL_API_KEY (Meta Model API).");
   }
   if (input.image.length > MAX_IMAGE_CHARS) throw new DomainError("Image too large (max about 3 MB).");
 

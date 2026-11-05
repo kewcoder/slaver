@@ -36,6 +36,12 @@ export function getTeam(db: Database) {
   return one(db, "SELECT id, name FROM team WHERE id = $id", { $id: TEAM_ID });
 }
 
+// True once an owner account exists. A fresh database has none, which means
+// this deployment has never been set up (see setup_status in mcp.ts).
+export function hasOwner(db: Database): boolean {
+  return !!one(db, "SELECT 1 AS ok FROM team_members WHERE role = 'owner' LIMIT 1");
+}
+
 export async function addMember(
   db: Database,
   input: { email: string; name: string; password: string; role: Exclude<Role, "public"> },

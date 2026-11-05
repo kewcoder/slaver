@@ -23,11 +23,16 @@ Butuh [Bun](https://bun.sh) 1.2 atau lebih baru.
 cd apps/fnb-suite
 bun run setup                       # install dependensi dan build
 export ADMIN_TOKEN=$(openssl rand -hex 32)
-OWNER_PASSWORD='ganti-password-ini' bun run owner -- --email pemilik@usaha.id --name "Nama Pemilik" --business "Nama Usaha"
 bun run start                       # http://localhost:8080
 ```
 
-`bun run owner` membuat team dan akun owner untuk usaha Anda. Hanya bisa dijalankan sekali per database.
+Kunjungan pertama: buka `http://localhost:8080/admin/` dan ikuti **Siapkan usaha Anda**
+(nama usaha, nama/email/password owner). Wizard ini hanya muncul sebelum owner
+pertama dibuat — alternatifnya lewat CLI:
+
+```bash
+OWNER_PASSWORD='ganti-password-ini' bun run owner -- --email pemilik@usaha.id --name "Nama Pemilik" --business "Nama Usaha"
+```
 
 Untuk demo, ada data contoh **Saung Ranggon** (menu, harga, dan paket dari menu asli rumah makan):
 

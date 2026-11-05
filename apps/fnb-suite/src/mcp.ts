@@ -12,7 +12,8 @@ import { can, type Role } from "./accounts.ts";
 // The MCP server is the only interface. Each tool declares the minimum role it
 // needs; tools above the caller's role are not registered, so they do not show
 // up in tools/list at all.
-//   public  : menu, tables, cart, checkout, store banners, login
+//   public  : setup_status/setup_create_owner (one-time first-visit setup),
+//             menu, tables, cart, checkout, store banners, login
 //   cashier : orders, payments, table status, customers, camera check
 //   manager : catalog admin, promotions, settings, ads, reports
 //   owner   : team members
@@ -60,6 +61,37 @@ export function createMcpServer(db: Database, opts: McpOptions) {
   const pub = (name: string, cfg: any, handler: (args: any) => unknown) => {
     server.registerTool(name, cfg, safe(handler) as any);
   };
+
+  // ---------- First-visit setup (no login needed, one-time only) ----------
+
+  pub("setup_status", {
+    title: "Setup status",
+    description: "Whether this deployment still needs first-visit setup (true when no owner account exists yet).",
+    inputSchema: {},
+  }, () => ({ needs_setup: !acc.hasOwner(db) }));
+
+  pub("setup_create_owner", {
+    title: "Set up shop owner",
+    description:
+      "First-visit setup: create the shop, the owner account, and the shop name. Works only once; afterwards it refuses. Returns a session token for the new owner.",
+    inputSchema: {
+      business: z.string().min(1).max(120).describe("Shop/business name"),
+      name: z.string().min(1).max(120).describe("Owner display name"),
+      email: z.string().describe("Owner login email"),
+      password: z.string().min(8).describe("Owner password (min 8 characters)"),
+    },
+  }, async (args) => {
+    if (acc.hasOwner(db)) throw new DomainError("This shop is already set up. Ask an owner to add you via team_member_add.");
+    const business = args.business.trim();
+    const name = args.name.trim();
+    if (!business) throw new DomainError("Business name is required.");
+    if (!name) throw new DomainError("Owner name is required.");
+    acc.ensureTeam(db, business);
+    const member = await acc.addMember(db, { email: args.email, name, password: args.password, role: "owner" });
+    d.setSetting(db, "shop_name", business);
+    const session = await acc.login(db, args.email, args.password);
+    return { business, owner: member, token: session.token, expires_at: session.expires_at };
+  });
 
   // ---------- Public ----------
 

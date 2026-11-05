@@ -15,10 +15,12 @@ export async function createOwner(
 ) {
   const db = openDb(dbPath);
   try {
-    const existing = db
-      .query("SELECT u.email FROM team_members tm JOIN users u ON u.id = tm.user_id WHERE tm.role = 'owner'")
-      .get() as { email: string } | null;
-    if (existing) throw new Error(`This deployment already has an owner (${existing.email}). Nothing changed.`);
+    if (acc.hasOwner(db)) {
+      const existing = db
+        .query("SELECT u.email FROM team_members tm JOIN users u ON u.id = tm.user_id WHERE tm.role = 'owner' LIMIT 1")
+        .get() as { email: string } | null;
+      throw new Error(`This deployment already has an owner (${existing?.email ?? "unknown"}). Nothing changed.`);
+    }
     if (!input.business.trim()) throw new Error("--business is required.");
     if (!input.name.trim()) throw new Error("--name is required.");
 

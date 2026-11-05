@@ -290,6 +290,9 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
                             return Some(rpc_err(id, -32602, &e));
                         }
                     }
+                    if tpl && r.price_cents > 0 && r.price_cents < platform::MIN_PAID_PRICE_CENTS {
+                        return Some(rpc_err(id, -32602, "Paid apps must cost at least $0.30 (payment minimum) — set 0 for free."));
+                    }
                     match platform::mark_template(db, &rid, tpl).await {
                         Ok(()) => mcp_data(id, if tpl { "Published as template.".to_string() } else { "Unpublished.".to_string() }, json!({ "published": tpl })),
                         Err(e) => rpc_err(id, -32602, &e.to_string()),
@@ -537,8 +540,10 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
 
 /// Create a HitPay payment request for a template license. Returns checkout
 /// details; the license is only minted after payment (see activate_paid).
+/// Free templates (price <= 0) skip HitPay entirely and mint instantly —
+/// HitPay rejects amounts below 0.3, so a $0 request would 422.
 async fn checkout_start(
-    _state: &AppState,
+    state: &AppState,
     db: &crate::db::Db,
     user_id: &str,
     team_id: &str,
@@ -553,6 +558,21 @@ async fn checkout_start(
         return Err("That repo is not a published template.".to_string());
     }
     let price_cents = platform::repo_price_cents(db, repo_id).await.map_err(|e| e.to_string())?;
+    if price_cents < 30 {
+        // Free (or below HitPay's 0.30 minimum): no payment needed — provision immediately.
+        let (lic, fork, project) = platform::buy_bundle(
+            db,
+            &state.git_root.to_string_lossy(),
+            team_id,
+            user_id,
+            repo_id,
+            "free",
+            0,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        return Ok(json!({ "license": lic, "repo": fork, "project": project, "mock": true, "free": true }));
+    }
     let currency = "USD";
     let reference = format!("slv-{}", &crate::db::now_millis());
     let app_base = crate::hitpay::app_base_url();

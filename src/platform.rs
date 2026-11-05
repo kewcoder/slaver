@@ -109,12 +109,22 @@ pub struct RepoRow {
 }
 
 /// Edit a listing's storefront fields. Owner/admin of the owning team only.
+///
+/// Pricing rule (matches the HitPay minimum): 0 = free (checkout skips
+/// payment), otherwise at least 30 cents ($0.30). Anything in between would
+/// fail at checkout with a HitPay 422, so reject it here at submit time.
+pub const MIN_PAID_PRICE_CENTS: i64 = 30;
+pub const MAX_PRICE_CENTS: i64 = 10_000_000;
+
 pub async fn update_repo(db: &Db, user_id: &str, repo_id: &str, name: Option<&str>, description: Option<&str>, price_cents: Option<i64>, category: Option<&str>) -> Result<RepoRow> {
     let r = get_repo(db, user_id, repo_id).await?.ok_or_else(|| anyhow!("Repo not found."))?;
     require_manager(db, &r.team_id, user_id).await?;
     let name: String = name.map(|n| n.trim().chars().take(80).collect()).filter(|n: &String| !n.is_empty()).unwrap_or(r.name);
     let description: String = description.map(|d| d.trim().chars().take(2000).collect()).unwrap_or(r.description);
-    let price = price_cents.map(|p| p.clamp(0, 10_000_000)).unwrap_or(r.price_cents);
+    let price = price_cents.map(|p| p.clamp(0, MAX_PRICE_CENTS)).unwrap_or(r.price_cents);
+    if price > 0 && price < MIN_PAID_PRICE_CENTS {
+        return Err(anyhow!("Paid apps must cost at least $0.30 (payment minimum) — set 0 for free."));
+    }
     let category: String = category.map(|c| c.trim().chars().take(40).collect()).unwrap_or(r.category);
     db.prepare("UPDATE repos SET name = ?, description = ?, price_cents = ?, category = ? WHERE id = ?")
         .bind(&[v_text(&name), v_text(&description), v_int(price), v_text(&category), v_text(repo_id)])?

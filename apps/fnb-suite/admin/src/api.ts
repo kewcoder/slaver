@@ -54,6 +54,34 @@ export async function restore(token?: string): Promise<Session | null> {
   }
 }
 
+// First-visit setup. Works without a session; the server refuses once an
+// owner exists. Returns a session token for the new owner.
+export async function setupStatus(): Promise<{ needs_setup: boolean }> {
+  const anon = await connectWith(null);
+  try {
+    const r: any = await anon.callTool({ name: "setup_status", arguments: {} });
+    return JSON.parse(r.content?.[0]?.text ?? "{}");
+  } finally {
+    await anon.close().catch(() => {});
+  }
+}
+
+export async function setupOwner(input: {
+  business: string;
+  name: string;
+  email: string;
+  password: string;
+}): Promise<Session> {
+  const anon = await connectWith(null);
+  const r: any = await anon.callTool({ name: "setup_create_owner", arguments: input });
+  await anon.close().catch(() => {});
+  const text: string = r.content?.[0]?.text ?? "";
+  if (r.isError) throw new Error(text);
+  const data = JSON.parse(text);
+  localStorage.setItem(TOKEN_KEY, data.token);
+  return restore(data.token) as Promise<Session>;
+}
+
 export function logout() {
   localStorage.removeItem(TOKEN_KEY);
   client?.close().catch(() => {});

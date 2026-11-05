@@ -180,8 +180,12 @@ export default function PublishView({ teamId, teamRole, onGoMarket }: { teamId: 
   const saveDetails = (e: React.FormEvent) => {
     e.preventDefault();
     if (!repo) return;
+    const cents = Math.max(0, Math.round(parseFloat(price || "0") * 100) || 0);
+    if (cents > 0 && cents < 30) {
+      setError(t("pub.priceMin"));
+      return;
+    }
     void run("save", async () => {
-      const cents = Math.max(0, Math.round(parseFloat(price || "0") * 100) || 0);
       await updateRepo(repo.id, { name: name.trim(), description: desc.trim(), category: cat.trim(), price_cents: cents });
       await refresh();
       return t("pub.saved");
