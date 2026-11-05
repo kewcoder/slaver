@@ -3,17 +3,20 @@ import {
   activateLicense,
   checkoutLicense,
   fetchLicenses,
+  fetchListingReview,
   fetchPaymentStatus,
   fetchProjects,
   fetchRepos,
   fetchTemplates,
   type License,
+  type ListingReview,
   type Payment,
   type Project,
   type Repo,
 } from "./api";
 import { useLang } from "./i18n";
 import { InstallDialog } from "./HostingPanel";
+import { ReviewResult } from "./ListingReview";
 import { Icon, Spinner } from "./ui";
 
 function formatPrice(cents?: number): string {
@@ -39,6 +42,8 @@ export default function MarketView({
   const [projects, setProjects] = useState<{ project: Project }[]>([]);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [reviews, setReviews] = useState<Record<string, ListingReview | null>>({});
+  const [reviewFor, setReviewFor] = useState<Repo | null>(null);
   const [pending, setPending] = useState<{ payment: Payment; checkoutUrl: string; sandbox: boolean; repoName: string } | null>(null);
   const pollRef = useRef<number | null>(null);
 
@@ -111,7 +116,10 @@ export default function MarketView({
   const refresh = useCallback(async () => {
     setError("");
     try {
-      setTemplates(await fetchTemplates());
+      const tpls = await fetchTemplates();
+      setTemplates(tpls);
+      // Each listing's latest AI review (public for published listings); failures just hide the badge.
+      void Promise.all(tpls.map(async (x) => [x.id, await fetchListingReview(x.id).catch(() => null)] as const)).then((rs) => setReviews(Object.fromEntries(rs)));
       if (teamId) {
         const [lic, proj, repos] = await Promise.all([fetchLicenses(teamId), fetchProjects(teamId), fetchRepos(teamId)]);
         setLicenses(lic);
@@ -190,6 +198,18 @@ export default function MarketView({
           </span>
         </div>
         {tpl.description && <p className="mt-3 line-clamp-3 flex-1 text-sm leading-6 text-muted">{tpl.description}</p>}
+        {tpl.id in reviews && (() => {
+          const rv = reviews[tpl.id];
+          return rv && rv.verdict === "approved" ? (
+            <button type="button" onClick={() => setReviewFor(tpl)} className="mt-3 inline-flex items-center gap-1.5 self-start rounded-full bg-accent/10 px-2.5 py-1 text-[11px] font-bold text-accent-text hover:bg-accent/15" title={t("rev.view")}>
+              <Icon name="spark" size={12} />
+              {t("rev.badge", { score: rv.score != null ? String(Math.round(rv.score * 10) / 10) : "–" })}
+              {rv.model === "demo" && <span className="font-semibold opacity-70">· demo</span>}
+            </button>
+          ) : (
+            <span className="mt-3 self-start text-[11px] text-subtle">{t("rev.badgeNone")}</span>
+          );
+        })()}
         <ul className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-subtle">
           <li className="flex items-center gap-1"><Icon name="check" size={12} className="text-accent" />{t("market.featSource")}</li>
           <li className="flex items-center gap-1"><Icon name="check" size={12} className="text-accent" />{t("market.featHost")}</li>
@@ -312,6 +332,18 @@ export default function MarketView({
               {licenses.filter((l) => l.status === "active").map((l) => `${templates.find((x) => x.id === l.repo_id)?.name ?? l.repo_id.slice(0, 8)} · ${t("market.until")} ${l.support_until || "—"}`).join("  ·  ")}
             </p>
           )}
+        </div>
+      )}
+
+      {reviewFor && reviews[reviewFor.id] && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 sm:p-8" onClick={() => setReviewFor(null)}>
+          <div className="w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-bold text-white">{t("rev.viewTitle", { name: reviewFor.name })}</h3>
+              <button type="button" onClick={() => setReviewFor(null)} className="icon-button" aria-label={t("common.close")}><Icon name="x" size={18} /></button>
+            </div>
+            <ReviewResult review={reviews[reviewFor.id]!} canRerun={false} onRerun={() => {}} />
+          </div>
         </div>
       )}
 

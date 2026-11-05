@@ -51,6 +51,7 @@ pub fn tool_defs() -> Vec<Value> {
         json!({ "name": "listing_review_get", "description": "Latest listing review of a repo (current=true when it matches the current version), or null.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
         json!({ "name": "customize_status", "description": "Staging sandbox (URL) and AI change history for an owned app.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
         json!({ "name": "customize_send", "description": "Ask the Meta model to customize an owned app (e.g. 'make the primary color red'). Edits land on the staging branch and the staging sandbox is rebuilt. Runs in background; poll customize_status. Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id", "prompt"], "properties": { "project_id": { "type": "string" }, "prompt": { "type": "string" } } } }),
+        json!({ "name": "customize_discard", "description": "Discard staging changes that are not in production yet: reset the staging branch to main and rebuild the staging sandbox. Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
         json!({ "name": "customize_promote", "description": "Apply staging to production: merge the staging branch into main. Redeploy production afterwards with install_start. Owner/admin only.", "inputSchema": { "type": "object", "required": ["project_id"], "properties": { "project_id": { "type": "string" } } } }),
         json!({ "name": "repos_delete", "description": "Delete a team repo and its data. Owner/admin only; templates cannot be deleted.", "inputSchema": { "type": "object", "required": ["repo_id"], "properties": { "repo_id": { "type": "string" } } } }),
         json!({ "name": "licenses_buy", "description": "Buy a perpetual license for a template (mock checkout), auto-forks the repo and creates a project. Owner/admin only.", "inputSchema": { "type": "object", "required": ["team_id", "repo_id"], "properties": { "team_id": { "type": "string" }, "repo_id": { "type": "string" }, "provider": { "type": "string" } } } }),
@@ -229,7 +230,7 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
                 Err(e) => rpc_err(id, -32602, &e.to_string()),
             }
         }
-        "customize_status" | "customize_send" | "customize_promote" => {
+        "customize_status" | "customize_send" | "customize_promote" | "customize_discard" => {
             let pid = arg_str(args, "project_id");
             if pid.is_empty() {
                 return Some(rpc_err(id, -32602, "project_id is required."));
@@ -237,6 +238,7 @@ pub async fn dispatch(state: &AppState, user_id: &str, name: &str, id: Value, ar
             let r = match name {
                 "customize_status" => crate::customize::status(state, user_id, &pid).await,
                 "customize_send" => crate::customize::send(state, user_id, &pid, &arg_str(args, "prompt")).await,
+                "customize_discard" => crate::customize::discard(state, user_id, &pid).await,
                 _ => crate::customize::promote(state, user_id, &pid).await,
             };
             match r {

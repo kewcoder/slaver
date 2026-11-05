@@ -83,6 +83,7 @@ async fn main() {
     std::fs::create_dir_all(&workspace_dir).ok();
     std::fs::create_dir_all(&git_root).ok();
     slaver::seed::seed_templates(&db, &git_root, &env_or("APPS_DIR", "./apps")).await;
+    slaver::customize::recover(&db).await;
 
     let state = AppState { db, jwt_secret, avatar_dir, workspace_dir, git_root, frontend_dir: std::path::PathBuf::from(&frontend_dir) };
     tokio::spawn(slaver::github::sync_loop(state.clone()));

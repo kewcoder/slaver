@@ -129,6 +129,89 @@ pub async fn seed_templates(db: &crate::db::Db, git_root: &Path, apps_dir: &str)
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
     ensure_demo(db, &git_root.to_string_lossy()).await;
+    ensure_demo_reviews(db, &git_root.to_string_lossy()).await;
+}
+
+/// Slaver's own seller account that submits Hermes Agent to the marketplace.
+pub const LABS_EMAIL: &str = "labs@slaver.app";
+
+/// Demo listing reviews (hand-written AI part, real static checks), stored with
+/// model "demo". Only for the original listings below, and only when their
+/// current version has no review yet, so a real Muse Spark review is never
+/// overwritten.
+async fn ensure_demo_reviews(db: &crate::db::Db, git_root: &str) {
+    use crate::review::AiReview;
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let demos = [
+        (
+            "F&B Suite",
+            "system@slaver.app",
+            AiReview {
+                score: Some(8.4),
+                summary: "A complete, installable F&B app: admin, online store and AI agents all go through one MCP endpoint with role checks, and the README gets a new owner running in minutes.".into(),
+                strengths: s(&[
+                    "README.md has a working local install and a real sample menu (Saung Ranggon) via `bun run seed`.",
+                    "Every action goes through MCP (src/mcp.ts) with role checks from src/accounts.ts, so admin, store and agents share one permission model.",
+                    "src/server.ts refuses to start without an ADMIN_TOKEN of at least 32 characters.",
+                    "Tests cover orders, promos, MCP tools, routes and scripts (test/).",
+                ]),
+                must_fix: vec![],
+                suggestions: s(&[
+                    "admin/src/pages.tsx is 800+ lines; splitting it per screen makes owner customizations smaller and safer.",
+                    "src/domain.ts holds most business rules; separate modules for orders, bookings and promos would help buyers find what to change.",
+                    "Document backing up and restoring the SQLite file (DB_PATH) in README.md.",
+                ]),
+            },
+        ),
+        (
+            "Hermes Agent",
+            LABS_EMAIL,
+            AiReview {
+                score: Some(8.6),
+                summary: "A mature, well-tested self-hosted AI companion with a clear install path. The codebase is large, so buyers will rely on the README and the Docker setup.".into(),
+                strengths: s(&[
+                    "README.md explains install, model providers and the messaging gateway (Telegram, Discord, Slack, WhatsApp, Signal) clearly, with translations.",
+                    "Large test suite under tests/ plus SECURITY.md with a private disclosure process.",
+                    "Dockerfile pins base images by digest and verifies the SQLite source by SHA-256.",
+                    "MIT LICENSE and provider-agnostic: owners can point it at their own model endpoint.",
+                ]),
+                must_fix: vec![],
+                suggestions: s(&[
+                    "The repo root has 140+ entries, including scratch modules (hermes_constants_scratch*.py); moving them out of the root makes customization easier.",
+                    ".env.example is 500+ lines; add a short 'minimal setup' block for a single-messenger deploy (e.g. Telegram only).",
+                    "A slim Docker target for gateway-only use would cut build time on small servers.",
+                ]),
+            },
+        ),
+    ];
+    for (name, owner_email, ai) in demos {
+        // Only Slaver's own listings (owned by these accounts' teams), never a seller's look-alike.
+        let rows: Vec<serde_json::Value> = match db
+            .prepare("SELECT r.id FROM repos r JOIN teams t ON t.id = r.team_id JOIN users u ON u.id = t.owner_user_id WHERE r.name = ? AND u.email = ? AND r.fork_of = ''")
+            .bind(&[crate::db::v_text(name), crate::db::v_text(owner_email)])
+        {
+            Ok(q) => match q.all().await {
+                Ok(r) => r.results().unwrap_or_default(),
+                Err(_) => continue,
+            },
+            Err(_) => continue,
+        };
+        for row in rows {
+            let Some(rid) = row.get("id").and_then(|v| v.as_str()) else { continue };
+            match crate::review::latest(db, git_root, rid).await {
+                Ok(Some(r)) if r.current => continue,
+                Err(_) => continue,
+                _ => {}
+            }
+            if crate::git::git_head_sha(git_root, rid).await.ok().flatten().is_none() {
+                continue; // no code yet
+            }
+            match crate::review::store_demo(db, git_root, rid, ai.clone()).await {
+                Ok(r) => eprintln!("seed: demo review for '{name}' ({}): {}", &r.commit_sha[..8.min(r.commit_sha.len())], r.verdict),
+                Err(e) => eprintln!("seed: demo review for '{name}' failed: {e}"),
+            }
+        }
+    }
 }
 
 /// Demo F&B account (used by the login-page demo button): resto@slaver.app

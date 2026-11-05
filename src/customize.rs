@@ -6,7 +6,8 @@
 //! customer is billed), rebuilds and restarts it. "Apply to production"
 //! merges `staging` into `main`; the team then redeploys production.
 //!
-//! Jobs run in the background; the UI polls `customize_status`.
+//! Jobs run in the background; the UI polls `customize_status`. The change
+//! history lives in `customize_changes` (the live step text stays in memory).
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -15,6 +16,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::ai::ChatMessage;
+use crate::db::{v_int, v_text, Db};
 use crate::AppState;
 
 const SPRITES_API: &str = "https://api.sprites.dev/v1";
@@ -36,12 +38,14 @@ mod tests {
 pub struct Change {
     pub id: String,
     pub prompt: String,
-    pub status: String, // working | done | failed
+    pub status: String, // working | done | failed | discarded
     pub step: String,
     pub summary: String,
     pub files: Vec<String>,
     pub commit: String,
     pub error: String,
+    /// Merged into production by "Apply to production".
+    pub applied: bool,
     pub created_at: String,
 }
 
@@ -50,6 +54,8 @@ pub struct Staging {
     pub sprite: String,
     pub url: String,
     pub changes: Vec<Change>,
+    #[serde(skip)]
+    loaded: bool,
 }
 
 fn jobs() -> &'static Mutex<HashMap<String, Staging>> {
@@ -68,6 +74,96 @@ fn set_step(project_id: &str, change_id: &str, step: &str) {
             c.step = step.to_string();
         }
     });
+}
+
+// ---------- persistence ----------
+
+/// Load a project's change history from the DB into the in-memory map (once).
+async fn load(db: &Db, project_id: &str) -> Result<(), String> {
+    if jobs().lock().unwrap().get(project_id).map(|s| s.loaded).unwrap_or(false) {
+        return Ok(());
+    }
+    let rows: Vec<Value> = db
+        .prepare("SELECT id, prompt, status, summary, files_json, commit_sha, error, applied, created_at FROM customize_changes WHERE project_id = ? ORDER BY created_at")
+        .bind(&[v_text(project_id)])
+        .map_err(|e| e.to_string())?
+        .all()
+        .await
+        .map_err(|e| e.to_string())?
+        .results()
+        .map_err(|e| e.to_string())?;
+    let s = |r: &Value, k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let changes: Vec<Change> = rows
+        .iter()
+        .map(|r| Change {
+            id: s(r, "id"),
+            prompt: s(r, "prompt"),
+            status: s(r, "status"),
+            step: String::new(),
+            summary: s(r, "summary"),
+            files: serde_json::from_str(&s(r, "files_json")).unwrap_or_default(),
+            commit: s(r, "commit_sha"),
+            error: s(r, "error"),
+            applied: r.get("applied").and_then(|v| v.as_i64()).unwrap_or(0) != 0,
+            created_at: s(r, "created_at"),
+        })
+        .collect();
+    update(project_id, |st| {
+        if !st.loaded {
+            // Keep anything started in memory before the load finished.
+            let mut merged = changes;
+            for c in st.changes.drain(..) {
+                if !merged.iter().any(|m| m.id == c.id) {
+                    merged.push(c);
+                }
+            }
+            st.changes = merged;
+            st.loaded = true;
+        }
+    });
+    Ok(())
+}
+
+async fn save(db: &Db, project_id: &str, c: &Change) -> Result<(), String> {
+    db.prepare(
+        "INSERT INTO customize_changes (id, project_id, prompt, status, summary, files_json, commit_sha, error, applied, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(id) DO UPDATE SET status = excluded.status, summary = excluded.summary, files_json = excluded.files_json, commit_sha = excluded.commit_sha, error = excluded.error, applied = excluded.applied",
+    )
+    .bind(&[
+        v_text(&c.id),
+        v_text(project_id),
+        v_text(&c.prompt),
+        v_text(&c.status),
+        v_text(&c.summary),
+        v_text(&serde_json::to_string(&c.files).unwrap_or_else(|_| "[]".into())),
+        v_text(&c.commit),
+        v_text(&c.error),
+        v_int(c.applied as i64),
+        v_text(&c.created_at),
+    ])
+    .map_err(|e| e.to_string())?
+    .run()
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// On boot: jobs that were running when the server stopped will never finish.
+pub async fn recover(db: &Db) {
+    let r = async {
+        db.prepare("UPDATE customize_changes SET status = 'failed', error = 'Interrupted by a server restart. Send the request again.' WHERE status = 'working'")
+            .bind(&[])?
+            .run()
+            .await
+    }
+    .await;
+    if let Err(e) = r {
+        eprintln!("customize: recover failed: {e}");
+    }
+}
+
+/// Snapshot of one change (for saving after an in-memory update).
+fn change(project_id: &str, change_id: &str) -> Option<Change> {
+    jobs().lock().unwrap().get(project_id).and_then(|s| s.changes.iter().find(|c| c.id == change_id).cloned())
 }
 
 pub fn sprite_name(project_id: &str) -> String {
@@ -325,6 +421,11 @@ async fn run_change(state: AppState, team_id: String, project_id: String, repo_i
             c.step.clear();
         }
     });
+    if let Some(c) = change(&project_id, &change_id) {
+        if let Err(e) = save(&state.db, &project_id, &c).await {
+            eprintln!("customize: save failed: {e}");
+        }
+    }
 }
 
 async fn project_for(state: &AppState, user_id: &str, project_id: &str, manage: bool) -> Result<crate::platform::ProjectRow, String> {
@@ -346,6 +447,7 @@ async fn project_for(state: &AppState, user_id: &str, project_id: &str, manage: 
 
 pub async fn status(state: &AppState, user_id: &str, project_id: &str) -> Result<Value, String> {
     let p = project_for(state, user_id, project_id, false).await?;
+    load(&state.db, project_id).await?;
     let mut st = jobs().lock().unwrap().get(project_id).cloned().unwrap_or_default();
     let token = crate::hosting::sprites_token(&state.db, &p.team_id).await.map_err(|e| e.to_string())?;
     if st.url.is_empty() {
@@ -373,6 +475,7 @@ pub async fn send(state: &AppState, user_id: &str, project_id: &str, prompt: &st
         .await
         .map_err(|e| e.to_string())?
         .ok_or("Connect your Sprites account first (staging runs there).")?;
+    load(&state.db, project_id).await?;
     if jobs().lock().unwrap().get(project_id).map(|s| s.changes.iter().any(|c| c.status == "working")).unwrap_or(false) {
         return Err("A change is still running. Wait for it to finish.".into());
     }
@@ -385,8 +488,10 @@ pub async fn send(state: &AppState, user_id: &str, project_id: &str, prompt: &st
         files: vec![],
         commit: String::new(),
         error: String::new(),
+        applied: false,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
+    save(&state.db, project_id, &change).await?;
     update(project_id, |s| s.changes.push(change.clone()));
     tokio::spawn(run_change(state.clone(), p.team_id.clone(), p.id.clone(), p.repo_id.clone(), token, change.id.clone(), change.prompt.clone()));
     Ok(json!({ "change": change }))
@@ -402,5 +507,79 @@ pub async fn promote(state: &AppState, user_id: &str, project_id: &str) -> Resul
     let head = crate::git::git_rev(&git_root, &p.repo_id, "HEAD").await?.unwrap_or_default();
     let main_branch = if crate::git::git_rev(&git_root, &p.repo_id, "main").await?.is_some() { "main" } else { "master" };
     let new = crate::git::git_merge_branch(&git_root, &p.repo_id, main_branch, BRANCH).await?;
+    load(&state.db, project_id).await?;
+    mark(state, project_id, |c| {
+        if c.status == "done" && !c.applied {
+            c.applied = true;
+            true
+        } else {
+            false
+        }
+    })
+    .await?;
     Ok(json!({ "merged": new != head, "commit": new }))
+}
+
+/// Apply `f` to every change of a project; save the ones it reports as changed.
+async fn mark(state: &AppState, project_id: &str, f: impl Fn(&mut Change) -> bool) -> Result<usize, String> {
+    let mut touched = Vec::new();
+    update(project_id, |s| {
+        for c in s.changes.iter_mut() {
+            if f(c) {
+                touched.push(c.clone());
+            }
+        }
+    });
+    for c in &touched {
+        save(&state.db, project_id, c).await?;
+    }
+    Ok(touched.len())
+}
+
+/// Throw away everything on staging that is not in production yet: reset the
+/// staging branch to main and rebuild the sandbox from it.
+pub async fn discard(state: &AppState, user_id: &str, project_id: &str) -> Result<Value, String> {
+    let p = project_for(state, user_id, project_id, true).await?;
+    load(&state.db, project_id).await?;
+    if jobs().lock().unwrap().get(project_id).map(|s| s.changes.iter().any(|c| c.status == "working")).unwrap_or(false) {
+        return Err("A change is still running. Wait for it to finish.".into());
+    }
+    let git_root = state.git_root.to_string_lossy().to_string();
+    let Some(staging) = crate::git::git_rev(&git_root, &p.repo_id, BRANCH).await? else {
+        return Err("Nothing on staging yet.".into());
+    };
+    let main = crate::git::git_rev(&git_root, &p.repo_id, "HEAD").await?.ok_or("This app has no code yet.")?;
+    let n = mark(state, project_id, |c| {
+        if c.status == "done" && !c.applied {
+            c.status = "discarded".into();
+            true
+        } else {
+            false
+        }
+    })
+    .await?;
+    if staging == main {
+        return Ok(json!({ "discarded": n, "rebuilding": false }));
+    }
+    crate::git::git_set_branch(&git_root, &p.repo_id, BRANCH, &main, Some(&staging)).await?;
+    // Rebuild the sandbox in the background when it exists.
+    let token = crate::hosting::sprites_token(&state.db, &p.team_id).await.map_err(|e| e.to_string())?;
+    let rebuilding = match token {
+        Some(t) if sprite_url(&t, &sprite_name(project_id)).await.is_some() => {
+            let (st, pid, rid) = (state.clone(), project_id.to_string(), p.repo_id.clone());
+            tokio::spawn(async move {
+                let sprite = sprite_name(&pid);
+                let git_root = st.git_root.to_string_lossy().to_string();
+                match ship(&st, &t, &sprite, &git_root, &rid, &pid, "", false).await {
+                    Ok(()) => {
+                        let _ = client().post(format!("{SPRITES_API}/sprites/{sprite}/services/app/restart")).bearer_auth(&t).send().await;
+                    }
+                    Err(e) => eprintln!("customize: rebuild after discard failed: {e}"),
+                }
+            });
+            true
+        }
+        _ => false,
+    };
+    Ok(json!({ "discarded": n, "rebuilding": rebuilding }))
 }

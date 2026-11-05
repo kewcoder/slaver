@@ -63,7 +63,7 @@ export function ReviewResult({ review, onRerun, canRerun }: { review: ListingRev
           </div>
           <p className="mt-0.5 text-sm leading-6 text-fg-2">{ai?.summary || (must.length ? t("rev.staticBlock") : review.ai_error)}</p>
           <p className="mt-1 text-[11px] text-subtle">
-            {review.model ? t("rev.by", { model: review.model }) : t("rev.noModel")} · {t("rev.version")} {review.commit_sha.slice(0, 8)} · {review.files_reviewed.length} {t("rev.files")}
+            {review.model === "demo" ? t("rev.demo") : review.model ? t("rev.by", { model: review.model }) : t("rev.noModel")} · {t("rev.version")} {review.commit_sha.slice(0, 8)} · {review.files_reviewed.length} {t("rev.files")}
           </p>
         </div>
         {canRerun && (

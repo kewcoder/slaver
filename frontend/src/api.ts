@@ -498,12 +498,13 @@ export async function applyUpdate(repoId: string): Promise<{ status: "updated" |
 export interface CustomizeChange {
   id: string;
   prompt: string;
-  status: "working" | "done" | "failed";
+  status: "working" | "done" | "failed" | "discarded";
   step: string;
   summary: string;
   files: string[];
   commit: string;
   error: string;
+  applied: boolean;
   created_at: string;
 }
 
@@ -519,6 +520,10 @@ export async function fetchCustomize(projectId: string): Promise<CustomizeStatus
 
 export async function sendCustomize(projectId: string, prompt: string): Promise<CustomizeChange> {
   return (await callTool<{ change: CustomizeChange }>("customize_send", { project_id: projectId, prompt })).change;
+}
+
+export async function discardCustomize(projectId: string): Promise<{ discarded: number; rebuilding: boolean }> {
+  return callTool("customize_discard", { project_id: projectId });
 }
 
 export async function promoteCustomize(projectId: string): Promise<{ merged: boolean; commit: string }> {

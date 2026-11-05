@@ -178,8 +178,20 @@ fn build_prompt(name: &str, description: &str, lang: &str, tree: &[String], pick
     ]
 }
 
-/// Run a review of the repo's HEAD, store it, and return it.
-pub async fn run(db: &Db, git_root: &str, repo_id: &str, team_id: &str, name: &str, description: &str, lang: &str) -> Result<Review, String> {
+/// Static part of a review: HEAD sha, checks, the files picked for the model, and the tree.
+struct Scan {
+    sha: String,
+    checks: Vec<Check>,
+    picked: Vec<(String, String)>,
+    tree: Vec<String>,
+}
+
+/// `.env`, `.env.local`, ... but not `.env.example` / `.env.sample` or direnv's `.envrc`.
+fn is_env_file(name: &str) -> bool {
+    (name == ".env" || name.starts_with(".env.")) && !name.ends_with(".example") && !name.ends_with(".sample")
+}
+
+async fn scan(git_root: &str, repo_id: &str) -> Result<Scan, String> {
     let sha = crate::git::git_head_sha(git_root, repo_id).await?.ok_or("This listing has no code yet. Upload or import the source first.")?;
     let all = crate::git::git_tree_files(git_root, repo_id).await?;
     let files: Vec<(String, u64)> = all.into_iter().filter(|(p, _)| !ignored(p)).collect();
@@ -205,10 +217,7 @@ pub async fn run(db: &Db, git_root: &str, repo_id: &str, team_id: &str, name: &s
         }
     }
     let has = |n: &str| files.iter().any(|(p, _)| p.eq_ignore_ascii_case(n));
-    let real_env = files.iter().filter(|(p, _)| {
-        let n = p.rsplit('/').next().unwrap_or(p);
-        n.starts_with(".env") && !n.ends_with(".example") && !n.ends_with(".sample")
-    });
+    let real_env = files.iter().filter(|(p, _)| is_env_file(p.rsplit('/').next().unwrap_or(p)));
     let mut checks = vec![];
     let env_files: Vec<String> = real_env.map(|(p, _)| p.clone()).collect();
     checks.push(if secret_files.is_empty() && env_files.is_empty() {
@@ -252,6 +261,12 @@ pub async fn run(db: &Db, git_root: &str, repo_id: &str, team_id: &str, name: &s
     ranked.sort_by_key(|(p, _)| (score_path(p), p.len()));
     let picked: Vec<(String, String)> = ranked.into_iter().take(10).collect();
     let tree: Vec<String> = files.iter().map(|(p, _)| p.clone()).take(200).collect();
+    Ok(Scan { sha, checks, picked, tree })
+}
+
+/// Run a review of the repo's HEAD, store it, and return it.
+pub async fn run(db: &Db, git_root: &str, repo_id: &str, team_id: &str, name: &str, description: &str, lang: &str) -> Result<Review, String> {
+    let Scan { sha, checks, picked, tree } = scan(git_root, repo_id).await?;
 
     // AI review (Meta model).
     let (prov, model) = match model_provider_from_env() {
@@ -277,6 +292,21 @@ pub async fn run(db: &Db, git_root: &str, repo_id: &str, team_id: &str, name: &s
         }
     };
 
+    let model = if ai.is_some() { model } else { String::new() };
+    store(db, repo_id, sha, checks, ai, ai_error, model, &picked).await
+}
+
+/// Demo review: real static checks of HEAD plus a hand-written AI part.
+/// Stored with model "demo" so it is never mistaken for model output.
+pub async fn store_demo(db: &Db, git_root: &str, repo_id: &str, ai: AiReview) -> Result<Review, String> {
+    let Scan { sha, checks, picked, .. } = scan(git_root, repo_id).await?;
+    store(db, repo_id, sha, checks, Some(ai), String::new(), DEMO_MODEL.to_string(), &picked).await
+}
+
+pub const DEMO_MODEL: &str = "demo";
+
+#[allow(clippy::too_many_arguments)]
+async fn store(db: &Db, repo_id: &str, sha: String, checks: Vec<Check>, ai: Option<AiReview>, ai_error: String, model: String, picked: &[(String, String)]) -> Result<Review, String> {
     let static_must = checks.iter().any(|c| c.level == "must");
     let ai_must = ai.as_ref().map(|a| !a.must_fix.is_empty()).unwrap_or(true);
     let verdict = if !static_must && !ai_must { "approved" } else { "changes" };
@@ -287,7 +317,7 @@ pub async fn run(db: &Db, git_root: &str, repo_id: &str, team_id: &str, name: &s
         commit_sha: sha.clone(),
         verdict: verdict.to_string(),
         score,
-        model: if ai.is_some() { model.clone() } else { String::new() },
+        model,
         checks,
         ai,
         ai_error,
@@ -371,5 +401,13 @@ mod tests {
         assert!(ignored("apps/a/node_modules/x.js"));
         assert!(ignored("bun.lock"));
         assert!(!ignored("src/server.ts"));
+    }
+
+    #[test]
+    fn envrc_is_not_an_env_file() {
+        assert!(is_env_file(".env"));
+        assert!(is_env_file(".env.local"));
+        assert!(!is_env_file(".env.example"));
+        assert!(!is_env_file(".envrc"));
     }
 }

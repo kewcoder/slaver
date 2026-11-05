@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { connectHosting, fetchCustomize, promoteCustomize, sendCustomize, type CustomizeStatus } from "./api";
+import { connectHosting, discardCustomize, fetchCustomize, promoteCustomize, sendCustomize, type CustomizeStatus } from "./api";
 import { useLang } from "./i18n";
 import { Icon, Spinner } from "./ui";
 
@@ -14,6 +14,7 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
   const [frameKey, setFrameKey] = useState(0);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
+  const [discardNote, setDiscardNote] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const lastDone = useRef("");
 
@@ -57,6 +58,7 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
     if (!prompt.trim() || working) return;
     setError("");
     setNotice("");
+    setDiscardNote("");
     try {
       await sendCustomize(projectId, prompt.trim());
       setPrompt("");
@@ -73,6 +75,24 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
     try {
       const r = await promoteCustomize(projectId);
       setNotice(r.merged ? t("cz.promoted") : t("cz.nothing"));
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function discard() {
+    if (!window.confirm(t("cz.discardConfirm"))) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const r = await discardCustomize(projectId);
+      setDiscardNote(r.rebuilding ? t("cz.discardedRebuild") : t("cz.discarded"));
+      await refresh();
+      if (r.rebuilding) window.setTimeout(() => setFrameKey((k) => k + 1), 45000); // rebuild takes ~30-45s
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -98,7 +118,7 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
 
   const url = st?.staging.url ?? "";
   const changes = st?.staging.changes ?? [];
-  const hasDone = changes.some((c) => c.status === "done");
+  const pending = changes.filter((c) => c.status === "done" && !c.applied).length;
   const examples = [t("cz.ex1"), t("cz.ex2"), t("cz.ex3")];
 
   return (
@@ -110,11 +130,18 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
           <div className="truncate text-[11px] text-muted">{t("cz.sub")}</div>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          {hasDone && (
-            <button type="button" onClick={promote} disabled={busy || working} className="btn-primary px-3 py-1.5 text-xs">
-              {busy ? <Spinner /> : <Icon name="rocket" size={14} />}
-              {t("cz.promote")}
-            </button>
+          {pending > 0 && (
+            <>
+              <span className="hidden text-[11px] text-muted sm:inline">{t("cz.pending", { n: String(pending) })}</span>
+              <button type="button" onClick={discard} disabled={busy || working} className="btn-secondary px-3 py-1.5 text-xs">
+                <Icon name="x" size={14} />
+                {t("cz.discard")}
+              </button>
+              <button type="button" onClick={promote} disabled={busy || working} className="btn-primary px-3 py-1.5 text-xs">
+                {busy ? <Spinner /> : <Icon name="rocket" size={14} />}
+                {t("cz.promote")}
+              </button>
+            </>
           )}
         </div>
       </header>
@@ -152,6 +179,11 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
                       <span className="flex items-center gap-2 text-muted"><Spinner />{c.step || t("cz.working")}</span>
                     ) : c.status === "failed" ? (
                       <span className="text-red-300">{c.error}</span>
+                    ) : c.status === "discarded" ? (
+                      <>
+                        <div className="text-muted line-through">{c.summary}</div>
+                        <div className="mt-1.5 text-[11px] text-subtle">{t("cz.discardedTag")} · {c.commit.slice(0, 7)}</div>
+                      </>
                     ) : (
                       <>
                         <div className="text-fg">{c.summary}</div>
@@ -160,7 +192,9 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
                             {c.files.map((f) => <span key={f} className="rounded bg-fg/[0.06] px-1.5 py-0.5 font-mono text-[11px] text-muted">{f}</span>)}
                           </div>
                         )}
-                        <div className="mt-1.5 text-[11px] text-subtle">{t("cz.onStaging")} · {c.commit.slice(0, 7)}</div>
+                        <div className="mt-1.5 text-[11px] text-subtle">
+                          {c.applied ? <span className="font-semibold text-accent-text">{t("cz.applied")}</span> : t("cz.onStaging")} · {c.commit.slice(0, 7)}
+                        </div>
                       </>
                     )}
                   </div>
@@ -173,6 +207,7 @@ export default function CustomizeView({ projectId, teamId, onClose, onRedeploy }
                 <button type="button" onClick={onRedeploy} className="ml-2 font-semibold underline">{t("cz.redeploy")}</button>
               </div>
             )}
+            {discardNote && <div className="rounded-xl bg-fg/[0.06] px-3 py-2 text-sm text-fg-2">{discardNote}</div>}
             {error && <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>}
             <div ref={endRef} />
           </div>
